@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="theme-color" content="#1a1a2e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TeeGu.PRO">
+<title>TeeGu.PRO</title>
+
+<link rel="manifest" href="manifest.json">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="header-logo">🥗 TeeGu.PRO</div>
+    <div class="header-sub" id="headerSub">Система управления заказами</div>
+  </div>
+  <div class="header-right">
+    <div class="icon-btn lang-btn" onclick="toggleLang()" id="langBtn">UZ</div>
+    <div class="icon-btn" onclick="toggleTheme()" id="themeBtn">🌙</div>
+    <div class="icon-btn badge-wrap" onclick="showPage('orders')">⏳<span class="badge" id="pendingBadge" style="display:none"></span></div>
+    <div class="icon-btn" onclick="showPage('settings')">⚙️</div>
+  </div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-page="new-order" onclick="showPage('new-order')">➕ <span class="t" data-ru="Заказ" data-uz="Buyurtma">Заказ</span></div>
+  <div class="tab" data-page="orders" onclick="showPage('orders')">📋 <span class="t" data-ru="Заказы" data-uz="Buyurtmalar">Заказы</span> <span class="cnt" id="ordersCount">0</span></div>
+  <div class="tab" data-page="debts" onclick="showPage('debts')">💰 <span class="t" data-ru="Долги" data-uz="Qarzlar">Долги</span> <span class="cnt" id="debtsCount">0</span></div>
+  <div class="tab" data-page="delivery" onclick="showPage('delivery')">🚚 <span class="t" data-ru="Маршрут" data-uz="Marshrut">Маршрут</span> <span class="cnt" id="deliveryCount">0</span></div>
+  <div class="tab" data-page="clients" onclick="showPage('clients')">👥 <span class="t" data-ru="Клиенты" data-uz="Mijozlar">Клиенты</span></div>
+  <div class="tab" data-page="stats" onclick="showPage('stats')">📊 <span class="t" data-ru="Итоги" data-uz="Tahlil">Итоги</span></div>
+  <div class="tab" data-page="settings" onclick="showPage('settings')">⚙️</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- PRINT AREA -->
+<div id="print-area"></div>
+
+<!-- PAGE: NEW ORDER -->
+<div class="page active" id="page-new-order">
+  <div id="favStrip" style="display:none">
+    <div style="font-size:11px;color:var(--text3);margin-bottom:5px">⭐ <span class="t" data-ru="Быстрый выбор" data-uz="Tezkor tanlash">Быстрый выбор</span></div>
+    <div class="favorites-strip" id="favoritesStrip"></div>
+    <hr class="divider">
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">👤 <span class="t" data-ru="Клиент" data-uz="Mijoz">Клиент</span></div>
+        <div class="card-sub t" data-ru="Выберите или создайте нового" data-uz="Tanlang yoki yangi qo'shing">Выберите или создайте нового</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="openNewClientModal()">+ <span class="t" data-ru="Новый" data-uz="Yangi">Новый</span></button>
+    </div>
+    <div class="form-group">
+      <label class="form-label t" data-ru="Клиент" data-uz="Mijoz">Клиент</label>
+      <select class="form-input" id="clientSelect"><option value="">— Выберите —</option></select>
+    </div>
+    <div class="row">
+      <div class="form-group">
+        <label class="form-label t" data-ru="Телефон" data-uz="Telefon">Телефон</label>
+        <input class="form-input" type="tel" id="clientPhone" placeholder="+998 ...">
+      </div>
+      <div class="form-group">
+        <label class="form-label t" data-ru="Тип" data-uz="Tur">Тип</label>
+        <select class="form-input" id="clientType">
+          <option value="кафе">☕ Кафе</option>
+          <option value="фаст-фуд">🍔 Фаст-фуд</option>
+          <option value="ресторан">🍽️ Ресторан</option>
+          <option value="другое">📍 Другое</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">🥗 <span class="t" data-ru="Продукты" data-uz="Mahsulotlar">Продукты</span></div>
+    </div>
+    <div class="products-grid" id="productsGrid"></div>
+  </div>
+  <div id="summaryBlock" style="display:none">
+    <div class="order-summary" id="orderSummary"></div>
+    <div class="card">
+      <div class="card-title" style="margin-bottom:10px">💳 <span class="t" data-ru="Оплата" data-uz="To'lov">Оплата</span></div>
+      <div class="payment-pills">
+        <div class="pill selected" data-pay="наличные" onclick="selectPayment(this)">💵 <span class="t" data-ru="Наличные" data-uz="Naqd">Наличные</span></div>
+        <div class="pill" data-pay="клик" onclick="selectPayment(this)">📱 Click</div>
+        <div class="pill" data-pay="консигнация" onclick="selectPayment(this)">📝 <span class="t" data-ru="Консигнация" data-uz="Nasiya">Консигнация</span></div>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">📝 <span class="t" data-ru="Примечание" data-uz="Izoh">Примечание</span></label>
+      <input class="form-input" type="text" id="orderNote" placeholder="...">
+    </div>
+  </div>
+  <button class="btn btn-success" id="submitBtn" onclick="submitOrder()" style="margin-bottom:8px">✅ <span class="t" data-ru="Оформить заказ" data-uz="Buyurtmani rasmiylashtirish">Оформить заказ</span></button>
+  <button class="btn btn-outline" onclick="resetOrder()">🔄 <span class="t" data-ru="Очистить" data-uz="Tozalash">Очистить</span></button>
+</div>
+
+<!-- PAGE: ORDERS -->
+<div class="page" id="page-orders">
+  <div class="search-wrap"><span class="search-icon">🔍</span><input class="form-input" type="text" id="ordersSearch" oninput="filterOrders(this.value)" placeholder="Поиск..."></div>
+  <div style="display:flex;gap:8px;margin-bottom:12px;overflow-x:auto;scrollbar-width:none">
+    <div class="pill selected" onclick="filterByDate('all',this)" id="pill-all">Все</div>
+    <div class="pill" onclick="filterByDate('today',this)" id="pill-today">Сегодня</div>
+    <div class="pill" onclick="filterByDate('week',this)" id="pill-week">Неделя</div>
+  </div>
+  <div id="ordersList"><div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Нет заказов</div></div></div>
+</div>
+
+<!-- PAGE: DEBTS -->
+<div class="page" id="page-debts">
+  <div class="card" style="background:rgba(247,168,74,.08);border-color:var(--orange)">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div class="card-title">💰 <span class="t" data-ru="Общий долг" data-uz="Umumiy qarz">Общий долг</span></div>
+        <div class="stat-val" id="totalDebtAmount" style="font-size:26px;color:var(--orange);margin-top:4px">0</div>
+      </div>
+      <div style="font-size:44px">💸</div>
+    </div>
+  </div>
+  <div id="debtsList"></div>
+</div>
+
+<!-- PAGE: DELIVERY -->
+<div class="page" id="page-delivery">
+  <div class="card" style="background:rgba(90,180,247,.08);border-color:var(--blue)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div>
+        <div class="card-title">🚚 <span class="t" data-ru="Маршрут на сегодня" data-uz="Bugungi marshrut">Маршрут на сегодня</span></div>
+        <div class="card-sub" id="deliverySubtitle"></div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="resetDelivery()">🔄</button>
+    </div>
+    <button class="btn btn-primary btn-sm" style="width:auto;padding:8px 16px" onclick="sendDaySummary()">📤 <span class="t" data-ru="Сводка дня в Telegram" data-uz="Kun xulosasini Telegramga">Сводка в Telegram</span></button>
+  </div>
+  <div id="deliveryList"><div class="empty"><div class="empty-icon">🚚</div><div class="empty-text t" data-ru="Нет заказов сегодня" data-uz="Bugun buyurtma yo'q">Нет заказов сегодня</div></div></div>
+</div>
+
+<!-- PAGE: CLIENTS -->
+<div class="page" id="page-clients">
+  <div class="search-wrap"><span class="search-icon">🔍</span><input class="form-input" type="text" oninput="filterClients(this.value)" placeholder="Поиск..."></div>
+  <button class="btn btn-primary" style="margin-bottom:14px" onclick="openNewClientModal()">➕ <span class="t" data-ru="Добавить клиента" data-uz="Mijoz qo'shish">Добавить клиента</span></button>
+  <div id="clientsList"></div>
+</div>
+
+<!-- PAGE: STATS -->
+<div class="page" id="page-stats">
+  <div class="stats-grid" id="statsGrid"></div>
+
+  <!-- AVG CHECK -->
+  <div class="card">
+    <div class="card-title" style="margin-bottom:10px">💡 <span class="t" data-ru="Средний чек" data-uz="O'rtacha chek">Средний чек</span></div>
+    <div id="avgStats"></div>
+  </div>
+
+  <!-- WEEK COMPARE -->
+  <div class="card">
+    <div class="card-header" style="margin-bottom:8px">
+      <div class="card-title">📊 <span class="t" data-ru="Эта неделя vs прошлая" data-uz="Bu hafta vs o'tgan hafta">Эта неделя vs прошлая</span></div>
+    </div>
+    <div id="weekCompare"></div>
+  </div>
+
+  <!-- CHART -->
+  <div class="card">
+    <div class="card-header" style="margin-bottom:8px">
+      <div class="card-title">📈 <span class="t" data-ru="График продаж" data-uz="Sotuvlar grafigi">График продаж</span></div>
+      <div class="period-tabs">
+        <div class="period-tab active" onclick="setChartPeriod('week',this)">7Д</div>
+        <div class="period-tab" onclick="setChartPeriod('month',this)">30Д</div>
+      </div>
+    </div>
+    <div class="chart-wrap"><div class="chart-bars" id="chartBars"></div></div>
+    <div class="chart-legend" id="chartLegend"></div>
+  </div>
+
+  <!-- FORECAST -->
+  <div class="card">
+    <div class="card-title" style="margin-bottom:10px">🔮 <span class="t" data-ru="Прогноз на завтра" data-uz="Ertangi prognoz">Прогноз на завтра</span></div>
+    <div id="forecastBlock"></div>
+  </div>
+
+  <!-- TOP CLIENTS -->
+  <div class="card">
+    <div class="card-title" style="margin-bottom:12px">🏆 <span class="t" data-ru="Топ клиентов" data-uz="Top mijozlar">Топ клиентов</span></div>
+    <div id="topClients"></div>
+  </div>
+
+  <button class="btn btn-orange" onclick="exportToExcel()" style="margin-bottom:12px">📊 <span class="t" data-ru="Экспорт в Excel" data-uz="Excelga yuklash">Экспорт в Excel</span></button>
+
+  <div class="card" id="productStats"></div>
+</div>
+
+<!-- PAGE: SETTINGS -->
+<div class="page" id="page-settings">
+  <div class="card">
+    <div class="card-title" style="margin-bottom:4px">🤖 Telegram Bot</div>
+    <div class="settings-item">
+      <div class="settings-label">Bot Token</div>
+      <input class="form-input" type="text" id="tgToken" placeholder="1234567890:ABCDEF...">
+    </div>
+    <div class="settings-item">
+      <div class="settings-label">Chat ID</div>
+      <input class="form-input" type="text" id="tgChatId" placeholder="-1001234567890">
+    </div>
+    <button class="btn btn-primary" onclick="saveSettings()" style="margin-top:8px">💾 <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
+    <button class="btn btn-outline" style="margin-top:8px" onclick="testTelegram()">🧪 Тест Telegram</button>
+  </div>
+  <div class="card">
+    <div class="card-title" style="margin-bottom:4px">📊 Google Sheets</div>
+    <div class="settings-item">
+      <div class="settings-label">Webhook URL</div>
+      <input class="form-input" type="text" id="sheetsUrl" placeholder="https://script.google.com/macros/s/...">
+      <div class="settings-desc t" data-ru="Все заказы и клиенты синхронизируются с этим адресом" data-uz="Barcha buyurtmalar va mijozlar ushbu manzil bilan sinxronlanadi">Все заказы и клиенты синхронизируются с этим адресом</div>
+    </div>
+    <button class="btn btn-success" onclick="saveSettings()" style="margin-top:8px">💾 <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
+    <button class="btn btn-primary" onclick="syncClientsToSheets()" style="margin-top:8px" id="syncBtn">☁️ <span class="t" data-ru="Синхронизировать клиентов → Sheets" data-uz="Mijozlarni Sheetsga yuklash">Синхронизировать клиентов → Sheets</span></button>
+  </div>
+  <div class="card">
+    <div class="card-title" style="margin-bottom:12px">📋 Apps Script</div>
+    <div style="background:var(--bg);border-radius:var(--r);padding:12px;font-family:monospace;font-size:11px;color:var(--accent2);overflow-x:auto;line-height:1.6;white-space:pre-wrap;border:1px solid var(--border)" id="scriptCode"></div>
+    <button class="btn btn-outline" style="margin-top:10px" onclick="copyScript()">📋 <span class="t" data-ru="Скопировать" data-uz="Nusxalash">Скопировать</span></button>
+  </div>
+  <div class="card">
+    <div class="card-title" style="margin-bottom:8px">🗑️ <span class="t" data-ru="Данные" data-uz="Ma'lumotlar">Данные</span></div>
+    <button class="btn btn-danger" onclick="clearAllData()">🗑️ <span class="t" data-ru="Очистить всё" data-uz="Barchasini o'chirish">Очистить всё</span></button>
+  </div>
+</div>
+
+<!-- MODAL: NEW CLIENT -->
+<div class="modal-overlay" id="newClientModal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">👤 <span class="t" data-ru="Новый клиент" data-uz="Yangi mijoz">Новый клиент</span></div>
+    <div class="form-group"><label class="form-label">Имя / Название *</label><input class="form-input" type="text" id="newClientName" placeholder="Анвар / Кафе Лидо"></div>
+    <div class="form-group"><label class="form-label">Телефон</label><input class="form-input" type="tel" id="newClientPhone" placeholder="+998 90 123 45 67"></div>
+    <div class="form-group"><label class="form-label">Тип</label>
+      <select class="form-input" id="newClientType">
+        <option value="кафе">☕ Кафе</option><option value="фаст-фуд">🍔 Фаст-фуд</option>
+        <option value="ресторан">🍽️ Ресторан</option><option value="другое">📍 Другое</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">Адрес</label><input class="form-input" type="text" id="newClientAddress" placeholder="Ташкент, ул. Навои 10"></div>
+    <div class="row">
+      <button class="btn btn-primary" onclick="saveNewClient()">✅ <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
+      <button class="btn btn-outline" onclick="closeModal('newClientModal')"><span class="t" data-ru="Отмена" data-uz="Bekor">Отмена</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: ORDER DETAIL -->
+<div class="modal-overlay" id="orderDetailModal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="detailTitle"></div>
+    <div id="detailContent"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn btn-primary" id="detailSendBtn" onclick="resendOrder()">📤 <span class="t" data-ru="Повторно" data-uz="Qayta yuborish">Повторно</span></button>
+      <button class="btn btn-outline" onclick="printInvoice(state.currentOrderId)">🖨️ PDF</button>
+      <button class="btn btn-outline" onclick="closeModal('orderDetailModal')"><span class="t" data-ru="Закрыть" data-uz="Yopish">Закрыть</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: CLIENT HISTORY -->
+<div class="modal-overlay" id="clientHistoryModal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="historyTitle"></div>
+    <div id="historyFavProducts" style="margin-bottom:12px"></div>
+    <div id="historyContent"></div>
+    <button class="btn btn-outline" style="margin-top:12px" onclick="closeModal('clientHistoryModal')"><span class="t" data-ru="Закрыть" data-uz="Yopish">Закрыть</span></button>
+  </div>
+</div>
+
+<!-- MODAL: PARTIAL PAYMENT -->
+<div class="modal-overlay" id="partialPayModal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">💰 <span class="t" data-ru="Частичная оплата" data-uz="Qisman to'lov">Частичная оплата</span></div>
+    <div class="card-sub" id="partialClientInfo" style="margin-bottom:12px;font-size:14px;color:var(--text)"></div>
+    <div class="form-group">
+      <label class="form-label t" data-ru="Сумма оплаты (so'm)" data-uz="To'lov summasi (so'm)">Сумма оплаты</label>
+      <input class="form-input" type="number" id="partialAmount" placeholder="0">
+    </div>
+    <div id="partialRemaining" style="font-size:13px;color:var(--text2);margin-bottom:12px"></div>
+    <div class="row">
+      <button class="btn btn-success" onclick="applyPartialPayment()">✅ <span class="t" data-ru="Применить" data-uz="Qo'llash">Применить</span></button>
+      <button class="btn btn-outline" onclick="closeModal('partialPayModal')"><span class="t" data-ru="Отмена" data-uz="Bekor">Отмена</span></button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+
+</body>
+</html>
