@@ -1,8 +1,8 @@
 :root {
     --bg:#0f0f1a;--bg2:#16162a;--bg3:#1e1e35;--card:#1a1a30;--border:#2a2a4a;
-    --accent:#7c6af7;--accent2:#4ab387;--accent3:#f7a84a;--danger:#f75a5a;
+    --accent:#7c6af7;--accent2:#56d4a0;--accent3:#f7a84a;--danger:#f75a5a;
     --text:#e8e8f5;--text2:#9090b8;--text3:#6060a0;
-    --green:#3cb482;--orange:#f7a84a;--blue:#5ab4f7;
+    --green:#56d4a0;--orange:#f7a84a;--blue:#5ab4f7;
     --r:14px;--r2:20px;--shadow:0 4px 24px rgba(0,0,0,0.4);
   }
   body.light {
@@ -229,3 +229,5 @@
     .no-print{display:none!important;}
   }
   #print-area{display:none;}
+/* PIN */
+.pin-digit:focus { border-color: var(--accent); }

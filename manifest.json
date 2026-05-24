@@ -1,5 +1,5 @@
 {
-  "name": "TeeGu.PRO — Заказы",
+  "name": "TeeGu",
   "short_name": "TeeGu.PRO",
   "description": "Управление заказами салатов для кафе и фаст-фуд",
   "start_url": "./index.html",
@@ -9,8 +9,8 @@
   "orientation": "portrait",
   "icons": [
     {
-      "src": "app-icon.png",
-      "sizes": "512x512",
+      "src": "./app-icon.png",
+      "sizes": "192x192",
       "type": "image/png"
     }
   ]

@@ -6,10 +6,10 @@
 <meta name="theme-color" content="#1a1a2e">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="TeeGu.PRO">
-<title>TeeGu.PRO</title>
-
+<meta name="apple-mobile-web-app-title" content="TeeGu">
+<title>TeeGu</title>
 <link rel="manifest" href="manifest.json">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
@@ -31,12 +31,15 @@
 </div>
 
 <div class="tabs">
-  <div class="tab active" data-page="new-order" onclick="showPage('new-order')">➕ <span class="t" data-ru="Заказ" data-uz="Buyurtma">Заказ</span></div>
+  <div class="tab active" data-page="dashboard" onclick="showPage('dashboard')">🏠 <span class="t" data-ru="Дашборд" data-uz="Bosh sahifa">Дашборд</span></div>
+  <div class="tab" data-page="new-order" onclick="showPage('new-order')">➕ <span class="t" data-ru="Заказ" data-uz="Buyurtma">Заказ</span></div>
   <div class="tab" data-page="orders" onclick="showPage('orders')">📋 <span class="t" data-ru="Заказы" data-uz="Buyurtmalar">Заказы</span> <span class="cnt" id="ordersCount">0</span></div>
   <div class="tab" data-page="debts" onclick="showPage('debts')">💰 <span class="t" data-ru="Долги" data-uz="Qarzlar">Долги</span> <span class="cnt" id="debtsCount">0</span></div>
   <div class="tab" data-page="delivery" onclick="showPage('delivery')">🚚 <span class="t" data-ru="Маршрут" data-uz="Marshrut">Маршрут</span> <span class="cnt" id="deliveryCount">0</span></div>
   <div class="tab" data-page="clients" onclick="showPage('clients')">👥 <span class="t" data-ru="Клиенты" data-uz="Mijozlar">Клиенты</span></div>
   <div class="tab" data-page="stats" onclick="showPage('stats')">📊 <span class="t" data-ru="Итоги" data-uz="Tahlil">Итоги</span></div>
+  <div class="tab" data-page="products" onclick="showPage('products');renderProductsSettings()">🛒 <span class="t" data-ru="Прод." data-uz="Mahsulot">Прод.</span></div>
+  <div class="tab" data-page="map" onclick="showPage('map')">🗺️ <span class="t" data-ru="Карта" data-uz="Xarita">Карта</span></div>
   <div class="tab" data-page="settings" onclick="showPage('settings')">⚙️</div>
 </div>
 
@@ -101,7 +104,11 @@
       <input class="form-input" type="text" id="orderNote" placeholder="...">
     </div>
   </div>
-  <button class="btn btn-success" id="submitBtn" onclick="submitOrder()" style="margin-bottom:8px">✅ <span class="t" data-ru="Оформить заказ" data-uz="Buyurtmani rasmiylashtirish">Оформить заказ</span></button>
+  <div style="display:flex;gap:8px;margin-bottom:8px">
+  <button class="btn btn-outline" style="width:auto;padding:13px 16px" onclick="openTemplatesModal()" title="Шаблоны">⭐</button>
+  <button class="btn btn-outline" style="width:auto;padding:13px 16px" onclick="saveTemplate()" title="Сохранить как шаблон">💾</button>
+</div>
+<button class="btn btn-success" id="submitBtn" onclick="submitOrder()" style="margin-bottom:8px">✅ <span class="t" data-ru="Оформить заказ" data-uz="Buyurtmani rasmiylashtirish">Оформить заказ</span></button>
   <button class="btn btn-outline" onclick="resetOrder()">🔄 <span class="t" data-ru="Очистить" data-uz="Tozalash">Очистить</span></button>
 </div>
 
@@ -198,6 +205,18 @@
   <button class="btn btn-orange" onclick="exportToExcel()" style="margin-bottom:12px">📊 <span class="t" data-ru="Экспорт в Excel" data-uz="Excelga yuklash">Экспорт в Excel</span></button>
 
   <div class="card" id="productStats"></div>
+
+  <!-- MONTHLY REPORT -->
+  <div class="card">
+    <div class="card-title" style="margin-bottom:12px">📅 <span class="t" data-ru="Отчёт по месяцам" data-uz="Oylik hisobot">Отчёт по месяцам</span></div>
+    <div id="monthlyReport"></div>
+  </div>
+
+  <!-- SEASONALITY -->
+  <div class="card">
+    <div class="card-title" style="margin-bottom:10px">📆 <span class="t" data-ru="Сезонность (дни недели)" data-uz="Mavsumiylik (hafta kunlari)">Сезонность (дни недели)</span></div>
+    <div id="seasonalityBlock"></div>
+  </div>
 </div>
 
 <!-- PAGE: SETTINGS -->
@@ -230,9 +249,61 @@
     <div style="background:var(--bg);border-radius:var(--r);padding:12px;font-family:monospace;font-size:11px;color:var(--accent2);overflow-x:auto;line-height:1.6;white-space:pre-wrap;border:1px solid var(--border)" id="scriptCode"></div>
     <button class="btn btn-outline" style="margin-top:10px" onclick="copyScript()">📋 <span class="t" data-ru="Скопировать" data-uz="Nusxalash">Скопировать</span></button>
   </div>
+
+  <div class="card">
+    <div class="card-title" style="margin-bottom:12px">💾 <span class="t" data-ru="Резервная копия" data-uz="Zaxira nusxa">Резервная копия</span></div>
+    <div class="row">
+      <button class="btn btn-success" onclick="backupData()">⬇️ <span class="t" data-ru="Скачать JSON" data-uz="JSON yuklash">Скачать JSON</span></button>
+      <button class="btn btn-outline" onclick="restoreData()">⬆️ <span class="t" data-ru="Восстановить" data-uz="Tiklash">Восстановить</span></button>
+    </div>
+  </div>
   <div class="card">
     <div class="card-title" style="margin-bottom:8px">🗑️ <span class="t" data-ru="Данные" data-uz="Ma'lumotlar">Данные</span></div>
     <button class="btn btn-danger" onclick="clearAllData()">🗑️ <span class="t" data-ru="Очистить всё" data-uz="Barchasini o'chirish">Очистить всё</span></button>
+  </div>
+</div>
+
+<!-- PAGE: DASHBOARD -->
+<div class="page" id="page-dashboard">
+  <div id="dashboardContent" style="padding-bottom:8px"></div>
+</div>
+
+<!-- PAGE: MAP -->
+<div class="page" id="page-map">
+  <div class="card" style="background:rgba(90,180,247,.08);border-color:var(--blue)">
+    <div class="card-header" style="margin-bottom:10px">
+      <div>
+        <div class="card-title">🗺️ <span class="t" data-ru="Карта клиентов" data-uz="Mijozlar xaritasi">Карта клиентов</span></div>
+        <div class="card-sub t" data-ru="Маршрут на сегодня выделен фиолетовым" data-uz="Bugungi marshrut binafsha rang bilan">Маршрут на сегодня выделен фиолетовым</div>
+      </div>
+    </div>
+    <a id="openMapsBtn" href="#" target="_blank" class="btn btn-primary" style="margin-bottom:10px;text-decoration:none;display:none">🧭 <span class="t" data-ru="Открыть маршрут в Google Maps" data-uz="Google Mapsda marshrut">Маршрут в Google Maps</span></a>
+  </div>
+  <!-- Leaflet map -->
+  <div id="mapContainer" style="margin-bottom:12px">
+    <div id="leafletMap" style="height:320px;border-radius:16px;overflow:hidden;border:1px solid var(--border)"></div>
+  </div>
+  <div class="card">
+    <div class="card-title" style="margin-bottom:10px">📋 <span class="t" data-ru="Клиенты на сегодня" data-uz="Bugungi mijozlar">Клиенты на сегодня</span></div>
+    <div id="mapRouteList"></div>
+  </div>
+  <div class="card">
+    <div class="card-title" style="margin-bottom:8px">📍 <span class="t" data-ru="Все клиенты с координатами" data-uz="Koordinatali mijozlar">Все с координатами</span></div>
+    <div id="allCoordsInfo" style="font-size:13px;color:var(--text2)">Добавьте координаты клиентам через кнопку 🗺️ в списке клиентов</div>
+  </div>
+</div>
+
+<!-- PAGE: PRODUCTS SETTINGS (accessed from settings tab) -->
+<div class="page" id="page-products">
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">⚙️ <span class="t" data-ru="Управление продуктами" data-uz="Mahsulotlarni boshqarish">Управление продуктами</span></div>
+        <div class="card-sub t" data-ru="Цены, себестоимость, добавить/удалить" data-uz="Narxlar, tannarx, qo'shish/o'chirish">Цены, себестоимость, добавить/удалить</div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="openAddProductModal()">+ <span class="t" data-ru="Добавить" data-uz="Qo'shish">Добавить</span></button>
+    </div>
+    <div id="productsSettingsList"></div>
   </div>
 </div>
 
@@ -297,6 +368,112 @@
       <button class="btn btn-success" onclick="applyPartialPayment()">✅ <span class="t" data-ru="Применить" data-uz="Qo'llash">Применить</span></button>
       <button class="btn btn-outline" onclick="closeModal('partialPayModal')"><span class="t" data-ru="Отмена" data-uz="Bekor">Отмена</span></button>
     </div>
+  </div>
+</div>
+
+
+<!-- MODAL: EDIT CLIENT -->
+<div class="modal-overlay" id="editClientModal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">✏️ <span class="t" data-ru="Редактировать клиента" data-uz="Mijozni tahrirlash">Редактировать клиента</span></div>
+    <div class="form-group"><label class="form-label">Имя / Название *</label><input class="form-input" type="text" id="editClientName"></div>
+    <div class="form-group"><label class="form-label">Телефон</label><input class="form-input" type="tel" id="editClientPhone"></div>
+    <div class="form-group"><label class="form-label">Тип</label>
+      <select class="form-input" id="editClientType">
+        <option value="кафе">☕ Кафе</option><option value="фаст-фуд">🍔 Фаст-фуд</option>
+        <option value="ресторан">🍽️ Ресторан</option><option value="другое">📍 Другое</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">Адрес</label><input class="form-input" type="text" id="editClientAddress"></div>
+    <div class="row">
+      <button class="btn btn-primary" onclick="saveEditClient()">✅ <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
+      <button class="btn btn-outline" onclick="closeModal('editClientModal')"><span class="t" data-ru="Отмена" data-uz="Bekor">Отмена</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: EDIT ORDER -->
+<div class="modal-overlay" id="editOrderModal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">✏️ <span class="t" data-ru="Редактировать заказ" data-uz="Buyurtmani tahrirlash">Редактировать заказ</span></div>
+    <div class="form-group">
+      <label class="form-label">Клиент</label>
+      <select class="form-input" id="editOrderClient"></select>
+    </div>
+    <div id="editOrderQtys" style="margin-bottom:14px"></div>
+    <div class="form-group">
+      <label class="form-label">Оплата</label>
+      <select class="form-input" id="editOrderPayment">
+        <option value="наличные">💵 Наличные</option>
+        <option value="клик">📱 Click</option>
+        <option value="консигнация">📝 Консигнация</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">Примечание</label><input class="form-input" type="text" id="editOrderNote"></div>
+    <div class="row">
+      <button class="btn btn-primary" onclick="saveEditOrder()">✅ <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
+      <button class="btn btn-outline" onclick="closeModal('editOrderModal')"><span class="t" data-ru="Отмена" data-uz="Bekor">Отмена</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: ADD PRODUCT -->
+<div class="modal-overlay" id="addProductModal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">➕ <span class="t" data-ru="Новый продукт" data-uz="Yangi mahsulot">Новый продукт</span></div>
+    <div class="row">
+      <div class="form-group"><label class="form-label">Эмодзи</label><input class="form-input" type="text" id="newProdEmoji" placeholder="🥗" style="font-size:22px;text-align:center"></div>
+      <div class="form-group" style="flex:3"><label class="form-label">Название (RU) *</label><input class="form-input" type="text" id="newProdName" placeholder="Морковча"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Название (UZ)</label><input class="form-input" type="text" id="newProdNameUz" placeholder="Sabzi"></div>
+    <div class="row">
+      <div class="form-group"><label class="form-label">Цена (so'm) *</label><input class="form-input" type="number" id="newProdPrice" placeholder="25000"></div>
+      <div class="form-group"><label class="form-label">Себестоимость</label><input class="form-input" type="number" id="newProdCost" placeholder="0"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Единица</label>
+      <select class="form-input" id="newProdUnit">
+        <option value="кг">кг</option>
+        <option value="шт">шт</option>
+        <option value="л">л</option>
+        <option value="упак">упак</option>
+      </select>
+    </div>
+    <div class="row">
+      <button class="btn btn-primary" onclick="saveNewProduct()">✅ <span class="t" data-ru="Добавить" data-uz="Qo'shish">Добавить</span></button>
+      <button class="btn btn-outline" onclick="closeModal('addProductModal')"><span class="t" data-ru="Отмена" data-uz="Bekor">Отмена</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: COORDINATES -->
+<div class="modal-overlay" id="coordModal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">📍 <span id="coordClientName"></span></div>
+    <div class="card-sub" style="margin-bottom:14px;font-size:13px;color:var(--text2)">Введите координаты или найдите на Google Maps → ПКМ → <b>Что здесь?</b></div>
+    <input type="hidden" id="coordSaveId">
+    <div class="row">
+      <div class="form-group"><label class="form-label">Широта (Lat)</label><input class="form-input" type="number" step="any" id="coordLat" placeholder="41.299496"></div>
+      <div class="form-group"><label class="form-label">Долгота (Lng)</label><input class="form-input" type="number" step="any" id="coordLng" placeholder="69.240073"></div>
+    </div>
+    <button class="btn btn-outline" onclick="detectMyLocation()" style="margin-bottom:10px">📡 <span class="t" data-ru="Моё местоположение" data-uz="Mening joylashuvim">Моё местоположение</span></button>
+    <div class="row">
+      <button class="btn btn-primary" onclick="saveClientCoords()">✅ <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
+      <button class="btn btn-outline" onclick="closeModal('coordModal')"><span class="t" data-ru="Отмена" data-uz="Bekor">Отмена</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: TEMPLATES -->
+<div class="modal-overlay" id="templatesModal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">⭐ <span class="t" data-ru="Шаблоны заказов" data-uz="Buyurtma shablonlari">Шаблоны заказов</span></div>
+    <div id="templatesList" style="margin-bottom:12px"></div>
+    <button class="btn btn-outline" onclick="closeModal('templatesModal')"><span class="t" data-ru="Закрыть" data-uz="Yopish">Закрыть</span></button>
   </div>
 </div>
 
