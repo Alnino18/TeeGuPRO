@@ -1204,3 +1204,60 @@ document.querySelectorAll('.modal-overlay').forEach(overlay=>{overlay.addEventLi
 
 init();
 if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
+// ==================== SWIPE NAVIGATION ====================
+const PAGE_ORDER = [
+  'dashboard','new-order','orders','debts',
+  'delivery','clients','stats','products','map','settings'
+];
+
+(function initSwipe() {
+  let startX = 0, startY = 0, startTime = 0;
+  const THRESHOLD = 55;
+  const MAX_Y     = 90;
+  const MAX_TIME  = 420;
+
+  document.addEventListener('touchstart', function(e) {
+    if (
+      e.target.closest('.modal-overlay') ||
+      e.target.closest('input') ||
+      e.target.closest('select') ||
+      e.target.closest('textarea') ||
+      e.target.closest('.tabs') ||
+      e.target.closest('#leafletMap') ||
+      e.target.closest('.chart-bars')
+    ) return;
+    startX    = e.touches[0].clientX;
+    startY    = e.touches[0].clientY;
+    startTime = Date.now();
+  }, { passive: true });
+
+  document.addEventListener('touchend', function(e) {
+    if (!startX) return;
+    const dx = e.changedTouches[0].clientX - startX;
+    const dy = Math.abs(e.changedTouches[0].clientY - startY);
+    const dt = Date.now() - startTime;
+
+    if (Math.abs(dx) < THRESHOLD || dy > MAX_Y || dt > MAX_TIME) {
+      startX = 0; return;
+    }
+
+    const activePage = document.querySelector('.page.active');
+    if (!activePage) { startX = 0; return; }
+
+    const curId  = activePage.id.replace('page-', '');
+    const curIdx = PAGE_ORDER.indexOf(curId);
+    if (curIdx === -1) { startX = 0; return; }
+
+    const nextIdx = dx < 0
+      ? Math.min(curIdx + 1, PAGE_ORDER.length - 1)
+      : Math.max(curIdx - 1, 0);
+
+    if (nextIdx !== curIdx) {
+      showPage(PAGE_ORDER[nextIdx]);
+      const activeTab = document.querySelector('.tab[data-page="' + PAGE_ORDER[nextIdx] + '"]');
+      if (activeTab) activeTab.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      if (navigator.vibrate) navigator.vibrate(18);
+    }
+    startX = 0;
+  }, { passive: true });
+})();
