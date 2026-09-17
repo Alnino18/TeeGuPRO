@@ -12,40 +12,74 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
 let tg = window.Telegram?.WebApp;
-if(tg) {
+if(tg && tg.initData) {
   tg.ready();
   tg.expand();
 }
 
-let tgUser = tg?.initDataUnsafe?.user || { id: 12345, first_name: "Тест Клиент" };
+let tgUser = tg?.initDataUnsafe?.user || { id: Date.now(), first_name: "Клиент" };
 
 let currentClient = null;
 let products = [];
 let cart = {};
 
 async function init() {
-  // Загружаем продукты
+  try {
+    const cSnap = await db.collection('clients').where('tgId', '==', tgUser.id).get();
+    if(!cSnap.empty) {
+      currentClient = cSnap.docs[0].data();
+      loadMenu();
+    } else {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('loginScreen').style.display = 'block';
+    }
+  } catch(e) {
+    alert("Ошибка загрузки. Проверьте интернет.");
+  }
+}
+
+async function loginWithPhone() {
+  let phone = document.getElementById('loginPhone').value.trim();
+  if(!phone) return alert('Пожалуйста, введите номер телефона');
+  
+  document.getElementById('loading').style.display = 'flex';
+  document.getElementById('loginScreen').style.display = 'none';
+  
+  try {
+    const cSnap = await db.collection('clients').where('phone', '==', phone).get();
+    if(!cSnap.empty) {
+      // Существующий клиент найден по номеру
+      currentClient = cSnap.docs[0].data();
+      currentClient.tgId = tgUser.id;
+      if(!currentClient.name) currentClient.name = tgUser.first_name;
+      await db.collection('clients').doc(String(currentClient.id)).update({ tgId: tgUser.id, name: currentClient.name });
+    } else {
+      // Создаем нового клиента
+      const newClient = {
+        id: Date.now(),
+        name: tgUser.first_name + (tgUser.last_name ? ' ' + tgUser.last_name : ''),
+        tgId: tgUser.id,
+        phone: phone,
+        customPrices: {}
+      };
+      await db.collection('clients').doc(String(newClient.id)).set(newClient);
+      currentClient = newClient;
+    }
+    loadMenu();
+  } catch(e) {
+    alert("Ошибка связи с базой.");
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('loginScreen').style.display = 'block';
+  }
+}
+
+async function loadMenu() {
+  document.getElementById('loading').style.display = 'flex';
   const pSnap = await db.collection('products').get();
   products = pSnap.docs.map(d => d.data()).sort((a,b)=>a.order-b.order);
   
-  // Ищем клиента
-  const cSnap = await db.collection('clients').where('tgId', '==', tgUser.id).get();
-  if(!cSnap.empty) {
-    currentClient = cSnap.docs[0].data();
-  } else {
-    // Создаем нового клиента
-    const newClient = {
-      id: Date.now(),
-      name: tgUser.first_name + (tgUser.last_name ? ' ' + tgUser.last_name : ''),
-      tgId: tgUser.id,
-      phone: '',
-      customPrices: {}
-    };
-    await db.collection('clients').doc(String(newClient.id)).set(newClient);
-    currentClient = newClient;
-  }
-  
   document.getElementById('loading').style.display = 'none';
+  document.getElementById('menuScreen').style.display = 'block';
   renderProducts();
 }
 
@@ -62,9 +96,10 @@ function renderProducts() {
   const html = products.map(p => {
     const price = getPrice(p);
     const qty = cart[p.id] || 0;
+    const hasCustomPrice = currentClient?.customPrices?.[p.id] ? '<span style="color:var(--orange)">★</span>' : '';
     return `
-    <div class="product-card ${qty > 0 ? 'selected' : ''}" id="pc-${p.id}" style="padding:15px">
-      <div class="product-name">${p.emoji} ${p.name}</div>
+    <div class="product-card ${qty > 0 ? 'selected' : ''}" id="pc-${p.id}" style="padding:15px; position:relative;">
+      <div class="product-name">${p.emoji} ${p.name} ${hasCustomPrice}</div>
       <div class="product-price">${fmt(price)} / ${p.unit || 'кг'}</div>
       <div class="product-qty" style="margin-top:10px">
         <div class="qty-btn" onclick="changeQty('${p.id}', ${-(p.step || 0.5)})">−</div>
@@ -119,16 +154,13 @@ async function submitOrder() {
   const address = document.getElementById('orderAddress').value.trim();
   const note = document.getElementById('orderNote').value.trim();
   
-  if(!phone) { alert('Введите телефон'); return; }
-  
   document.getElementById('submitBtn').disabled = true;
   document.getElementById('submitBtn').innerText = 'Отправка...';
   
-  // Update client info if it changed
-  if(phone !== currentClient.phone || address !== currentClient.address) {
-    currentClient.phone = phone;
+  // Update client info if address changed
+  if(address !== currentClient.address) {
     currentClient.address = address;
-    await db.collection('clients').doc(String(currentClient.id)).update({ phone, address });
+    await db.collection('clients').doc(String(currentClient.id)).update({ address });
   }
   
   let total = 0;
@@ -146,24 +178,29 @@ async function submitOrder() {
     id: Date.now(),
     clientId: currentClient.id,
     client: currentClient.name,
-    phone, address, note, items, total,
+    phone: currentClient.phone,
+    address, note, items, total,
     type: 'доставка',
     payment: 'наличные',
     status: 'new',
     date: new Date().toISOString()
   };
   
-  await db.collection('orders').doc(String(order.id)).set(order);
-  
-  if(tg) tg.close();
-  else {
-    alert('Заказ успешно отправлен!');
-    cart = {};
-    updateCart();
-    renderProducts();
-    closeCheckout();
+  try {
+    await db.collection('orders').doc(String(order.id)).set(order);
+    if(tg && tg.initData) tg.close();
+    else {
+      alert('Заказ успешно отправлен!');
+      cart = {};
+      updateCart();
+      renderProducts();
+      closeCheckout();
+    }
+  } catch(e) {
+    alert("Ошибка при отправке заказа.");
+  } finally {
     document.getElementById('submitBtn').disabled = false;
-    document.getElementById('submitBtn').innerText = 'Подтвердить';
+    document.getElementById('submitBtn').innerText = 'Подтвердить заказ';
   }
 }
 

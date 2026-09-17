@@ -17,45 +17,57 @@
   .cart-total { font-weight: 800; font-size: 18px; color: var(--accent2); }
   .btn-order { background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 700; cursor: pointer; }
   #loading { position: fixed; top:0; left:0; width:100%; height:100%; background: var(--bg); z-index: 1000; display:flex; align-items:center; justify-content:center; font-weight:800; }
+  #loginScreen { padding: 20px; text-align: center; padding-top: 80px; }
 </style>
 </head>
 <body>
 
 <div id="loading">Загрузка...</div>
 
-<div class="header">🥗 TeeGu Меню</div>
-
-<div style="padding:15px">
-  <div id="productsGrid" style="display:grid; grid-template-columns:1fr; gap:10px;"></div>
+<!-- Экран авторизации (связки телефона) -->
+<div id="loginScreen" style="display:none">
+  <div style="font-size:40px; margin-bottom:10px">🥗</div>
+  <h2>Добро пожаловать!</h2>
+  <p style="color:var(--text2); margin-bottom:25px; font-size:14px">Пожалуйста, введите ваш номер телефона, чтобы мы могли показать ваши персональные цены и адрес доставки.</p>
+  <input type="tel" id="loginPhone" class="form-input" placeholder="+998 90 123 45 67" style="margin-bottom:15px; text-align:center; font-size:18px; padding:15px">
+  <button class="btn btn-primary" onclick="loginWithPhone()" style="width:100%; padding:15px; font-size:16px">Войти / Регистрация</button>
 </div>
 
-<div class="cart-bar" id="cartBar" style="display:none">
-  <div>
-    <div style="font-size:12px; color:var(--text2)">Итого к оплате:</div>
-    <div class="cart-total" id="cartTotal">0 сум</div>
+<!-- Экран меню -->
+<div id="menuScreen" style="display:none">
+  <div class="header">🥗 TeeGu Меню</div>
+  <div style="padding:15px">
+    <div id="productsGrid" style="display:grid; grid-template-columns:1fr; gap:10px;"></div>
   </div>
-  <button class="btn-order" onclick="placeOrder()">Заказать</button>
+
+  <div class="cart-bar" id="cartBar" style="display:none">
+    <div>
+      <div style="font-size:12px; color:var(--text2)">Итого к оплате:</div>
+      <div class="cart-total" id="cartTotal">0 сум</div>
+    </div>
+    <button class="btn-order" onclick="placeOrder()">Заказать</button>
+  </div>
 </div>
 
 <!-- Модалка оформления -->
 <div id="checkoutModal" class="modal">
   <div class="modal-content">
-    <h3>Оформление заказа</h3>
+    <h3>Подтверждение адреса</h3>
     <div class="form-group">
-      <label class="form-label">Телефон</label>
-      <input type="text" id="orderPhone" class="form-input" placeholder="+998...">
+      <label class="form-label">Ваш Телефон</label>
+      <input type="text" id="orderPhone" class="form-input" readonly style="background:rgba(255,255,255,0.05)">
     </div>
     <div class="form-group">
       <label class="form-label">Адрес доставки</label>
-      <input type="text" id="orderAddress" class="form-input" placeholder="Улица, дом...">
+      <input type="text" id="orderAddress" class="form-input" placeholder="Город, улица, дом...">
     </div>
     <div class="form-group">
-      <label class="form-label">Примечание</label>
-      <input type="text" id="orderNote" class="form-input" placeholder="Без лука...">
+      <label class="form-label">Примечание к заказу</label>
+      <input type="text" id="orderNote" class="form-input" placeholder="Например: без лука">
     </div>
     <div style="display:flex; gap:10px; margin-top:20px">
       <button class="btn btn-secondary" onclick="closeCheckout()">Отмена</button>
-      <button class="btn btn-primary" onclick="submitOrder()" id="submitBtn">Подтвердить</button>
+      <button class="btn btn-primary" onclick="submitOrder()" id="submitBtn">Подтвердить заказ</button>
     </div>
   </div>
 </div>
