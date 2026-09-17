@@ -157,30 +157,6 @@ function init(){
   startApp();
 }
 
-function backupData(){
-  const data={clients:state.clients,orders:state.orders,settings:state.settings,templates:state.templates,products:PRODUCTS,exportedAt:new Date().toISOString(),version:'v7'};
-  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download='СалатПро_backup_'+new Date().toLocaleDateString('ru-RU').replace(/\./g,'-')+'.json';
-  a.click();
-  showToast('💾 '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');
-}
-function restoreData(){
-  const input=document.createElement('input');input.type='file';input.accept='.json';
-  input.onchange=e=>{
-    const file=e.target.files[0];if(!file)return;
-    const reader=new FileReader();
-    reader.onload=ev=>{
-      try{
-        const data=JSON.parse(ev.target.result);
-        if(!data.clients||!data.orders)throw new Error('Неверный формат');
-        if(!confirm(lang==='uz'?'Barcha ma\'lumotlarni almashtirish?':'Заменить все текущие данные из файла?'))return;
-        state.clients=data.clients||[];
-        state.orders=data.orders||[];
-        state.settings=data.settings||{};
-        state.templates=data.templates||[];
-        if(data.products){localStorage.setItem('products',JSON.stringify(data.products));}
         localStorage.setItem('clients',JSON.stringify(state.clients));
         localStorage.setItem('orders',JSON.stringify(state.orders));
         db.collection('settings').doc('main').set(state.settings);
@@ -1150,8 +1126,6 @@ function showScriptCode(){document.getElementById('scriptCode').textContent=`fun
     data.total,data.payment,data.note||'']);
   return ContentService.createTextOutput("OK").setMimeType(ContentService.MimeType.TEXT);
 }`;}
-function copyScript(){navigator.clipboard.writeText(document.getElementById('scriptCode').textContent).then(()=>showToast('📋 '+(lang==='uz'?'Nusxalandi':'Скопировано'),'success'));}
-function clearAllData(){if(!confirm(lang==='uz'?'Barchasini o\'chirishni tasdiqlaysizmi?':'Очистить ВСЕ данные?'))return;localStorage.clear(); showToast('Cannot clear Firestore automatically','info');}
 
 // UTILS
 function fmt(n){return Math.round(n).toLocaleString('ru-RU');}
