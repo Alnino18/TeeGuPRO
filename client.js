@@ -169,7 +169,7 @@ async function submitOrder() {
     const p = products.find(x => x.id === id);
     if(p) {
       const price = getPrice(p);
-      items.push({ id: p.id, name: p.name, emoji: p.emoji, qty: cart[id], price: price, unit: p.unit });
+      items.push({ id: p.id, name: p.name || '', emoji: p.emoji || '', qty: cart[id], price: price, unit: p.unit || 'кг' });
       total += cart[id] * price;
     }
   }
@@ -177,9 +177,12 @@ async function submitOrder() {
   const order = {
     id: Date.now(),
     clientId: currentClient.id,
-    client: currentClient.name,
-    phone: currentClient.phone,
-    address, note, items, total,
+    client: currentClient.name || '',
+    phone: currentClient.phone || '',
+    address: address || '', 
+    note: note || '', 
+    items: items, 
+    total: total || 0,
     type: 'доставка',
     payment: 'наличные',
     status: 'new',
