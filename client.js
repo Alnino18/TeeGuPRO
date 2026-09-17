@@ -40,6 +40,9 @@ async function init() {
 
 async function loginWithPhone() {
   let phone = document.getElementById('loginPhone').value.trim();
+  let name = document.getElementById('loginName').value.trim();
+  
+  if(!name) return alert('Пожалуйста, введите ваше имя');
   if(!phone) return alert('Пожалуйста, введите номер телефона');
   
   document.getElementById('loading').style.display = 'flex';
@@ -51,13 +54,14 @@ async function loginWithPhone() {
       // Существующий клиент найден по номеру
       currentClient = cSnap.docs[0].data();
       currentClient.tgId = tgUser.id;
-      if(!currentClient.name) currentClient.name = tgUser.first_name;
-      await db.collection('clients').doc(String(currentClient.id)).update({ tgId: tgUser.id, name: currentClient.name });
+      // Обновляем имя, если оно было пустым или клиент захотел его уточнить
+      currentClient.name = name;
+      await db.collection('clients').doc(String(currentClient.id)).update({ tgId: tgUser.id, name: name });
     } else {
       // Создаем нового клиента
       const newClient = {
         id: Date.now(),
-        name: tgUser.first_name + (tgUser.last_name ? ' ' + tgUser.last_name : ''),
+        name: name,
         tgId: tgUser.id,
         phone: phone,
         customPrices: {}
