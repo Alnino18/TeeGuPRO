@@ -124,6 +124,7 @@ async function submitOrder() {
   const phone = document.getElementById('orderPhone').value.trim();
   const address = document.getElementById('orderAddress').value.trim();
   const note = document.getElementById('orderNote').value.trim();
+  const paymentMethod = document.getElementById('orderPayment') ? document.getElementById('orderPayment').value : 'наличные';
   
   if(!name) return alert('Пожалуйста, введите ваше имя');
   if(!phone) return alert('Пожалуйста, введите номер телефона');
@@ -193,7 +194,7 @@ async function submitOrder() {
     items: items, 
     total: total || 0,
     type: 'доставка',
-    payment: 'наличные',
+    payment: paymentMethod,
     status: 'new',
     date: new Date().toISOString()
   };

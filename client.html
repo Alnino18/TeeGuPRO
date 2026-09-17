@@ -65,6 +65,13 @@
         <label class="form-label">Примечание к заказу</label>
         <input type="text" id="orderNote" class="form-input" placeholder="Например: без лука">
       </div>
+      <div class="form-group">
+        <label class="form-label">Тип оплаты / To'lov turi</label>
+        <select id="orderPayment" class="form-input" style="appearance: none; padding-right: 30px; background: var(--bg2) url('data:image/svg+xml;utf8,<svg fill=%22%237c6af7%22 height=%2224%22 viewBox=%220 0 24 24%22 width=%2224%22 xmlns=%22http://www.w3.org/2000/svg%22><path d=%22M7 10l5 5 5-5z%22/></svg>') no-repeat right 10px center;">
+          <option value="наличные">💵 Наличные (Naqd)</option>
+          <option value="клик">📱 Карта (Click/Payme)</option>
+        </select>
+      </div>
       <div style="display:flex; gap:10px; margin-top:20px">
         <button class="btn btn-secondary" onclick="closeCheckout()">Отмена</button>
         <button class="btn btn-primary" onclick="submitOrder()" id="submitBtn">Подтвердить заказ</button>
@@ -73,6 +80,6 @@
   </div>
 </div>
 
-<script src="client.js?v=9"></script>
+<script src="client.js?v=10"></script>
 </body>
 </html>
