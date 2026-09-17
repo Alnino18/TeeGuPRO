@@ -217,18 +217,36 @@ async function submitOrder() {
         });
         await db.collection('orders').doc(String(order.id)).update({sent: true});
       }
+
+      // Send confirmation to the client via Bot
+      if(tgUser && tgUser.id && tgToken) {
+        fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({chat_id:tgUser.id, text:'✅ Sizning buyurtmangiz qabul qilindi. Tez orada siz bilan bog\'lanamiz!'})
+        }).catch(e=>console.log(e));
+      }
     } catch(err) {
       console.log("TG error", err);
     }
 
-    if(tg && tg.initData) tg.close();
+    cart = {};
+    updateCart();
+    renderProducts();
+    closeCheckout();
 
-    else {
-      alert('Заказ успешно отправлен!');
-      cart = {};
-      updateCart();
-      renderProducts();
-      closeCheckout();
+    if(tg && tg.initData && tg.showConfirm) {
+      tg.showConfirm("✅ Buyurtma qabul qilindi!\n\nYana buyurtma berasizmi?", function(more) {
+        if(!more) {
+          tg.close();
+        }
+      });
+    } else {
+      if(confirm("✅ Buyurtma qabul qilindi!\n\nYana buyurtma berasizmi? (Ok = Ha, Cancel = Yo'q)")) {
+        // just stay
+      } else {
+        if(tg && tg.close) tg.close();
+      }
     }
   } catch(e) {
     alert("Ошибка: " + e.message);
