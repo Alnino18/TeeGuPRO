@@ -193,9 +193,28 @@ async function submitOrder() {
     date: new Date().toISOString()
   };
   
+
   try {
     await db.collection('orders').doc(String(order.id)).set(order);
+    
+    try {
+      const setSnap = await db.collection('settings').doc('main').get();
+      const settings = setSnap.data() || {};
+      if(settings.tgToken && settings.tgChatId) {
+        const text = buildTgMsg(order);
+        await fetch(`https://api.telegram.org/bot${settings.tgToken}/sendMessage`,{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({chat_id:settings.tgChatId, text:text, parse_mode:'HTML'})
+        });
+        await db.collection('orders').doc(String(order.id)).update({sent: true});
+      }
+    } catch(err) {
+      console.log("TG error", err);
+    }
+
     if(tg && tg.initData) tg.close();
+
     else {
       alert('Заказ успешно отправлен!');
       cart = {};
@@ -212,3 +231,19 @@ async function submitOrder() {
 }
 
 init();
+
+function buildTgMsg(order){
+  const pi={'наличные':'💵','клик':'📱','консигнация':'📝'};
+  const d=new Date(order.date);
+  const ds=d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+  let l=[`🥗 <b>НОВЫЙ ЗАКАЗ ИЗ WEB APP</b>`,``,`👤 <b>${order.client}</b>`];
+  if(order.phone)l.push(`📞 ${order.phone}`);
+  if(order.address)l.push(`📍 ${order.address}`);
+  if(order.note)l.push(`📌 <i>${order.note}</i>`);
+  l.push(``,`📦 <b>Заказ:</b>`);
+  order.items.forEach((i,idx)=>l.push(`${idx+1}. ${i.emoji||''} ${i.name} — ${i.qty}${i.unit||'кг'}`));
+  l.push(``,`💰 <b>Итого: ${fmt(order.total)} сум</b>`,`💳 ${pi[order.payment]||''} ${order.payment}`);
+  if(order.type==='доставка')l.push(`🛵 Доставка`);
+  l.push(``,`⏱ ${ds}`);
+  return l.join('\n');
+}
