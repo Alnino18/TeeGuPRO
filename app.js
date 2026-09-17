@@ -33,6 +33,7 @@ let state={
   settings: {},
   deliveryStatus: {},
   templates: [],
+  couriers: [],
   quantities:{},selectedPayment:'наличные',currentOrderId:null,dateFilter:'all',
 };
 
@@ -61,6 +62,11 @@ db.collection('orders').onSnapshot(snap => {
 
 db.collection('settings').doc('main').onSnapshot(snap => {
   if (snap.exists) { state.settings = snap.data(); loadSettings(); }
+});
+
+db.collection('couriers').onSnapshot(snap => {
+  state.couriers = snap.docs.map(d => d.data());
+  renderCouriersSettings(); populateCourierSelects();
 });
 
 db.collection('templates').onSnapshot(snap => {
@@ -97,12 +103,48 @@ function applyLang(){
 function toggleLang(){lang=lang==='ru'?'uz':'ru';localStorage.setItem('lang',lang);applyLang();renderAll();}
 function renderAll(){renderProductsGrid();renderOrdersList();renderClientsList();renderStats();renderDebts();renderDelivery();renderFavorites();}
 
+function printOrder(id) {
+  const o = state.orders.find(x => x.id == id);
+  if(!o) return;
+  const d = new Date(o.date);
+  const ds = d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
+  let html = `<div style="text-align:center; font-size:18px; font-weight:bold; border-bottom:1px dashed #000; padding-bottom:10px; margin-bottom:10px;">
+    🥗 TeeGu.PRO
+  </div>
+  <div style="margin-bottom:10px;">
+    <b>Чек:</b> #${o.id.toString().slice(-4)}<br>
+    <b>Дата:</b> ${ds}<br>
+    <b>Клиент:</b> ${o.client}<br>
+    ${o.phone ? `<b>Тел:</b> ${o.phone}<br>` : ''}
+    ${o.address ? `<b>Адрес:</b> ${o.address}<br>` : ''}
+    ${o.courier ? `<b>Курьер:</b> ${o.courier}<br>` : ''}
+  </div>
+  <table style="width:100%; border-collapse:collapse; margin-bottom:10px;">
+    <tr style="border-bottom:1px solid #000;"><th style="text-align:left">Наим.</th><th style="text-align:right">Кол</th><th style="text-align:right">Сумма</th></tr>`;
+  
+  o.items.forEach(i => {
+    html += `<tr><td style="padding:2px 0;">${i.name}</td><td style="text-align:right">${i.qty}${i.unit||'кг'}</td><td style="text-align:right">${fmt(i.qty*i.price)}</td></tr>`;
+  });
+  
+  html += `</table>
+  <div style="font-size:16px; font-weight:bold; border-top:1px dashed #000; padding-top:10px; margin-bottom:10px;">
+    ИТОГО: ${fmt(o.total)} сум
+  </div>
+  <div style="text-align:center; font-size:12px; font-style:italic;">
+    Спасибо за покупку!<br>
+    ${state.settings.phone ? 'Тел: ' + state.settings.phone : ''}
+  </div>`;
+  
+  document.getElementById('print-area').innerHTML = html;
+  window.print();
+}
+
 // INIT
 function startApp(){
   applyTheme();applyLang();
   renderProductsGrid();populateClientSelect();renderClientsList();
   renderOrdersList();renderStats();renderDebts();renderDelivery();renderFavorites();
-  loadSettings();updateBadges();showScriptCode();renderProductsSettings();
+  loadSettings();updateBadges();showScriptCode();renderProductsSettings(); renderCouriersSettings(); populateCourierSelects();
   document.getElementById('partialAmount').addEventListener('input',updatePartialRemaining);
   renderDashboard();
   setupOfflineSync();
@@ -1044,6 +1086,29 @@ function exportToExcel(){
   showToast('📊 '+(lang==='uz'?'Yuklandi':'Скачано'),'success');
 }
 
+function renderCouriersSettings(){
+  const el=document.getElementById('couriersSettingsList');if(!el)return;
+  el.innerHTML=state.couriers.map(c=>`<div style="display:flex;justify-content:space-between;background:var(--bg2);border:1px solid var(--border);padding:10px;border-radius:10px;margin-bottom:8px">
+    <div style="font-weight:700">${c.name}</div>
+    <button onclick="deleteCourier(${c.id})" style="background:rgba(247,90,90,.1);color:var(--danger);border:none;border-radius:6px;padding:4px 8px;cursor:pointer">🗑</button>
+  </div>`).join('');
+}
+function addCourier(){
+  const name=document.getElementById('newCourierName').value.trim();
+  if(!name)return;
+  const c = {id:Date.now(), name};
+  db.collection('couriers').doc(String(c.id)).set(c);
+  document.getElementById('newCourierName').value='';
+}
+function deleteCourier(id){
+  db.collection('couriers').doc(String(id)).delete();
+}
+function populateCourierSelects(){
+  const html = '<option value="">-- Без курьера --</option>' + state.couriers.map(c=>`<option value="${c.name}">${c.name}</option>`).join('');
+  const oc = document.getElementById('orderCourier'); if(oc) oc.innerHTML=html;
+  const eoc = document.getElementById('editOrderCourier'); if(eoc) eoc.innerHTML=html;
+}
+
 // SETTINGS
 function loadSettings(){const s=state.settings;if(s.tgToken)document.getElementById('tgToken').value=s.tgToken;if(s.tgChatId)document.getElementById('tgChatId').value=s.tgChatId;if(s.sheetsUrl)document.getElementById('sheetsUrl').value=s.sheetsUrl;}
 function saveSettings(){state.settings.tgToken=document.getElementById('tgToken').value.trim();state.settings.tgChatId=document.getElementById('tgChatId').value.trim();state.settings.sheetsUrl=document.getElementById('sheetsUrl').value.trim();db.collection('settings').doc('main').set(state.settings);showToast('✅ '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');}
@@ -1098,13 +1163,34 @@ function renderDashboard(){
   const todayOrders=state.orders.filter(o=>new Date(o.date).toDateString()===todayStr);
   const todayRev=todayOrders.reduce((s,o)=>s+o.total,0);
   const todayCount=todayOrders.length;
+  
+  let todayCost = 0;
+  todayOrders.forEach(o => {
+    o.items.forEach(i => {
+      const p = PRODUCTS.find(x => x.id === i.id);
+      if(p) todayCost += (p.cost || 0) * i.qty;
+    });
+  });
+  const todayNetProfit = (todayRev - todayCost) * 0.5;
+
   const todayDelivered=todayOrders.filter(o=>o.delivered).length;
   const allDebts=state.orders.filter(o=>o.payment==='консигнация'&&!o.debtPaid);
   const totalDebt=allDebts.reduce((s,o)=>s+(o.total-(o.partialPaid||0)),0);
   const debtClients=new Set(allDebts.map(o=>o.clientId)).size;
   const unsent=state.orders.filter(o=>!o.sent).length;
   const weekStart=new Date(now);weekStart.setDate(now.getDate()-(now.getDay()+6)%7);weekStart.setHours(0,0,0,0);
-  const weekRev=state.orders.filter(o=>new Date(o.date)>=weekStart).reduce((s,o)=>s+o.total,0);
+  const weekOrders=state.orders.filter(o=>new Date(o.date)>=weekStart);
+  const weekRev=weekOrders.reduce((s,o)=>s+o.total,0);
+  
+  let weekCost = 0;
+  weekOrders.forEach(o => {
+    o.items.forEach(i => {
+      const p = PRODUCTS.find(x => x.id === i.id);
+      if(p) weekCost += (p.cost || 0) * i.qty;
+    });
+  });
+  const weekNetProfit = (weekRev - weekCost) * 0.5;
+  
   const prodToday={};PRODUCTS.forEach(p=>prodToday[p.id]=0);
   todayOrders.forEach(o=>o.items.forEach(i=>{if(prodToday[i.id]!==undefined)prodToday[i.id]+=i.qty;}));
   const prodRows=PRODUCTS.filter(p=>prodToday[p.id]>0).map(p=>`
@@ -1121,15 +1207,23 @@ function renderDashboard(){
       <div style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;font-size:11px;color:var(--text3)"><div id="onlineIndicator" style="width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0"></div>${lang==='uz'?'Onlayn':'Онлайн'}</div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
-      <div style="background:linear-gradient(135deg,rgba(124,106,247,.2),rgba(86,212,160,.1));border:1px solid rgba(124,106,247,.3);border-radius:16px;padding:16px;text-align:center">
-        <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">${lang==='uz'?'Bugun':'Сегодня'}</div>
-        <div style="font-size:26px;font-weight:900;color:var(--accent2)">${fmt(todayRev)}</div>
-        <div style="font-size:10px;color:var(--text3);margin-top:2px">so'm · ${todayCount} ${lang==='uz'?'ta':'шт'}</div>
+      <div style="background:linear-gradient(135deg,rgba(124,106,247,.2),rgba(86,212,160,.1));border:1px solid rgba(124,106,247,.3);border-radius:16px;padding:12px;text-align:center">
+        <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">${lang==='uz'?'Bugun tushum':'Сегодня'}</div>
+        <div style="font-size:22px;font-weight:900;color:var(--accent2)">${fmt(todayRev)}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:2px;margin-bottom:6px">so'm · ${todayCount} ${lang==='uz'?'ta':'шт'}</div>
+        <div style="background:rgba(86,212,160,.15);border-radius:8px;padding:6px;margin-top:4px">
+            <div style="font-size:9px;color:var(--text2);text-transform:uppercase">${lang==='uz'?'Sof foyda':'Чистая прибыль'}</div>
+            <div style="font-size:16px;font-weight:900;color:var(--green)">+${fmt(todayNetProfit)}</div>
+        </div>
       </div>
-      <div style="background:linear-gradient(135deg,rgba(90,180,247,.15),rgba(124,106,247,.1));border:1px solid rgba(90,180,247,.3);border-radius:16px;padding:16px;text-align:center">
-        <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">${lang==='uz'?'Bu hafta':'Эта неделя'}</div>
-        <div style="font-size:26px;font-weight:900;color:var(--blue)">${fmt(weekRev)}</div>
-        <div style="font-size:10px;color:var(--text3);margin-top:2px">so'm</div>
+      <div style="background:linear-gradient(135deg,rgba(90,180,247,.15),rgba(124,106,247,.1));border:1px solid rgba(90,180,247,.3);border-radius:16px;padding:12px;text-align:center">
+        <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">${lang==='uz'?'Hafta tushum':'Эта неделя'}</div>
+        <div style="font-size:22px;font-weight:900;color:var(--blue)">${fmt(weekRev)}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:2px;margin-bottom:6px">so'm</div>
+        <div style="background:rgba(86,212,160,.15);border-radius:8px;padding:6px;margin-top:4px">
+            <div style="font-size:9px;color:var(--text2);text-transform:uppercase">${lang==='uz'?'Sof foyda':'Чистая прибыль'}</div>
+            <div style="font-size:16px;font-weight:900;color:var(--green)">+${fmt(weekNetProfit)}</div>
+        </div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
@@ -1287,7 +1381,7 @@ function updateBadges(){
   const pendingDelivery=state.orders.filter(o=>new Date(o.date).toDateString()===today&&!o.delivered).length;
   document.getElementById('deliveryCount').textContent=pendingDelivery||'';
 }
-function resetOrder(){state.quantities={};state.selectedPayment='наличные';document.getElementById('clientSelect').value='';document.getElementById('clientPhone').value='';document.getElementById('orderNote').value='';document.getElementById('summaryBlock').style.display='none';renderProductsGrid();document.querySelectorAll('.payment-pills .pill').forEach((p,i)=>p.classList.toggle('selected',i===0));}
+function resetOrder(){document.getElementById('orderCourier').value='';state.quantities={};state.selectedPayment='наличные';document.getElementById('clientSelect').value='';document.getElementById('clientPhone').value='';document.getElementById('orderNote').value='';document.getElementById('summaryBlock').style.display='none';renderProductsGrid();document.querySelectorAll('.payment-pills .pill').forEach((p,i)=>p.classList.toggle('selected',i===0));}
 function showToast(msg,type='info'){const t=document.getElementById('toast');t.textContent=msg;t.className='toast '+type+' show';setTimeout(()=>t.className='toast '+type,3000);}
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#1a1a2e">
+<title>TeeGu - Заказ</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+<style>
+  body { background: var(--bg); color: var(--text); font-family: 'Nunito', sans-serif; padding-bottom: 80px; }
+  .header { padding: 15px; background: var(--card); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; text-align: center; font-weight: 800; font-size: 18px; }
+  .cart-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: var(--card); border-top: 1px solid var(--border); padding: 15px; box-sizing: border-box; display: flex; justify-content: space-between; align-items: center; z-index: 100; }
+  .cart-total { font-weight: 800; font-size: 18px; color: var(--accent2); }
+  .btn-order { background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 700; cursor: pointer; }
+  #loading { position: fixed; top:0; left:0; width:100%; height:100%; background: var(--bg); z-index: 1000; display:flex; align-items:center; justify-content:center; font-weight:800; }
+</style>
+</head>
+<body>
+
+<div id="loading">Загрузка...</div>
+
+<div class="header">🥗 TeeGu Меню</div>
+
+<div style="padding:15px">
+  <div id="productsGrid" style="display:grid; grid-template-columns:1fr; gap:10px;"></div>
+</div>
+
+<div class="cart-bar" id="cartBar" style="display:none">
+  <div>
+    <div style="font-size:12px; color:var(--text2)">Итого к оплате:</div>
+    <div class="cart-total" id="cartTotal">0 сум</div>
+  </div>
+  <button class="btn-order" onclick="placeOrder()">Заказать</button>
+</div>
+
+<!-- Модалка оформления -->
+<div id="checkoutModal" class="modal">
+  <div class="modal-content">
+    <h3>Оформление заказа</h3>
+    <div class="form-group">
+      <label class="form-label">Телефон</label>
+      <input type="text" id="orderPhone" class="form-input" placeholder="+998...">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Адрес доставки</label>
+      <input type="text" id="orderAddress" class="form-input" placeholder="Улица, дом...">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Примечание</label>
+      <input type="text" id="orderNote" class="form-input" placeholder="Без лука...">
+    </div>
+    <div style="display:flex; gap:10px; margin-top:20px">
+      <button class="btn btn-secondary" onclick="closeCheckout()">Отмена</button>
+      <button class="btn btn-primary" onclick="submitOrder()" id="submitBtn">Подтвердить</button>
+    </div>
+  </div>
+</div>
+
+<script src="client.js"></script>
+</body>
+</html>

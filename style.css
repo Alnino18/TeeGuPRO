@@ -231,3 +231,12 @@
   #print-area{display:none;}
 /* PIN */
 .pin-digit:focus { border-color: var(--accent); }
+
+#print-area { display: none; color: black; background: white; font-family: 'Courier New', Courier, monospace; font-size: 14px; padding: 10px; width: 300px; margin: 0 auto; }
+@media print {
+  body * { visibility: hidden; }
+  body { background: white; margin: 0; padding: 0; }
+  #print-area { display: block !important; position: absolute; left: 0; top: 0; width: 100%; }
+  #print-area * { visibility: visible; color: black !important; text-shadow: none !important; }
+  .tabs, .header { display: none !important; }
+}
