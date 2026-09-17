@@ -37,12 +37,17 @@ async function init() {
 
 async function loadMenu() {
   document.getElementById('loading').style.display = 'flex';
-  const pSnap = await db.collection('products').get();
-  products = pSnap.docs.map(d => d.data()).sort((a,b)=>a.order-b.order);
-  
-  document.getElementById('loading').style.display = 'none';
-  document.getElementById('menuScreen').style.display = 'block';
-  renderProducts();
+  try {
+    const pSnap = await db.collection('products').get();
+    products = pSnap.docs.map(d => d.data()).sort((a,b)=>a.order-b.order);
+    
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('menuScreen').style.display = 'block';
+    renderProducts();
+  } catch(e) {
+    alert("Ошибка загрузки меню: " + e.message);
+    document.getElementById('loading').innerHTML = "Ошибка: " + e.message;
+  }
 }
 
 function fmt(n) { return Number(n).toLocaleString('ru-RU'); }
@@ -100,7 +105,7 @@ function updateCart() {
 }
 
 function placeOrder() {
-  document.getElementById('checkoutModal').classList.add('active');
+  document.getElementById('checkoutOverlay').classList.add('open');
   document.getElementById('cartBar').style.display = 'none';
   if(currentClient) {
     document.getElementById('orderName').value = currentClient.name || '';
@@ -110,7 +115,7 @@ function placeOrder() {
 }
 
 function closeCheckout() {
-  document.getElementById('checkoutModal').classList.remove('active');
+  document.getElementById('checkoutOverlay').classList.remove('open');
   updateCart();
 }
 
