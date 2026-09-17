@@ -1157,6 +1157,9 @@ function renderDashboard(){
         </div>
       </div>
     </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:16px;padding:10px;margin-bottom:12px;height:200px">
+      <canvas id="revenueChart"></canvas>
+    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
       <div onclick="showPage('delivery')" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;text-align:center;cursor:pointer" active>
         <div style="font-size:22px">🚚</div>
@@ -1183,6 +1186,43 @@ function renderDashboard(){
       <button onclick="sendDaySummary()" class="btn btn-outline" style="border-radius:14px;padding:14px 10px;font-size:13px">📤 ${lang==='uz'?'Xisobot':'Отчёт'}</button>
     </div>`;
   updateOnlineIndicator();
+  
+  // Initialize Chart
+  const ctx = document.getElementById('revenueChart');
+  if(ctx && window.Chart) {
+    const dates = [];
+    const revenues = [];
+    for(let i=6; i>=0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      dates.push(d.toLocaleDateString('ru-RU', {day:'numeric', month:'short'}));
+      const dayStr = d.toDateString();
+      const rev = state.orders.filter(o => new Date(o.date).toDateString() === dayStr).reduce((s,o) => s+o.total, 0);
+      revenues.push(rev);
+    }
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: dates,
+        datasets: [{
+          label: lang==='uz'?'Tushum':'Выручка',
+          data: revenues,
+          borderColor: '#7b61ff',
+          backgroundColor: 'rgba(123, 97, 255, 0.2)',
+          tension: 0.4,
+          fill: true
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { 
+          y: { beginAtZero: true, ticks: { callback: v => v/1000 + 'k' } }
+        }
+      }
+    });
+  }
 }
 
 // ==================== MAP ====================

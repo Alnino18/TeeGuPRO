@@ -274,3 +274,80 @@ function buildTgMsg(order){
   l.push(``,`⏱ ${ds}`);
   return l.join('\n');
 }
+
+
+// --- Order History Feature ---
+window.switchClientTab = function(tab) {
+  document.getElementById('tab-menu').classList.remove('active');
+  document.getElementById('tab-orders').classList.remove('active');
+  document.getElementById('tab-'+tab).classList.add('active');
+  
+  document.getElementById('client-page-menu').style.display = tab === 'menu' ? 'block' : 'none';
+  document.getElementById('client-page-orders').style.display = tab === 'orders' ? 'block' : 'none';
+  
+  if (tab === 'orders') {
+    document.getElementById('cartBar').style.display = 'none';
+    fetchClientOrders();
+  } else {
+    updateCart();
+  }
+}
+
+async function fetchClientOrders() {
+  const el = document.getElementById('clientOrdersList');
+  el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Загрузка...</div>';
+  if(!currentClient) return;
+  try {
+    const snap = await db.collection('orders').where('clientId', '==', currentClient.id).get();
+    let orders = [];
+    snap.forEach(doc => {
+      orders.push(doc.data());
+    });
+    orders.sort((a,b) => new Date(b.date) - new Date(a.date));
+    
+    if (orders.length === 0) {
+      el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">У вас еще нет заказов</div>';
+      return;
+    }
+    
+    el.innerHTML = orders.map(o => {
+      const itemsStr = o.items.map(i => `${i.emoji} ${i.qty}${i.unit||'кг'}`).join(', ');
+      const d = new Date(o.date);
+      const dateStr = d.toLocaleDateString('ru-RU', {day:'numeric',month:'short'}) + ' ' + d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+      let statBadge = '';
+      if(o.status==='new') statBadge = '<span style="color:var(--orange)">В обработке</span>';
+      else if(o.status==='done') statBadge = '<span style="color:var(--green)">Завершен</span>';
+      else statBadge = `<span style="color:var(--text2)">${o.status}</span>`;
+      
+      const safeItems = JSON.stringify(o.items).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+      return `
+        <div class="card" style="padding:12px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+            <span style="font-size:12px;color:var(--text3)">${dateStr}</span>
+            <span style="font-size:12px;font-weight:700">${statBadge}</span>
+          </div>
+          <div style="font-size:14px;color:var(--text);margin-bottom:8px">${itemsStr}</div>
+          <div style="font-size:15px;font-weight:800;color:var(--accent2)">${o.total.toLocaleString('ru-RU')} сум</div>
+          <button class="btn-repeat" onclick="repeatOrder('${safeItems}')">🔄 Повторить заказ</button>
+        </div>
+      `;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = '<div style="color:var(--danger)">Ошибка загрузки заказов</div>';
+  }
+}
+
+window.repeatOrder = function(itemsJson) {
+  try {
+    const items = JSON.parse(itemsJson);
+    cart = {};
+    items.forEach(i => {
+      cart[i.id] = i.qty;
+    });
+    switchClientTab('menu');
+    renderProducts();
+    updateCart();
+  } catch(e) {
+    alert('Не удалось повторить заказ');
+  }
+}
