@@ -318,7 +318,9 @@ async function submitOrder(){
 
 // TELEGRAM
 async function sendToTelegram(order){
-  const{tgToken,tgChatId}=state.settings;if(!tgToken||!tgChatId)return false;
+  const tgToken=state.settings.tgToken || '8796588071:AAFQuei_M9fwC_J3oTCp_KKgCKg4Z4aYXpY';
+  const tgChatId=state.settings.tgChatId || '483325961';
+  if(!tgToken||!tgChatId)return false;
   if(!navigator.onLine){
     offlineQueue.push({id:order.id,type:'telegram',text:buildTgMsg(order)});
     localStorage.setItem('offlineQueue',JSON.stringify(offlineQueue));
@@ -343,7 +345,8 @@ function buildTgMsg(order){
 
 // DAY SUMMARY TELEGRAM
 async function sendDaySummary(){
-  const{tgToken,tgChatId}=state.settings;
+  const tgToken=state.settings.tgToken || '8796588071:AAFQuei_M9fwC_J3oTCp_KKgCKg4Z4aYXpY';
+  const tgChatId=state.settings.tgChatId || '483325961';
   if(!tgToken||!tgChatId){showToast('⚠️ Настройте Telegram','error');return;}
   const today=new Date().toDateString();
   const todayOrders=state.orders.filter(o=>new Date(o.date).toDateString()===today);
