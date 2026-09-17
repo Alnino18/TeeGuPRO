@@ -1282,31 +1282,51 @@ function renderMap(){
     mapsBtn.href=`https://www.google.com/maps/dir/${wps}`;
     mapsBtn.style.display='flex';
   } else if(mapsBtn){mapsBtn.style.display='none';}
-  if(!window.L){
-    const lnk=document.createElement('link');lnk.rel='stylesheet';lnk.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';document.head.appendChild(lnk);
-    const scr=document.createElement('script');scr.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    scr.onload=()=>initLeafletMap(clientsWithCoords,routeClients);document.head.appendChild(scr);
-  } else if(!mapInstance){initLeafletMap(clientsWithCoords,routeClients);}
-  else{updateLeafletMarkers(clientsWithCoords,routeClients);}
+  if(!window.ymaps){
+    const scr=document.createElement('script');
+    scr.src='https://api-maps.yandex.ru/2.1/?lang=ru_RU';
+    scr.onload=()=>{
+      ymaps.ready(()=>initYandexMap(clientsWithCoords,routeClients));
+    };
+    document.head.appendChild(scr);
+  } else if(!mapInstance){
+    ymaps.ready(()=>initYandexMap(clientsWithCoords,routeClients));
+  } else {
+    updateYandexMarkers(clientsWithCoords,routeClients);
+  }
 }
-function initLeafletMap(all,route){
+function initYandexMap(all,route){
   const center=all.length?[all[0].lat,all[0].lng]:[41.2995,69.2401];
-  mapInstance=L.map('leafletMap').setView(center,12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OSM'}).addTo(mapInstance);
-  markersLayer=L.layerGroup().addTo(mapInstance);
-  updateLeafletMarkers(all,route);
+  mapInstance=new ymaps.Map('leafletMap',{center:center,zoom:12,controls:['zoomControl','fullscreenControl']});
+  markersLayer=[];
+  updateYandexMarkers(all,route);
 }
-function updateLeafletMarkers(all,route){
-  if(!mapInstance||!markersLayer)return;
-  markersLayer.clearLayers();
+function updateYandexMarkers(all,route){
+  if(!mapInstance)return;
+  if(markersLayer && markersLayer.length){
+    markersLayer.forEach(m=>mapInstance.geoObjects.remove(m));
+  }
+  markersLayer=[];
   const rIds=new Set(route.map(c=>c.id));
   all.forEach((c,idx)=>{
     const isR=rIds.has(c.id);
     const num=isR?route.findIndex(x=>x.id===c.id)+1:c.name.charAt(0);
     const clr=isR?'#7c6af7':'#56d4a0';
-    const icon=L.divIcon({html:`<div style="background:${clr};color:white;border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,.3)">${num}</div>`,className:'',iconSize:[32,32],iconAnchor:[16,16]});
     const debt=state.orders.filter(o=>o.clientId==c.id&&o.payment==='консигнация'&&!o.debtPaid).reduce((s,o)=>s+(o.total-(o.partialPaid||0)),0);
-    L.marker([c.lat,c.lng],{icon}).addTo(markersLayer).bindPopup(`<b>${c.name}</b><br>${c.type}<br>${state.orders.filter(o=>o.clientId==c.id).length} заказов${debt>0?'<br>💰 '+fmt(debt)+' so\'m':''}`);
+    
+    const iconLayout = ymaps.templateLayoutFactory.createClass(
+        `<div style="background:${clr};color:white;border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,.3); transform: translate(-16px, -16px)">${num}</div>`
+    );
+    
+    const pm = new ymaps.Placemark([c.lat,c.lng], {
+        balloonContent: `<b>${c.name}</b><br>${c.type}<br>${state.orders.filter(o=>o.clientId==c.id).length} заказов${debt>0?'<br>💰 '+fmt(debt)+' so\'m':''}`
+    }, {
+        iconLayout: iconLayout,
+        iconShape: { type: 'Circle', coordinates: [0, 0], radius: 16 }
+    });
+    
+    mapInstance.geoObjects.add(pm);
+    markersLayer.push(pm);
   });
 }
 function openCoordModal(id){
