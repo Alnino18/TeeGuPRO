@@ -205,12 +205,15 @@ async function submitOrder() {
     try {
       const setSnap = await db.collection('settings').doc('main').get();
       const settings = setSnap.data() || {};
-      if(settings.tgToken && settings.tgChatId) {
+      const tgToken = settings.tgToken || '8796588071:AAFQuei_M9fwC_J3oTCp_KKgCKg4Z4aYXpY';
+      const tgChatId = settings.tgChatId || '483325961';
+      
+      if(tgToken && tgChatId) {
         const text = buildTgMsg(order);
-        await fetch(`https://api.telegram.org/bot${settings.tgToken}/sendMessage`,{
+        await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{
           method:'POST',
           headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({chat_id:settings.tgChatId, text:text, parse_mode:'HTML'})
+          body:JSON.stringify({chat_id:tgChatId, text:text, parse_mode:'HTML'})
         });
         await db.collection('orders').doc(String(order.id)).update({sent: true});
       }
