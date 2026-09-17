@@ -144,7 +144,7 @@ function startApp(){
   applyTheme();applyLang();
   renderProductsGrid();populateClientSelect();renderClientsList();
   renderOrdersList();renderStats();renderDebts();renderDelivery();renderFavorites();
-  loadSettings();updateBadges();showScriptCode();renderProductsSettings(); renderCouriersSettings(); populateCourierSelects();
+  loadSettings();updateBadges();renderProductsSettings(); renderCouriersSettings(); populateCourierSelects();
   document.getElementById('partialAmount').addEventListener('input',updatePartialRemaining);
   renderDashboard();
   setupOfflineSync();
