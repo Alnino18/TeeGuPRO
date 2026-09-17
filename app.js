@@ -1,3 +1,17 @@
+const firebaseConfig = {
+  apiKey: "AIzaSyBpa1Bfj4L8q1itRh1BjHgyzIyIi-rzmSk",
+  authDomain: "dostavka-b53d8.firebaseapp.com",
+  projectId: "dostavka-b53d8",
+  storageBucket: "dostavka-b53d8.firebasestorage.app",
+  messagingSenderId: "1029089462422",
+  appId: "1:1029089462422:web:937317b437139f31771ab7"
+};
+if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+}
+const db = firebase.firestore();
+db.enablePersistence().catch(err => console.log("Firebase Offline Error:", err));
+
 const DEFAULT_PRODUCTS=[
   {id:'funchoza', name:'Фунчоза',       nameUz:'Funchoza',        price:25000,cost:0,emoji:'🍜'},
   {id:'morkovcha',name:'Морковча',       nameUz:'Sabzi',           price:25000,cost:0,emoji:'🥕'},
@@ -5,9 +19,7 @@ const DEFAULT_PRODUCTS=[
   {id:'kapusta',  name:'Сладкая капуста',nameUz:'Shirin karam',   price:20000,cost:0,emoji:'🥬'},
   {id:'kuksi',    name:'Кукси',          nameUz:'Kuksi',           price:35000,cost:0,emoji:'🍝',unit:'шт',step:1},
 ];
-let PRODUCTS=JSON.parse(localStorage.getItem('products')||'null')||DEFAULT_PRODUCTS;
-function saveProducts(){localStorage.setItem('products',JSON.stringify(PRODUCTS));}
-
+let PRODUCTS = [];
 let lang=localStorage.getItem('lang')||'ru';
 let theme=localStorage.getItem('theme')||'dark';
 let chartPeriod='week';
@@ -16,13 +28,56 @@ let editingClientId=null;
 let editingOrderId=null;
 
 let state={
-  clients:JSON.parse(localStorage.getItem('clients')||'[]'),
-  orders:JSON.parse(localStorage.getItem('orders')||'[]'),
-  settings:JSON.parse(localStorage.getItem('settings')||'{}'),
-  deliveryStatus:JSON.parse(localStorage.getItem('deliveryStatus')||'{}'),
-  templates:JSON.parse(localStorage.getItem('templates')||'[]'),
+  clients: [],
+  orders: [],
+  settings: {},
+  deliveryStatus: {},
+  templates: [],
   quantities:{},selectedPayment:'наличные',currentOrderId:null,dateFilter:'all',
 };
+
+// Real-time Listeners
+db.collection('products').onSnapshot(snap => {
+  if (snap.empty) {
+    PRODUCTS = DEFAULT_PRODUCTS;
+    const batch = db.batch();
+    PRODUCTS.forEach(p => batch.set(db.collection('products').doc(String(p.id)), p));
+    batch.commit();
+  } else {
+    PRODUCTS = snap.docs.map(d => d.data());
+  }
+  renderProductsGrid(); renderProductsSettings();
+});
+
+db.collection('clients').onSnapshot(snap => {
+  state.clients = snap.docs.map(d => d.data());
+  populateClientSelect(); renderClientsList(); renderDashboard();
+});
+
+db.collection('orders').onSnapshot(snap => {
+  state.orders = snap.docs.map(d => d.data()).sort((a, b) => new Date(b.date) - new Date(a.date));
+  renderOrdersList(); renderStats(); renderDebts(); renderDelivery(); renderFavorites(); renderDashboard(); updateBadges();
+});
+
+db.collection('settings').doc('main').onSnapshot(snap => {
+  if (snap.exists) { state.settings = snap.data(); loadSettings(); }
+});
+
+db.collection('templates').onSnapshot(snap => {
+  state.templates = snap.docs.map(d => d.data());
+  renderTemplates();
+});
+
+function saveProducts() {
+  const batch = db.batch();
+  PRODUCTS.forEach(p => batch.set(db.collection('products').doc(String(p.id)), p));
+  batch.commit();
+}
+
+function save() {
+  // Legacy save function, now handled by direct Firestore writes
+}
+
 
 // THEME
 function applyTheme(){document.body.classList.toggle('light',theme==='light');document.getElementById('themeBtn').textContent=theme==='light'?'🌙':'☀️';}
@@ -86,8 +141,8 @@ function restoreData(){
         if(data.products){localStorage.setItem('products',JSON.stringify(data.products));}
         localStorage.setItem('clients',JSON.stringify(state.clients));
         localStorage.setItem('orders',JSON.stringify(state.orders));
-        localStorage.setItem('settings',JSON.stringify(state.settings));
-        localStorage.setItem('templates',JSON.stringify(state.templates));
+        db.collection('settings').doc('main').set(state.settings);
+        db.collection('templates').doc(String(tpl.id)).set(tpl);
         populateClientSelect();renderAll();loadSettings();updateBadges();
         showToast('✅ '+(lang==='uz'?'Tiklandi':'Восстановлено'),'success');
       }catch(err){showToast('❌ '+(lang==='uz'?'Xato fayl':'Неверный файл'),'error');}
@@ -106,7 +161,7 @@ function saveTemplate(){
   if(!name)return;
   const tpl={id:Date.now(),name,clientId,items:items.map(i=>({id:i.id,qty:i.qty})),payment:state.selectedPayment};
   state.templates.push(tpl);
-  localStorage.setItem('templates',JSON.stringify(state.templates));
+  db.collection('templates').doc(String(tpl.id)).set(tpl);
   showToast('⭐ '+(lang==='uz'?'Shablon saqlandi':'Шаблон сохранён'),'success');
   renderTemplates();
 }
@@ -143,7 +198,7 @@ function applyTemplate(id){
 }
 function deleteTemplate(id){
   state.templates=state.templates.filter(x=>x.id!=id);
-  localStorage.setItem('templates',JSON.stringify(state.templates));
+  db.collection('templates').doc(String(id)).delete();
   renderTemplates();
 }
 function openTemplatesModal(){renderTemplates();openModal('templatesModal');}
@@ -177,10 +232,16 @@ function quickOrderSelect(id){document.getElementById('clientSelect').value=id;s
 
 // PRODUCTS
 function renderProductsGrid(){
-  document.getElementById('productsGrid').innerHTML=PRODUCTS.map(p=>`
+  
+  const clientId = document.getElementById('clientSelect')?.value;
+  const client = state.clients.find(c => c.id == clientId);
+  
+  document.getElementById('productsGrid').innerHTML=PRODUCTS.map(p=>{
+    const price = (client && client.customPrices && client.customPrices[p.id]) ? client.customPrices[p.id] : p.price;
+    return `
     <div class="product-card" id="pc-${p.id}">
       <div class="product-name">${p.emoji} ${lang==='uz'?p.nameUz:p.name}</div>
-      <div class="product-price">${fmt(p.price)} / ${p.unit||'кг'}</div>
+      <div class="product-price">${fmt(price)} / ${p.unit||'кг'} ${client && client.customPrices && client.customPrices[p.id] ? '<span style="color:var(--orange)">★</span>' : ''}</div>
       <div class="product-qty">
         <div class="qty-btn" onclick="changeQty('${p.id}',${-(p.step||0.5)})">−</div>
         <div><span class="qty-val" id="qty-${p.id}">0</span> <span class="qty-unit">${p.unit||'кг'}</span></div>
@@ -207,7 +268,14 @@ function updateSummary(){
   html+=`<div class="total-row"><span class="total-label">${lang==='uz'?'Jami:':'Итого:'}</span><span class="total-amount">${fmt(total)} so'm</span></div>`;
   document.getElementById('orderSummary').innerHTML=html;
 }
-function getOrderItems(){return PRODUCTS.filter(p=>(state.quantities[p.id]||0)>0).map(p=>({...p,qty:state.quantities[p.id]}));}
+function getOrderItems(){
+  const clientId = document.getElementById('clientSelect')?.value;
+  const client = state.clients.find(c => c.id == clientId);
+  return PRODUCTS.filter(p=>(state.quantities[p.id]||0)>0).map(p=>{
+    const price = (client && client.customPrices && client.customPrices[p.id]) ? client.customPrices[p.id] : p.price;
+    return {...p, price, qty:state.quantities[p.id]};
+  });
+}
 function getTotal(){return getOrderItems().reduce((s,i)=>s+i.qty*i.price,0);}
 function selectPayment(el){document.querySelectorAll('.payment-pills .pill').forEach(p=>p.classList.remove('selected'));el.classList.add('selected');state.selectedPayment=el.dataset.pay;}
 
@@ -230,14 +298,14 @@ async function submitOrder(){
     partialPaid:0,
     delivered:false,
   };
-  state.orders.unshift(order);save();updateBadges();
+  db.collection('orders').doc(String(order.id)).set(order);
   const btn=document.getElementById('submitBtn');btn.innerHTML='<div class="spinner"></div>';btn.disabled=true;
-  let tgOk=false,sheetOk=false;
+  let tgOk=false;
   try{tgOk=await sendToTelegram(order);}catch(e){}
-  try{sheetOk=await sendToSheets(order);}catch(e){}
-  if(tgOk)order.sent=true;if(sheetOk)order.sentSheets=true;save();
+  
+  if(tgOk) { order.sent=true; db.collection('orders').doc(String(order.id)).update({sent: true}); }
   btn.innerHTML='✅ '+(lang==='uz'?'Buyurtmani rasmiylashtirish':'Оформить заказ');btn.disabled=false;
-  showToast(tgOk||sheetOk?'✅ '+(lang==='uz'?'Yuborildi':'Отправлено'):'⚠️ Локально',tgOk||sheetOk?'success':'info');
+  showToast(tgOk?'✅ '+(lang==='uz'?'Yuborildi':'Отправлено'):'⚠️ Локально',tgOk?'success':'info');
   resetOrder();updateBadges();renderFavorites();
 }
 
@@ -264,11 +332,6 @@ function buildTgMsg(order){
   if(order.note)l.push(`📝 ${order.note}`);
   l.push(``,`🕐 ${ds}`);
   return l.join('\n');
-}
-async function sendToSheets(order){
-  const url=state.settings.sheetsUrl;if(!url)return false;
-  await fetch(url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:new Date(order.date).toLocaleString('ru-RU'),client:order.client,phone:order.phone,type:order.type,payment:order.payment,total:order.total,note:order.note||'',items:order.items.map(i=>`${i.name}:${i.qty}${i.unit||'кг'}`).join(', '),funchoza:order.items.find(i=>i.id==='funchoza')?.qty||0,morkovcha:order.items.find(i=>i.id==='morkovcha')?.qty||0,sologurc:order.items.find(i=>i.id==='sologurc')?.qty||0,kapusta:order.items.find(i=>i.id==='kapusta')?.qty||0,kuksi:order.items.find(i=>i.id==='kuksi')?.qty||0})});
-  return true;
 }
 
 // DAY SUMMARY TELEGRAM
@@ -340,11 +403,11 @@ function filterByDate(f,el){document.querySelectorAll('#page-orders .pill').forE
 async function resendOrderById(id){
   const o=state.orders.find(x=>x.id==id);if(!o)return;
   showToast('📤...','info');
-  try{if(await sendToTelegram(o)){o.sent=true;save();showToast('✅ TG','success');renderOrdersList();}else showToast('❌','error');}catch(e){showToast('❌','error');}
+  try{if(await sendToTelegram(o)){db.collection('orders').doc(String(o.id)).update({sent:true});showToast('✅ TG','success');renderOrdersList();}else showToast('❌','error');}catch(e){showToast('❌','error');}
 }
 function deleteOrder(id){
   if(!confirm(lang==='uz'?'O\'chirishni tasdiqlaysizmi?':'Удалить заказ?'))return;
-  state.orders=state.orders.filter(o=>o.id!=id);save();renderOrdersList();updateBadges();
+  db.collection('orders').doc(String(id)).delete();
 }
 function copyOrder(id){
   const o=state.orders.find(x=>x.id==id);if(!o)return;
@@ -402,7 +465,7 @@ function saveEditOrder(){
     return qty>0?{...p,qty}:null;
   }).filter(Boolean);
   o.items=newItems;o.total=newItems.reduce((s,i)=>s+i.qty*i.price,0);o.sent=false;
-  save();closeModal('editOrderModal');renderOrdersList();renderDebts();updateBadges();
+  db.collection('orders').doc(String(o.id)).set(o); closeModal('editOrderModal');
   showToast('✅ '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');
 }
 function showOrderDetail(id){
@@ -427,7 +490,7 @@ async function resendOrder(){
   const o=state.orders.find(x=>x.id==state.currentOrderId);if(!o)return;
   const btn=document.getElementById('detailSendBtn');btn.innerHTML='<div class="spinner"></div>';btn.disabled=true;
   let ok=false;try{ok=await sendToTelegram(o);}catch(e){}
-  if(ok){o.sent=true;save();}
+  if(ok){db.collection('orders').doc(String(o.id)).update({sent:true});}
   btn.innerHTML='📤 '+(lang==='uz'?'Qayta yuborish':'Повторно');btn.disabled=false;
   showToast(ok?'✅':'❌',ok?'success':'error');
   showOrderDetail(state.currentOrderId);renderOrdersList();
@@ -527,8 +590,9 @@ function renderDebts(){
 }
 function markDebtPaid(clientId){
   if(!confirm(lang==='uz'?"To'lashni tasdiqlaysizmi?":'Отметить как оплаченный?'))return;
-  state.orders.forEach(o=>{if(o.clientId==clientId&&o.payment==='консигнация')o.debtPaid=true;});
-  save();renderDebts();updateBadges();showToast('✅ '+(lang==='uz'?"To'landi":'Оплачено'),'success');
+  const batch = db.batch();
+  state.orders.forEach(o=>{if(o.clientId==clientId&&o.payment==='консигнация'){ batch.update(db.collection('orders').doc(String(o.id)), {debtPaid:true}); }});
+  batch.commit(); showToast('✅ '+(lang==='uz'?"To'landi":'Оплачено'),'success');
 }
 function openPartialPay(clientId,remaining,name){
   partialClientId=clientId;
@@ -556,7 +620,9 @@ function applyPartialPayment(){
     if(rem>=owed){o.debtPaid=true;rem-=owed;}
     else{o.partialPaid=(o.partialPaid||0)+rem;rem=0;}
   });
-  save();closeModal('partialPayModal');renderDebts();updateBadges();
+  const batch = db.batch();
+  debtOrders.forEach(o => batch.update(db.collection('orders').doc(String(o.id)), {debtPaid: o.debtPaid, partialPaid: o.partialPaid}));
+  batch.commit(); closeModal('partialPayModal');
   showToast('✅ '+fmt(paid)+' so\'m '+( lang==='uz'?'qo\'shildi':'зачислено'),'success');
 }
 
@@ -583,16 +649,18 @@ function renderDelivery(){
 }
 function markDelivered(id){
   const o=state.orders.find(x=>x.id==id);if(!o)return;
-  o.delivered=true;save();renderDelivery();showToast('✅ '+(lang==='uz'?'Yetkazildi':'Доставлено'),'success');
+  db.collection('orders').doc(String(id)).update({delivered:true}); showToast('✅ '+(lang==='uz'?'Yetkazildi':'Доставлено'),'success');
 }
 function resetDelivery(){
   const today=new Date().toDateString();
-  state.orders.filter(o=>new Date(o.date).toDateString()===today).forEach(o=>o.delivered=false);
-  save();renderDelivery();
+  const batch = db.batch();
+  state.orders.filter(o=>new Date(o.date).toDateString()===today).forEach(o=>batch.update(db.collection('orders').doc(String(o.id)), {delivered:false}));
+  batch.commit();
 }
 
 // CLIENTS
 function populateClientSelect(){
+  document.getElementById('clientSelect').onchange = renderProductsGrid;
   const sel=document.getElementById('clientSelect');const cur=sel.value;
   sel.innerHTML=`<option value="">${lang==='uz'?'— Mijozni tanlang —':'— Выберите клиента —'}</option>`+
     state.clients.map(c=>`<option value="${c.id}">${c.name} (${c.type})</option>`).join('');
@@ -630,15 +698,14 @@ function deleteClient(id){
     ?`"${c.name}"ni o'chirishni tasdiqlaysizmi?${orderCount?' ('+orderCount+' ta buyurtma ham o\'chadi)':''}`
     :`Удалить клиента "${c.name}"?${orderCount?' ('+orderCount+' заказов тоже будут удалены)':''}`;
   if(!confirm(msg))return;
-  state.clients=state.clients.filter(x=>x.id!=id);
-  state.orders=state.orders.filter(o=>o.clientId!=id);
-  save();populateClientSelect();renderClientsList();updateBadges();
+  const batch = db.batch();
+  batch.delete(db.collection('clients').doc(String(id)));
+  state.orders.filter(o=>o.clientId==id).forEach(o => batch.delete(db.collection('orders').doc(String(o.id))));
+  batch.commit();
   showToast('🗑 '+(lang==='uz'?"O'chirildi":'Удалён'),'info');
   syncClientsToSheets(true);
 }
-async function syncClientsToSheets(silent=false){
-  const url=state.settings.sheetsUrl;
-  if(!url){if(!silent)showToast('⚠️ '+(lang==='uz'?"Sheets URL yo'q":'Нет Sheets URL'),'error');return;}
+function syncClientsToSheets() {}
   const btn=document.getElementById('syncBtn');
   if(btn&&!silent){btn.innerHTML='<div class="spinner" style="border-color:rgba(255,255,255,.3);border-top-color:white;display:inline-block"></div>';btn.disabled=true;}
   try{
@@ -658,6 +725,14 @@ function openEditClientModal(id){
   document.getElementById('editClientPhone').value=c.phone||'';
   document.getElementById('editClientType').value=c.type||'кафе';
   document.getElementById('editClientAddress').value=c.address||'';
+  const customPricesHTML = PRODUCTS.map(p => {
+    const currentPrice = (c.customPrices && c.customPrices[p.id]) ? c.customPrices[p.id] : '';
+    return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <div style="flex:1;font-size:14px">${p.emoji} ${p.name}</div>
+      <input type="number" id="cp_edit_${p.id}" class="form-input" style="width:120px;padding:8px" placeholder="${p.price}" value="${currentPrice}">
+    </div>`;
+  }).join('');
+  document.getElementById('editClientPrices').innerHTML = customPricesHTML;
   openModal('editClientModal');
 }
 function saveEditClient(){
@@ -666,8 +741,18 @@ function saveEditClient(){
   const c=state.clients.find(x=>x.id==editingClientId);if(!c)return;
   c.name=name;c.phone=document.getElementById('editClientPhone').value.trim();
   c.type=document.getElementById('editClientType').value;c.address=document.getElementById('editClientAddress').value.trim();
-  state.orders.forEach(o=>{if(o.clientId==editingClientId)o.client=name;});
-  save();populateClientSelect();renderClientsList();closeModal('editClientModal');
+  
+  // Gather custom prices
+  c.customPrices = {};
+  PRODUCTS.forEach(p => {
+    const cp = parseFloat(document.getElementById('cp_edit_' + p.id)?.value);
+    if (!isNaN(cp) && cp > 0) c.customPrices[p.id] = cp;
+  });
+  
+  const batch = db.batch();
+  batch.set(db.collection('clients').doc(String(editingClientId)), c);
+  state.orders.forEach(o=>{if(o.clientId==editingClientId){ batch.update(db.collection('orders').doc(String(o.id)), {client: name}); }});
+  batch.commit(); closeModal('editClientModal');
   showToast('✅ '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');
   syncClientsToSheets(true);
 }
@@ -692,12 +777,28 @@ function showClientHistory(clientId){
     }).join('');
   openModal('clientHistoryModal');
 }
-function openNewClientModal(){['newClientName','newClientPhone','newClientAddress'].forEach(id=>document.getElementById(id).value='');openModal('newClientModal');}
+function openNewClientModal(){['newClientName','newClientPhone','newClientAddress'].forEach(id=>document.getElementById(id).value='');
+  const customPricesHTML = PRODUCTS.map(p => {
+    return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <div style="flex:1;font-size:14px">${p.emoji} ${p.name}</div>
+      <input type="number" id="cp_new_${p.id}" class="form-input" style="width:120px;padding:8px" placeholder="${p.price}">
+    </div>`;
+  }).join('');
+  document.getElementById('newClientPrices').innerHTML = customPricesHTML;
+  openModal('newClientModal');}
 function saveNewClient(){
   const name=document.getElementById('newClientName').value.trim();
   if(!name){showToast('⚠️ '+(lang==='uz'?'Ism kiriting':'Введите имя'),'error');return;}
-  state.clients.push({id:Date.now(),name,phone:document.getElementById('newClientPhone').value.trim(),type:document.getElementById('newClientType').value,address:document.getElementById('newClientAddress').value.trim(),createdAt:new Date().toISOString()});
-  save();populateClientSelect();renderClientsList();closeModal('newClientModal');showToast('✅ '+name,'success');syncClientsToSheets(true);
+  
+  const customPrices = {};
+  PRODUCTS.forEach(p => {
+    const cp = parseFloat(document.getElementById('cp_new_' + p.id)?.value);
+    if (!isNaN(cp) && cp > 0) customPrices[p.id] = cp;
+  });
+  
+  const nc = {id:Date.now(),name,phone:document.getElementById('newClientPhone').value.trim(),type:document.getElementById('newClientType').value,address:document.getElementById('newClientAddress').value.trim(),createdAt:new Date().toISOString(), customPrices};
+  db.collection('clients').doc(String(nc.id)).set(nc);
+  closeModal('newClientModal');showToast('✅ '+name,'success');
 }
 
 // STATS
@@ -956,7 +1057,7 @@ function exportToExcel(){
 
 // SETTINGS
 function loadSettings(){const s=state.settings;if(s.tgToken)document.getElementById('tgToken').value=s.tgToken;if(s.tgChatId)document.getElementById('tgChatId').value=s.tgChatId;if(s.sheetsUrl)document.getElementById('sheetsUrl').value=s.sheetsUrl;}
-function saveSettings(){state.settings.tgToken=document.getElementById('tgToken').value.trim();state.settings.tgChatId=document.getElementById('tgChatId').value.trim();state.settings.sheetsUrl=document.getElementById('sheetsUrl').value.trim();localStorage.setItem('settings',JSON.stringify(state.settings));showToast('✅ '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');}
+function saveSettings(){state.settings.tgToken=document.getElementById('tgToken').value.trim();state.settings.tgChatId=document.getElementById('tgChatId').value.trim();state.settings.sheetsUrl=document.getElementById('sheetsUrl').value.trim();db.collection('settings').doc('main').set(state.settings);showToast('✅ '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');}
 async function testTelegram(){saveSettings();const{tgToken,tgChatId}=state.settings;if(!tgToken||!tgChatId){showToast('⚠️','error');return;}try{const r=await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:'🥗 <b>СалатПро</b> — тест ✅',parse_mode:'HTML'})});if((await r.json()).ok)showToast('✅ Telegram OK!','success');else showToast('❌','error');}catch(e){showToast('❌','error');}}
 function showScriptCode(){document.getElementById('scriptCode').textContent=`function doPost(e) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -996,7 +1097,7 @@ function showScriptCode(){document.getElementById('scriptCode').textContent=`fun
   return ContentService.createTextOutput("OK").setMimeType(ContentService.MimeType.TEXT);
 }`;}
 function copyScript(){navigator.clipboard.writeText(document.getElementById('scriptCode').textContent).then(()=>showToast('📋 '+(lang==='uz'?'Nusxalandi':'Скопировано'),'success'));}
-function clearAllData(){if(!confirm(lang==='uz'?'Barchasini o\'chirishni tasdiqlaysizmi?':'Очистить ВСЕ данные?'))return;localStorage.clear();state.clients=[];state.orders=[];state.settings={};populateClientSelect();renderAll();showToast('🗑️','info');}
+function clearAllData(){if(!confirm(lang==='uz'?'Barchasini o\'chirishni tasdiqlaysizmi?':'Очистить ВСЕ данные?'))return;localStorage.clear(); showToast('Cannot clear Firestore automatically','info');}
 
 // UTILS
 function fmt(n){return Math.round(n).toLocaleString('ru-RU');}
@@ -1139,7 +1240,7 @@ function saveClientCoords(){
   const lat=parseFloat(document.getElementById('coordLat').value);
   const lng=parseFloat(document.getElementById('coordLng').value);
   if(isNaN(lat)||isNaN(lng)){showToast('⚠️ Неверные координаты','error');return;}
-  c.lat=lat;c.lng=lng;save();syncClientsToSheets(true);closeModal('coordModal');
+  db.collection('clients').doc(String(id)).update({lat,lng}); closeModal('coordModal');
   if(mapInstance){updateLeafletMarkers(state.clients.filter(x=>x.lat&&x.lng),state.clients.filter(x=>x.lat&&x.lng));}
   showToast('📍 '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');
 }
@@ -1179,8 +1280,9 @@ async function flushOfflineQueue(){
   if(sent.length){
     offlineQueue=offlineQueue.filter(i=>!sent.includes(i.id));
     localStorage.setItem('offlineQueue',JSON.stringify(offlineQueue));
-    sent.forEach(qid=>{const o=state.orders.find(x=>x.id==qid);if(o)o.sent=true;});
-    save();updateBadges();renderOrdersList();
+    const batch = db.batch();
+    sent.forEach(qid => batch.update(db.collection('orders').doc(String(qid)), {sent:true}));
+    batch.commit();
     showToast(`✅ ${sent.length} ${lang==='uz'?'ta yuborildi':'отправлено (оффлайн очередь)'}`, 'success');
   }
 }

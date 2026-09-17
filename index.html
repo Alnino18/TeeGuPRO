@@ -13,6 +13,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
 </head>
 <body>
@@ -234,16 +236,7 @@
     <button class="btn btn-primary" onclick="saveSettings()" style="margin-top:8px">💾 <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
     <button class="btn btn-outline" style="margin-top:8px" onclick="testTelegram()">🧪 Тест Telegram</button>
   </div>
-  <div class="card">
-    <div class="card-title" style="margin-bottom:4px">📊 Google Sheets</div>
-    <div class="settings-item">
-      <div class="settings-label">Webhook URL</div>
-      <input class="form-input" type="text" id="sheetsUrl" placeholder="https://script.google.com/macros/s/...">
-      <div class="settings-desc t" data-ru="Все заказы и клиенты синхронизируются с этим адресом" data-uz="Barcha buyurtmalar va mijozlar ushbu manzil bilan sinxronlanadi">Все заказы и клиенты синхронизируются с этим адресом</div>
-    </div>
-    <button class="btn btn-success" onclick="saveSettings()" style="margin-top:8px">💾 <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
-    <button class="btn btn-primary" onclick="syncClientsToSheets()" style="margin-top:8px" id="syncBtn">☁️ <span class="t" data-ru="Синхронизировать клиентов → Sheets" data-uz="Mijozlarni Sheetsga yuklash">Синхронизировать клиентов → Sheets</span></button>
-  </div>
+
   <div class="card">
     <div class="card-title" style="margin-bottom:12px">📋 Apps Script</div>
     <div style="background:var(--bg);border-radius:var(--r);padding:12px;font-family:monospace;font-size:11px;color:var(--accent2);overflow-x:auto;line-height:1.6;white-space:pre-wrap;border:1px solid var(--border)" id="scriptCode"></div>
@@ -321,6 +314,10 @@
       </select>
     </div>
     <div class="form-group"><label class="form-label">Адрес</label><input class="form-input" type="text" id="newClientAddress" placeholder="Ташкент, ул. Навои 10"></div>
+    <div class="form-group">
+      <label class="form-label t" data-ru="Индивидуальные цены (so'm)" data-uz="Maxsus narxlar (so'm)">Индивидуальные цены</label>
+      <div id="newClientPrices" style="display:flex;flex-direction:column;gap:8px;"></div>
+    </div>
     <div class="row">
       <button class="btn btn-primary" onclick="saveNewClient()">✅ <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
       <button class="btn btn-outline" onclick="closeModal('newClientModal')"><span class="t" data-ru="Отмена" data-uz="Bekor">Отмена</span></button>
@@ -386,6 +383,10 @@
       </select>
     </div>
     <div class="form-group"><label class="form-label">Адрес</label><input class="form-input" type="text" id="editClientAddress"></div>
+    <div class="form-group">
+      <label class="form-label t" data-ru="Индивидуальные цены (so'm)" data-uz="Maxsus narxlar (so'm)">Индивидуальные цены</label>
+      <div id="editClientPrices" style="display:flex;flex-direction:column;gap:8px;"></div>
+    </div>
     <div class="row">
       <button class="btn btn-primary" onclick="saveEditClient()">✅ <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
       <button class="btn btn-outline" onclick="closeModal('editClientModal')"><span class="t" data-ru="Отмена" data-uz="Bekor">Отмена</span></button>
