@@ -1075,46 +1075,11 @@ function populateCourierSelects(){
 }
 
 // SETTINGS
-function loadSettings(){const s=state.settings;if(s.tgToken)document.getElementById('tgToken').value=s.tgToken;if(s.tgChatId)document.getElementById('tgChatId').value=s.tgChatId;if(s.sheetsUrl)document.getElementById('sheetsUrl').value=s.sheetsUrl;}
-function saveSettings(){state.settings.tgToken=document.getElementById('tgToken').value.trim();state.settings.tgChatId=document.getElementById('tgChatId').value.trim();state.settings.sheetsUrl=document.getElementById('sheetsUrl').value.trim();db.collection('settings').doc('main').set(state.settings);showToast('✅ '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');}
-async function testTelegram(){saveSettings();const{tgToken,tgChatId}=state.settings;if(!tgToken||!tgChatId){showToast('⚠️','error');return;}try{const r=await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:'🥗 <b>СалатПро</b> — тест ✅',parse_mode:'HTML'})});if((await r.json()).ok)showToast('✅ Telegram OK!','success');else showToast('❌','error');}catch(e){showToast('❌','error');}}
-function showScriptCode(){document.getElementById('scriptCode').textContent=`function doPost(e) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var data = JSON.parse(e.postData.contents);
+function loadSettings(){const s=state.settings;if(s.tgToken)document.getElementById('tgToken').value=s.tgToken;if(s.tgChatId)document.getElementById('tgChatId').value=s.tgChatId;}
 
-  // Тест
-  if (data.test) return ContentService.createTextOutput("OK").setMimeType(ContentService.MimeType.TEXT);
+function saveSettings(){state.settings.tgToken=document.getElementById('tgToken').value.trim();state.settings.tgChatId=document.getElementById('tgChatId').value.trim();db.collection('settings').doc('main').set(state.settings);showToast('✅ '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');}
+async function testTelegram(){saveSettings();const{tgToken,tgChatId}=state.settings;if(!tgToken||!tgChatId){showToast('⚠️','error');return;}try{const r=await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:'🥗 <b>СалатПро</b> – тест ✅',parse_mode:'HTML'})});if((await r.json()).ok)showToast('✅ Telegram OK!','success');else showToast('❌','error');}catch(e){showToast('❌','error');}}
 
-  // Синхронизация клиентов
-  if (data.action === 'sync_clients') {
-    var cs = ss.getSheetByName("Клиенты") || ss.insertSheet("Клиенты");
-    cs.clear();
-    cs.appendRow(["ID","Имя / Заведение","Телефон","Тип","Адрес","Дата добавления"]);
-    var clients = data.clients;
-    if (clients && clients.length > 0) {
-      var rows = clients.map(function(c) {
-        return [c.id, c.name, c.phone||'', c.type||'', c.address||'',
-                new Date(c.createdAt).toLocaleString('ru-RU')];
-      });
-      cs.getRange(2,1,rows.length,rows[0].length).setValues(rows);
-    }
-    return ContentService.createTextOutput("Clients Synced").setMimeType(ContentService.MimeType.TEXT);
-  }
-
-  // Сохранение заказа
-  var sheet = ss.getSheetByName("Заказы") || ss.insertSheet("Заказы");
-  if (sheet.getLastRow() === 0) {
-    sheet.appendRow(["Дата","Клиент","Телефон","Тип",
-      "Фунчоза (кг)","Морковча (кг)","Сол огурцы (кг)",
-      "Сладкая капуста (кг)","Куксу (шт)",
-      "Итого (сум)","Оплата","Примечание"]);
-  }
-  sheet.appendRow([data.date,data.client,data.phone||'',data.type||'',
-    data.funchoza||0,data.morkovcha||0,data.sologurc||0,
-    data.kapusta||0,data.kuksi||0,
-    data.total,data.payment,data.note||'']);
-  return ContentService.createTextOutput("OK").setMimeType(ContentService.MimeType.TEXT);
-}`;}
 
 // UTILS
 function fmt(n){return Math.round(n).toLocaleString('ru-RU');}
