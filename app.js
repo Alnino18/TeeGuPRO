@@ -1203,14 +1203,14 @@ function renderMap(){
       return`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
         <div style="width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;color:white;font-weight:900;font-size:12px;flex-shrink:0">${i+1}</div>
         <div style="flex:1"><div style="font-weight:700;font-size:14px">${c.name}</div><div style="font-size:12px;color:var(--text2)">${ord.map(o=>o.items.map(i=>`${i.emoji}${i.qty}${i.unit||'кг'}`).join(' ')).join(' | ')}</div></div>
-        <a href="https://maps.google.com/?q=${c.lat},${c.lng}" target="_blank" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--accent);font-size:12px;font-weight:700;text-decoration:none">🗺️</a>
+        <a href="https://yandex.ru/maps/?text=${c.lat},${c.lng}" target="_blank" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--accent);font-size:12px;font-weight:700;text-decoration:none">🗺️</a>
       </div>`;
     }).join(''):`<div style="color:var(--text3);font-size:13px;padding:8px 0">${lang==='uz'?'Koordinata yo\'q':'Нет координат у клиентов с заказами'}</div>`;
   }
   const mapsBtn=document.getElementById('openMapsBtn');
   if(mapsBtn&&routeClients.length>=1){
-    const wps=routeClients.map(c=>`${c.lat},${c.lng}`).join('/');
-    mapsBtn.href=`https://www.google.com/maps/dir/${wps}`;
+    const wps=routeClients.map(c=>`${c.lat},${c.lng}`).join('~');
+    mapsBtn.href=`https://yandex.ru/maps/?rtext=${wps}`;
     mapsBtn.style.display='flex';
   } else if(mapsBtn){mapsBtn.style.display='none';}
   if(!window.ymaps){
