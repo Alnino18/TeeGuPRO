@@ -89,7 +89,7 @@ function getPrice(p) {
   if (currentClient && currentClient.customPrices && currentClient.customPrices[p.id]) {
     return currentClient.customPrices[p.id];
   }
-  return p.price;
+  return p.price || 0;
 }
 
 function renderProducts() {
@@ -200,7 +200,7 @@ async function submitOrder() {
       closeCheckout();
     }
   } catch(e) {
-    alert("Ошибка при отправке заказа.");
+    alert("Ошибка: " + e.message);
   } finally {
     document.getElementById('submitBtn').disabled = false;
     document.getElementById('submitBtn').innerText = 'Подтвердить заказ';
