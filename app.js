@@ -157,18 +157,7 @@ function init(){
   startApp();
 }
 
-        localStorage.setItem('clients',JSON.stringify(state.clients));
-        localStorage.setItem('orders',JSON.stringify(state.orders));
-        db.collection('settings').doc('main').set(state.settings);
-        db.collection('templates').doc(String(tpl.id)).set(tpl);
-        populateClientSelect();renderAll();loadSettings();updateBadges();
-        showToast('✅ '+(lang==='uz'?'Tiklandi':'Восстановлено'),'success');
-      }catch(err){showToast('❌ '+(lang==='uz'?'Xato fayl':'Неверный файл'),'error');}
-    };
-    reader.readAsText(file);
-  };
-  input.click();
-}
+
 // ==================== TEMPLATES ====================
 function saveTemplate(){
   const clientId=document.getElementById('clientSelect').value;
