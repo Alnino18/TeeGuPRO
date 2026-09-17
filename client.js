@@ -28,14 +28,11 @@ async function init() {
     const cSnap = await db.collection('clients').where('tgId', '==', tgUser.id).get();
     if(!cSnap.empty) {
       currentClient = cSnap.docs[0].data();
-      loadMenu();
-    } else {
-      document.getElementById('loading').style.display = 'none';
-      document.getElementById('loginScreen').style.display = 'block';
     }
   } catch(e) {
-    alert("Ошибка загрузки. Проверьте интернет.");
+    console.error("Ошибка при поиске клиента:", e);
   }
+  loadMenu();
 }
 
 async function loadMenu() {
@@ -105,8 +102,11 @@ function updateCart() {
 function placeOrder() {
   document.getElementById('checkoutModal').classList.add('active');
   document.getElementById('cartBar').style.display = 'none';
-  if(currentClient.phone) document.getElementById('orderPhone').value = currentClient.phone;
-  if(currentClient.address) document.getElementById('orderAddress').value = currentClient.address;
+  if(currentClient) {
+    document.getElementById('orderName').value = currentClient.name || '';
+    document.getElementById('orderPhone').value = currentClient.phone || '';
+    document.getElementById('orderAddress').value = currentClient.address || '';
+  }
 }
 
 function closeCheckout() {
