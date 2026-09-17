@@ -247,7 +247,7 @@ function renderProductsGrid(){
         <div><span class="qty-val" id="qty-${p.id}">0</span> <span class="qty-unit">${p.unit||'кг'}</span></div>
         <div class="qty-btn" onclick="changeQty('${p.id}',${p.step||0.5})">+</div>
       </div>
-    </div>`).join('');
+    </div>`;}).join('');
 }
 function changeQty(id,delta){
   const p=PRODUCTS.find(x=>x.id===id);
@@ -706,18 +706,7 @@ function deleteClient(id){
   syncClientsToSheets(true);
 }
 function syncClientsToSheets() {}
-  const btn=document.getElementById('syncBtn');
-  if(btn&&!silent){btn.innerHTML='<div class="spinner" style="border-color:rgba(255,255,255,.3);border-top-color:white;display:inline-block"></div>';btn.disabled=true;}
-  try{
-    await fetch(url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({action:'sync_clients',clients:state.clients})});
-    if(!silent)showToast('✅ '+(lang==='uz'?'Mijozlar sinxronlandi':'Клиенты синхронизированы'),'success');
-  }catch(e){
-    if(!silent)showToast('❌ Ошибка','error');
-  }finally{
-    if(btn&&!silent){btn.innerHTML='☁️ '+(lang==='uz'?'Mijozlarni Sheetsga yuklash':'Синхронизировать клиентов → Sheets');btn.disabled=false;}
-  }
-}
+
 function openEditClientModal(id){
   const c=state.clients.find(x=>x.id==id);if(!c)return;
   editingClientId=id;
