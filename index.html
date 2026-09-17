@@ -11,10 +11,15 @@
 <link rel="manifest" href="manifest.json">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+<style>
+  body{padding-bottom:70px;}
+  #loading{position:fixed;top:0;left:0;width:100%;height:100%;background:var(--bg);z-index:1000;display:flex;align-items:center;justify-content:center;font-weight:800;font-family:'Outfit',sans-serif;font-size:20px;}
+  .bottom-nav{position:fixed;bottom:0;left:0;width:100%;height:60px;background:color-mix(in srgb, var(--card) 85%, transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid var(--border);display:flex;z-index:90;box-shadow:0 -4px 20px rgba(0,0,0,0.1);}
+</style>
 <script src="https://api-maps.yandex.ru/2.1/?apikey=7db4b1da-3bb3-47a8-afc7-eab9e6d97c36&lang=ru_RU"></script>
 
 </head>
