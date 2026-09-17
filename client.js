@@ -38,45 +38,6 @@ async function init() {
   }
 }
 
-async function loginWithPhone() {
-  let phone = document.getElementById('loginPhone').value.trim();
-  let name = document.getElementById('loginName').value.trim();
-  
-  if(!name) return alert('Пожалуйста, введите ваше имя');
-  if(!phone) return alert('Пожалуйста, введите номер телефона');
-  
-  document.getElementById('loading').style.display = 'flex';
-  document.getElementById('loginScreen').style.display = 'none';
-  
-  try {
-    const cSnap = await db.collection('clients').where('phone', '==', phone).get();
-    if(!cSnap.empty) {
-      // Существующий клиент найден по номеру
-      currentClient = cSnap.docs[0].data();
-      currentClient.tgId = tgUser.id;
-      // Обновляем имя, если оно было пустым или клиент захотел его уточнить
-      currentClient.name = name;
-      await db.collection('clients').doc(String(currentClient.id)).update({ tgId: tgUser.id, name: name });
-    } else {
-      // Создаем нового клиента
-      const newClient = {
-        id: Date.now(),
-        name: name,
-        tgId: tgUser.id,
-        phone: phone,
-        customPrices: {}
-      };
-      await db.collection('clients').doc(String(newClient.id)).set(newClient);
-      currentClient = newClient;
-    }
-    loadMenu();
-  } catch(e) {
-    alert("Ошибка связи с базой.");
-    document.getElementById('loading').style.display = 'none';
-    document.getElementById('loginScreen').style.display = 'block';
-  }
-}
-
 async function loadMenu() {
   document.getElementById('loading').style.display = 'flex';
   const pSnap = await db.collection('products').get();
@@ -154,18 +115,57 @@ function closeCheckout() {
 }
 
 async function submitOrder() {
+  const name = document.getElementById('orderName').value.trim();
   const phone = document.getElementById('orderPhone').value.trim();
   const address = document.getElementById('orderAddress').value.trim();
   const note = document.getElementById('orderNote').value.trim();
   
+  if(!name) return alert('Пожалуйста, введите ваше имя');
+  if(!phone) return alert('Пожалуйста, введите номер телефона');
+  
   document.getElementById('submitBtn').disabled = true;
   document.getElementById('submitBtn').innerText = 'Отправка...';
   
-  // Update client info if address changed
-  if(address !== currentClient.address) {
-    currentClient.address = address;
-    await db.collection('clients').doc(String(currentClient.id)).update({ address });
+  try {
+    // If no currentClient, search by phone or create new
+    if(!currentClient) {
+      let formattedPhone = phone;
+      if(!formattedPhone.startsWith('+')) formattedPhone = '+' + formattedPhone.replace(/\D/g, '');
+      
+      const cSnap = await db.collection('clients').where('phone', '==', formattedPhone).get();
+      if(!cSnap.empty) {
+        currentClient = cSnap.docs[0].data();
+        currentClient.tgId = tgUser.id;
+        currentClient.name = name;
+        currentClient.address = address;
+        await db.collection('clients').doc(String(currentClient.id)).update({ tgId: tgUser.id, name: name, address: address });
+      } else {
+        currentClient = {
+          id: Date.now(),
+          name: name,
+          tgId: tgUser.id,
+          phone: formattedPhone,
+          address: address,
+          customPrices: {}
+        };
+        await db.collection('clients').doc(String(currentClient.id)).set(currentClient);
+      }
+    } else {
+      // Update existing client info if changed
+      let updates = {};
+      if(address !== currentClient.address) { currentClient.address = address; updates.address = address; }
+      if(name !== currentClient.name) { currentClient.name = name; updates.name = name; }
+      if(Object.keys(updates).length > 0) {
+        await db.collection('clients').doc(String(currentClient.id)).update(updates);
+      }
+    }
+  } catch(e) {
+    alert("Ошибка при сохранении профиля: " + e.message);
+    document.getElementById('submitBtn').disabled = false;
+    document.getElementById('submitBtn').innerText = 'Подтвердить заказ';
+    return;
   }
+
   
   let total = 0;
   const items = [];

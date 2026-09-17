@@ -24,15 +24,7 @@
 
 <div id="loading">Загрузка...</div>
 
-<!-- Экран авторизации (связки телефона) -->
-<div id="loginScreen" style="display:none">
-  <div style="font-size:40px; margin-bottom:10px">🥗</div>
-  <h2>Добро пожаловать!</h2>
-  <p style="color:var(--text2); margin-bottom:25px; font-size:14px">Пожалуйста, введите ваше имя и номер телефона для доступа к меню.</p>
-  <input type="text" id="loginName" class="form-input" placeholder="Ваше имя" style="margin-bottom:10px; text-align:center; font-size:18px; padding:15px">
-  <input type="tel" id="loginPhone" class="form-input" placeholder="+998 90 123 45 67" style="margin-bottom:15px; text-align:center; font-size:18px; padding:15px">
-  <button class="btn btn-primary" onclick="loginWithPhone()" style="width:100%; padding:15px; font-size:16px">Войти / Регистрация</button>
-</div>
+
 
 <!-- Экран меню -->
 <div id="menuScreen" style="display:none">
@@ -55,8 +47,12 @@
   <div class="modal-content">
     <h3>Подтверждение адреса</h3>
     <div class="form-group">
-      <label class="form-label">Ваш Телефон</label>
-      <input type="text" id="orderPhone" class="form-input" readonly style="background:rgba(255,255,255,0.05)">
+      <label class="form-label">Ваше имя</label>
+      <input type="text" id="orderName" class="form-input" placeholder="Имя...">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Ваш телефон</label>
+      <input type="text" id="orderPhone" class="form-input" placeholder="+998 90 123 45 67">
     </div>
     <div class="form-group">
       <label class="form-label">Адрес доставки</label>
@@ -73,6 +69,6 @@
   </div>
 </div>
 
-<script src="client.js?v=4"></script>
+<script src="client.js?v=5"></script>
 </body>
 </html>
