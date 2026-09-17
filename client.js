@@ -104,12 +104,14 @@ function updateCart() {
 
 function placeOrder() {
   document.getElementById('checkoutModal').classList.add('active');
+  document.getElementById('cartBar').style.display = 'none';
   if(currentClient.phone) document.getElementById('orderPhone').value = currentClient.phone;
   if(currentClient.address) document.getElementById('orderAddress').value = currentClient.address;
 }
 
 function closeCheckout() {
   document.getElementById('checkoutModal').classList.remove('active');
+  updateCart();
 }
 
 async function submitOrder() {
