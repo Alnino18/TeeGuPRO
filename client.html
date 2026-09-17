@@ -12,8 +12,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 <style>
   body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; padding-bottom: 80px; }
-  .header { padding: 15px; background: color-mix(in srgb, var(--card) 85%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; text-align: center; font-family: 'Outfit', sans-serif; font-weight: 800; font-size: 18px; }
-  .cart-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: color-mix(in srgb, var(--card) 85%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-top: 1px solid var(--border); padding: 15px; box-sizing: border-box; display: flex; justify-content: space-between; align-items: center; z-index: 100; box-shadow: 0 -4px 20px rgba(0,0,0,0.1); }
+  .header { padding: 15px; background: rgba(25, 25, 35, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; text-align: center; font-family: 'Outfit', sans-serif; font-weight: 800; font-size: 18px; }
+  .cart-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(25, 25, 35, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-top: 1px solid var(--border); padding: 15px; box-sizing: border-box; display: flex; justify-content: space-between; align-items: center; z-index: 100; box-shadow: 0 -4px 20px rgba(0,0,0,0.1); }
   .cart-total { font-weight: 800; font-size: 18px; color: var(--accent2); }
   .btn-order { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: white; border: none; padding: 12px 24px; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s; animation: cartPulse 2s infinite ease-in-out; box-shadow: 0 4px 20px rgba(124,106,247,0.4); }
   .btn-order:active { transform: scale(0.95); }
@@ -33,7 +33,7 @@
 <!-- Экран меню -->
 <div id="menuScreen" style="display:none">
   <div class="header">🥗 TeeGu</div>
-  <div class="tabs" style="justify-content:center; background:color-mix(in srgb, var(--bg2) 80%, transparent); backdrop-filter:blur(12px);">
+  <div class="tabs" style="justify-content:center; background:rgba(25, 25, 35, 0.85); backdrop-filter:blur(12px);">
     <div class="tab active" onclick="switchClientTab('menu')" id="tab-menu">🥗 Меню</div>
     <div class="tab" onclick="switchClientTab('orders')" id="tab-orders">📦 Мои заказы</div>
   </div>
