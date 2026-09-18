@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#1a1a2e">
 <title>TeeGu - Заказ</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU" type="text/javascript"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
@@ -69,8 +70,12 @@
         <input type="text" id="orderPhone" class="form-input" placeholder="+998 90 123 45 67">
       </div>
       <div class="form-group">
-        <label class="form-label">Адрес доставки</label>
-        <input type="text" id="orderAddress" class="form-input" placeholder="Город, улица, дом...">
+        <label class="form-label">Адрес доставки / Lokatsiya</label>
+        <div style="display:flex;gap:8px">
+          <input type="text" id="orderAddress" class="form-input" placeholder="Город, улица, дом..." style="flex:1">
+          <button class="btn btn-outline" onclick="openClientMap()" style="padding:0 15px; font-size:18px">📍</button>
+        </div>
+        <div id="locationStatus" style="font-size:11px; color:var(--green); margin-top:4px; display:none">✅ Lokatsiya tanlandi</div>
       </div>
       <div class="form-group">
         <label class="form-label">Примечание к заказу</label>
@@ -91,6 +96,25 @@
   </div>
 </div>
 
-<script src="client.js?v=12"></script>
+
+<!-- MODAL: CLIENT MAP -->
+<div id="clientMapOverlay" class="modal-overlay" style="z-index: 2000;">
+  <div class="modal" style="height: 80vh; display: flex; flex-direction: column;">
+    <div class="modal-content" style="flex: 1; display: flex; flex-direction: column; padding: 15px;">
+      <h3 style="margin-top:0">📍 Lokatsiyani belgilang</h3>
+      <p style="font-size:12px; color:var(--text2); margin-bottom:10px">Xaritani surib, manzilingizni markazga keltiring</p>
+      <div style="position:relative; flex:1; border-radius:12px; overflow:hidden; border:1px solid var(--border)">
+        <div id="clientYandexMap" style="width:100%; height:100%;"></div>
+        <div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -100%); pointer-events:none; z-index:1000; font-size:32px;">📍</div>
+      </div>
+      <div style="display:flex; gap:10px; margin-top:15px">
+        <button class="btn btn-secondary" onclick="closeClientMap()">Bekor qilish</button>
+        <button class="btn btn-primary" onclick="confirmClientMap()">Tasdiqlash</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="client.js?v=13"></script>
 </body>
 </html>

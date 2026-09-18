@@ -152,6 +152,8 @@ async function submitOrder() {
           tgId: tgUser.id,
           phone: formattedPhone,
           address: address,
+          lat: clientLat || null,
+          lng: clientLng || null,
           customPrices: {}
         };
         await db.collection('clients').doc(String(currentClient.id)).set(currentClient);
@@ -161,6 +163,10 @@ async function submitOrder() {
       let updates = {};
       if(address !== currentClient.address) { currentClient.address = address; updates.address = address; }
       if(name !== currentClient.name) { currentClient.name = name; updates.name = name; }
+      if(clientLat && clientLng) { 
+        currentClient.lat = clientLat; currentClient.lng = clientLng; 
+        updates.lat = clientLat; updates.lng = clientLng; 
+      }
       if(Object.keys(updates).length > 0) {
         await db.collection('clients').doc(String(currentClient.id)).update(updates);
       }
@@ -190,6 +196,8 @@ async function submitOrder() {
     client: currentClient.name || '',
     phone: currentClient.phone || '',
     address: address || '', 
+    lat: clientLat || (currentClient && currentClient.lat) || null,
+    lng: clientLng || (currentClient && currentClient.lng) || null,
     note: note || '', 
     items: items, 
     total: total || 0,
@@ -350,4 +358,48 @@ window.repeatOrder = function(itemsJson) {
   } catch(e) {
     alert('Не удалось повторить заказ');
   }
+}
+
+// --- MAP PICKER LOGIC ---
+let clientLat = null;
+let clientLng = null;
+let clientMapInstance = null;
+
+window.openClientMap = function() {
+  document.getElementById('clientMapOverlay').classList.add('open');
+  if (!clientMapInstance && window.ymaps) {
+    ymaps.ready(() => {
+      clientMapInstance = new ymaps.Map("clientYandexMap", {
+        center: [41.2995, 69.2401], // Tashkent default
+        zoom: 15,
+        controls: ['zoomControl', 'geolocationControl']
+      });
+      // Try to get user location
+      clientMapInstance.geolocation.get({ provider: 'browser', mapStateAutoApply: true }).then(function (result) {
+        clientMapInstance.setCenter(result.geoObjects.position, 16);
+      });
+    });
+  }
+}
+
+window.closeClientMap = function() {
+  document.getElementById('clientMapOverlay').classList.remove('open');
+}
+
+window.confirmClientMap = function() {
+  if (clientMapInstance) {
+    const center = clientMapInstance.getCenter();
+    clientLat = center[0];
+    clientLng = center[1];
+    document.getElementById('locationStatus').style.display = 'block';
+    
+    // Reverse geocode to get address text (optional, but nice)
+    ymaps.geocode(center).then(function (res) {
+      const firstGeoObject = res.geoObjects.get(0);
+      if(firstGeoObject) {
+        document.getElementById('orderAddress').value = firstGeoObject.getAddressLine();
+      }
+    });
+  }
+  closeClientMap();
 }
