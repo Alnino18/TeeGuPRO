@@ -1,3 +1,39 @@
+
+// --- AUTHENTICATION LOGIC ---
+const ADMIN_HASH = "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"; // admin123
+
+async function sha256(message) {
+    const msgBuffer = new TextEncoder().encode(message);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function checkAdminPassword() {
+  const pwd = document.getElementById('adminPasswordInput').value;
+  if(!pwd) return;
+  const hash = await sha256(pwd);
+  if(hash === ADMIN_HASH) {
+    localStorage.setItem('adminAuth', hash);
+    document.getElementById('loginOverlay').style.opacity = '0';
+    setTimeout(() => { document.getElementById('loginOverlay').style.display = 'none'; }, 300);
+    initAdminApp(); // call the main init function
+  } else {
+    document.getElementById('loginError').style.display = 'block';
+  }
+}
+
+function verifyAuth() {
+  const auth = localStorage.getItem('adminAuth');
+  if(auth === ADMIN_HASH) {
+    document.getElementById('loginOverlay').style.display = 'none';
+    initAdminApp();
+  } else {
+    document.getElementById('loginOverlay').style.display = 'flex';
+  }
+}
+
+
 const firebaseConfig = {
   apiKey: "AIzaSyBpa1Bfj4L8q1itRh1BjHgyzIyIi-rzmSk",
   authDomain: "dostavka-b53d8.firebaseapp.com",
