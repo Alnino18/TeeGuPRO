@@ -1437,3 +1437,48 @@ const PAGE_ORDER = [
     startX = 0;
   }, { passive: true });
 })();
+
+// --- ADMIN MAP PICKER LOGIC ---
+let adminPickerMapInstance = null;
+
+window.openAdminMapPicker = function() {
+  document.getElementById('adminMapOverlay').classList.add('open');
+  if (!adminPickerMapInstance && window.ymaps) {
+    ymaps.ready(() => {
+      adminPickerMapInstance = new ymaps.Map("adminPickerMap", {
+        center: [41.2995, 69.2401], // Tashkent default
+        zoom: 15,
+        controls: ['zoomControl', 'geolocationControl', 'searchControl']
+      });
+      // Try to center on existing lat/lng if present
+      const currLat = parseFloat(document.getElementById('coordLat').value);
+      const currLng = parseFloat(document.getElementById('coordLng').value);
+      if(!isNaN(currLat) && !isNaN(currLng)) {
+         adminPickerMapInstance.setCenter([currLat, currLng], 17);
+      } else {
+         adminPickerMapInstance.geolocation.get({ provider: 'browser', mapStateAutoApply: true }).then(function (result) {
+           adminPickerMapInstance.setCenter(result.geoObjects.position, 16);
+         });
+      }
+    });
+  } else if (adminPickerMapInstance) {
+     const currLat = parseFloat(document.getElementById('coordLat').value);
+     const currLng = parseFloat(document.getElementById('coordLng').value);
+     if(!isNaN(currLat) && !isNaN(currLng)) {
+        adminPickerMapInstance.setCenter([currLat, currLng], 17);
+     }
+  }
+}
+
+window.closeAdminMapPicker = function() {
+  document.getElementById('adminMapOverlay').classList.remove('open');
+}
+
+window.confirmAdminMapPicker = function() {
+  if (adminPickerMapInstance) {
+    const center = adminPickerMapInstance.getCenter();
+    document.getElementById('coordLat').value = center[0].toFixed(6);
+    document.getElementById('coordLng').value = center[1].toFixed(6);
+  }
+  closeAdminMapPicker();
+}
