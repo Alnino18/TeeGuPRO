@@ -42,19 +42,16 @@
 
 <!-- Экран меню -->
 <div id="menuScreen" style="display:none">
-  <div class="header">🥗 TeeGu</div>
-  <div class="tabs" style="justify-content:center; background:rgba(25, 25, 35, 0.85); backdrop-filter:blur(12px);">
-    <div class="tab active" onclick="switchClientTab('menu')" id="tab-menu">🥗 Меню</div>
-    <div class="tab" onclick="switchClientTab('orders')" id="tab-orders">📦 Мои заказы</div>
+  <div class="header" style="display:flex; justify-content:space-between; align-items:center; padding: 12px 16px; background:var(--bg2); border-bottom:1px solid var(--border);">
+    <div style="font-weight:900; font-size:18px; color:var(--text);">🥗 TeeGu</div>
+    <div class="tabs" style="display:flex; gap:6px; border:none; background:transparent; padding:0;">
+      <div class="tab active" onclick="switchClientTab('menu')" id="tab-menu" style="padding:6px 12px; border-radius:8px; border:none;">🥗 Меню</div>
+      <div class="tab" onclick="switchClientTab('orders')" id="tab-orders" style="padding:6px 12px; border-radius:8px; border:none;">📦 Мои заказы</div>
+    </div>
   </div>
   
   <div id="client-page-menu" style="padding:15px">
-    <div class="tabs" id="categoryTabs" style="margin-bottom:15px; padding:0; background:transparent; border:none; gap:8px;">
-      <div class="tab active" onclick="filterCategory('all')" style="background:var(--bg2); border-radius:12px; padding:8px 16px; border:1px solid var(--border);">Barchasi</div>
-      <div class="tab" onclick="filterCategory('fastfood')" style="background:var(--bg2); border-radius:12px; padding:8px 16px; border:1px solid var(--border);">Fast-fud</div>
-      <div class="tab" onclick="filterCategory('drinks')" style="background:var(--bg2); border-radius:12px; padding:8px 16px; border:1px solid var(--border);">Ichimliklar</div>
-    </div>
-    <div id="productsGrid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px;"></div>
+    <div id="productsGrid" style="display:grid; grid-template-columns:1fr; gap:10px;"></div>
   </div>
   
   <div id="client-page-orders" style="display:none; padding:15px">
@@ -129,6 +126,6 @@
   </div>
 </div>
 
-<script src="client.js?v=15"></script>
+<script src="client.js?v=16"></script>
 </body>
 </html>

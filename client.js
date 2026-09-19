@@ -64,14 +64,31 @@ function renderProducts() {
     const price = getPrice(p);
     const qty = cart[p.id] || 0;
     const hasCustomPrice = currentClient?.customPrices?.[p.id] ? '<span style="color:var(--orange)">★</span>' : '';
+    
+    let qtyControls = '';
+    if (!qty) {
+      qtyControls = `<button class="btn btn-outline" style="padding:6px 16px; border-radius:12px; font-weight:800; background:var(--bg3); border:none; color:var(--accent); transition:transform 0.2s" onclick="changeQty('${p.id}', ${p.step || 0.5})">➕ Добавить</button>`;
+    } else {
+      qtyControls = `
+        <div style="display:flex; align-items:center; justify-content:space-between; background:var(--bg); border-radius:12px; border:1px solid var(--border); padding:2px; min-width:90px;">
+          <button class="icon-btn" onclick="changeQty('${p.id}', ${-(p.step || 0.5)})" style="border:none; width:30px; height:30px; padding:0; display:flex; align-items:center; justify-content:center;">➖</button>
+          <span style="font-weight:800; font-size:15px; text-align:center" id="qty-${p.id}">${qty}</span>
+          <button class="icon-btn" onclick="changeQty('${p.id}', ${p.step || 0.5})" style="border:none; width:30px; height:30px; padding:0; display:flex; align-items:center; justify-content:center; color:var(--accent)">➕</button>
+        </div>
+      `;
+    }
+
     return `
-    <div class="product-card ${qty > 0 ? 'selected' : ''}" id="pc-${p.id}" style="padding:15px; position:relative;">
-      <div class="product-name">${p.emoji} ${p.name} ${hasCustomPrice}</div>
-      <div class="product-price">${fmt(price)} / ${p.unit || 'кг'}</div>
-      <div class="product-qty" style="margin-top:10px">
-        <div class="qty-btn" onclick="changeQty('${p.id}', ${-(p.step || 0.5)})">−</div>
-        <div><span class="qty-val" id="qty-${p.id}">${qty}</span> <span class="qty-unit">${p.unit || 'кг'}</span></div>
-        <div class="qty-btn" onclick="changeQty('${p.id}', ${p.step || 0.5})">+</div>
+    <div class="product-card ${qty > 0 ? 'selected' : ''}" id="pc-${p.id}" style="padding:12px; display:flex; justify-content:space-between; align-items:center; background:var(--bg2); border-radius:16px; border:1px solid var(--border); box-shadow: 0 4px 12px rgba(0,0,0,0.02); transition:transform 0.2s; margin-bottom:10px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div style="font-size:32px; background:var(--bg3); width:50px; height:50px; display:flex; align-items:center; justify-content:center; border-radius:14px; border:1px solid var(--border);">${p.emoji || '🍔'}</div>
+        <div>
+          <div style="font-weight:700; font-size:15px; margin-bottom:4px; line-height:1.2;">${p.name} ${hasCustomPrice}</div>
+          <div style="color:var(--accent2); font-weight:900; font-size:14px;">${fmt(price)} <span style="font-size:11px; color:var(--text3); font-weight:600;">/ ${p.unit || 'кг'}</span></div>
+        </div>
+      </div>
+      <div>
+        ${qtyControls}
       </div>
     </div>`;
   }).join('');
@@ -88,9 +105,7 @@ function changeQty(id, delta) {
   if (n > 0) cart[id] = n;
   else delete cart[id];
   
-  document.getElementById('qty-'+id).innerText = n;
-  document.getElementById('pc-'+id).classList.toggle('selected', n > 0);
-  
+  renderProducts();
   updateCart();
 }
 
@@ -434,17 +449,4 @@ window.confirmClientMap = function() {
   closeClientMap();
 }
 
-let currentCategory = 'all';
-function filterCategory(cat) {
-  currentCategory = cat;
-  document.querySelectorAll('#categoryTabs .tab').forEach(t => {
-    t.classList.remove('active');
-    t.style.borderColor = 'var(--border)';
-    t.style.color = 'var(--text3)';
-  });
-  const activeTab = event.currentTarget;
-  activeTab.classList.add('active');
-  activeTab.style.borderColor = 'var(--accent)';
-  activeTab.style.color = 'var(--accent)';
-  renderProducts();
-}
+
