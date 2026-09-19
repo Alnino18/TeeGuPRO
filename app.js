@@ -426,8 +426,17 @@ function renderOrdersList(filterText='',dateFilter=state.dateFilter){
     return`<div class="order-item payment-${pc[o.payment]}">
       <div class="order-top">
         <div><div class="order-client">${o.client}</div><div class="order-meta">${ds} · ${o.type}</div></div>
-        <div><div class="order-badge ${pc[o.payment]}">${pi[o.payment]||'💳'} ${o.payment}</div>
-        <div style="margin-top:4px">${o.sent?'<span class="sent-badge">✅ TG</span>':'<span class="unsent-badge">❌ TG</span>'}</div></div>
+        <div style="text-align:right;">
+          <div class="order-badge ${pc[o.payment]}">${pi[o.payment]||'💳'} ${o.payment}</div>
+          <div style="margin-top:4px; margin-bottom:4px;">${o.sent?'<span class="sent-badge">✅ TG</span>':'<span class="unsent-badge">❌ TG</span>'}</div>
+          <select onchange="updateOrderStatus(${o.id}, this.value)" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:2px 4px; border-radius:4px; font-size:11px; width:100%;">
+            <option value="new" ${!o.status || o.status==='new' ? 'selected' : ''}>🆕 Yangi</option>
+            <option value="preparing" ${o.status==='preparing' ? 'selected' : ''}>👨‍🍳 Tayyorlanmoqda</option>
+            <option value="delivering" ${o.status==='delivering' ? 'selected' : ''}>🛵 Yo'lda</option>
+            <option value="done" ${o.status==='done' ? 'selected' : ''}>✅ Bajarildi</option>
+            <option value="cancelled" ${o.status==='cancelled' ? 'selected' : ''}>❌ Bekor qilindi</option>
+          </select>
+        </div>
       </div>
       <div class="order-items">${o.items.map(i=>`${i.emoji} ${lang==='uz'?i.nameUz:i.name}: <b>${i.qty}${i.unit||'кг'}</b>`).join(' · ')}</div>
       ${o.note?`<div style="font-size:12px;color:var(--text3);margin-top:4px">📝 ${o.note}</div>`:''}
@@ -445,6 +454,14 @@ function renderOrdersList(filterText='',dateFilter=state.dateFilter){
 }
 function filterOrders(v){renderOrdersList(v);}
 function filterByDate(f,el){document.querySelectorAll('#page-orders .pill').forEach(p=>p.classList.remove('selected'));el.classList.add('selected');renderOrdersList(document.getElementById('ordersSearch').value,f);}
+
+window.updateOrderStatus = function(id, newStatus) {
+  db.collection('orders').doc(String(id)).update({status: newStatus}).then(()=>{
+    showToast('Status o\'zgardi', 'success');
+  }).catch(e=>{
+    showToast('Xatolik', 'error');
+  });
+};
 
 async function resendOrderById(id){
   const o=state.orders.find(x=>x.id==id);if(!o)return;

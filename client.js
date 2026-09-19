@@ -301,48 +301,78 @@ window.switchClientTab = function(tab) {
   }
 }
 
-async function fetchClientOrders() {
+let orderListener = null;
+
+function fetchClientOrders() {
   const el = document.getElementById('clientOrdersList');
   el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Загрузка...</div>';
   if(!currentClient) return;
-  try {
-    const snap = await db.collection('orders').where('clientId', '==', currentClient.id).get();
-    let orders = [];
-    snap.forEach(doc => {
-      orders.push(doc.data());
-    });
-    orders.sort((a,b) => new Date(b.date) - new Date(a.date));
-    
-    if (orders.length === 0) {
-      el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">У вас еще нет заказов</div>';
-      return;
-    }
-    
-    el.innerHTML = orders.map(o => {
-      const itemsStr = o.items.map(i => `${i.emoji} ${i.qty}${i.unit||'кг'}`).join(', ');
-      const d = new Date(o.date);
-      const dateStr = d.toLocaleDateString('ru-RU', {day:'numeric',month:'short'}) + ' ' + d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
-      let statBadge = '';
-      if(o.status==='new') statBadge = '<span style="color:var(--orange)">В обработке</span>';
-      else if(o.status==='done') statBadge = '<span style="color:var(--green)">Завершен</span>';
-      else statBadge = `<span style="color:var(--text2)">${o.status}</span>`;
+  
+  if(orderListener) orderListener(); // unsubscribe
+  
+  orderListener = db.collection('orders')
+    .where('clientId', '==', currentClient.id)
+    .onSnapshot(snap => {
+      let orders = [];
+      snap.forEach(doc => orders.push(doc.data()));
+      orders.sort((a,b) => new Date(b.date) - new Date(a.date));
       
-      const safeItems = JSON.stringify(o.items).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
-      return `
-        <div class="card" style="padding:12px;margin-bottom:10px">
-          <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-            <span style="font-size:12px;color:var(--text3)">${dateStr}</span>
-            <span style="font-size:12px;font-weight:700">${statBadge}</span>
+      if (orders.length === 0) {
+        el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">У вас еще нет заказов</div>';
+        return;
+      }
+      
+      el.innerHTML = orders.map(o => {
+        const itemsStr = o.items.map(i => `${i.emoji} ${i.qty}${i.unit||'кг'}`).join(', ');
+        const d = new Date(o.date);
+        const dateStr = d.toLocaleDateString('ru-RU', {day:'numeric',month:'short'}) + ' ' + d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+        
+        const safeItems = JSON.stringify(o.items).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+        
+        const isActive = ['new', 'preparing', 'delivering'].includes(o.status);
+        let statusHtml = '';
+        
+        if (isActive) {
+           const steps = ['new', 'preparing', 'delivering'];
+           const stepIndex = steps.indexOf(o.status);
+           statusHtml = `
+           <div style="background:var(--bg); border-radius:12px; padding:12px; margin-bottom:12px; border:1px solid var(--border)">
+             <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                <div style="font-size:10px; font-weight:800; color:${stepIndex>=0?'var(--accent)':'var(--text3)'};">Qabul qilindi</div>
+                <div style="font-size:10px; font-weight:800; color:${stepIndex>=1?'var(--orange)':'var(--text3)'};">Tayyorlanmoqda</div>
+                <div style="font-size:10px; font-weight:800; color:${stepIndex>=2?'var(--blue)':'var(--text3)'};">Yo'lda</div>
+             </div>
+             <div style="display:flex; height:6px; background:var(--bg3); border-radius:3px; overflow:hidden;">
+                <div style="width:${(stepIndex+1)*33.3}%; background:linear-gradient(90deg, var(--accent), var(--accent2)); transition:width 0.5s ease;"></div>
+             </div>
+           </div>
+           `;
+        } else {
+           // Delivered or Cancelled
+           let badgeColor = o.status==='done' ? 'var(--green)' : 'var(--text2)';
+           let badgeText = o.status==='done' ? 'Завершен' : o.status;
+           statusHtml = `<div style="text-align:right; font-size:12px; font-weight:700; color:${badgeColor}; margin-bottom:8px;">${badgeText}</div>`;
+        }
+
+        return `
+          <div class="card" style="padding:15px;margin-bottom:12px; background:var(--bg2);">
+            ${statusHtml}
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+              <div style="font-weight:800; font-size:15px;">Заказ #${String(o.id).slice(-4)}</div>
+              <div style="font-size:12px;color:var(--text2)">${dateStr}</div>
+            </div>
+            <div style="font-size:13px;color:var(--text);margin-bottom:12px; line-height:1.4;">${itemsStr}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div style="font-weight:900;color:var(--accent2);font-size:16px;">${o.total.toLocaleString('ru-RU')} сум</div>
+              <button class="btn-repeat" onclick="repeatOrder('${safeItems}')" style="width:auto; margin:0; padding:6px 14px;">🔄 Повторить</button>
+            </div>
           </div>
-          <div style="font-size:14px;color:var(--text);margin-bottom:8px">${itemsStr}</div>
-          <div style="font-size:15px;font-weight:800;color:var(--accent2)">${o.total.toLocaleString('ru-RU')} сум</div>
-          <button class="btn-repeat" onclick="repeatOrder('${safeItems}')">🔄 Повторить заказ</button>
-        </div>
-      `;
-    }).join('');
-  } catch(e) {
-    el.innerHTML = '<div style="color:var(--danger)">Ошибка загрузки заказов</div>';
-  }
+        `;
+      }).join('');
+    }, err => {
+      console.log(err);
+      el.innerHTML = '<div style="color:var(--danger);text-align:center">Ошибка загрузки заказов</div>';
+    });
 }
 
 window.repeatOrder = function(itemsJson) {
