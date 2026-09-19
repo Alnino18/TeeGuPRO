@@ -13,7 +13,7 @@ const db = firebase.firestore();
 
 let tg = window.Telegram?.WebApp;
 if(tg && tg.initData) {
-  tg.ready();
+  tg.ready(); tg.expand();
   tg.expand();
 }
 
@@ -402,4 +402,19 @@ window.confirmClientMap = function() {
     });
   }
   closeClientMap();
+}
+
+let currentCategory = 'all';
+function filterCategory(cat) {
+  currentCategory = cat;
+  document.querySelectorAll('#categoryTabs .tab').forEach(t => {
+    t.classList.remove('active');
+    t.style.borderColor = 'var(--border)';
+    t.style.color = 'var(--text3)';
+  });
+  const activeTab = event.currentTarget;
+  activeTab.classList.add('active');
+  activeTab.style.borderColor = 'var(--accent)';
+  activeTab.style.color = 'var(--accent)';
+  renderProducts();
 }

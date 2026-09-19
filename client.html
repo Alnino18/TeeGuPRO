@@ -12,6 +12,15 @@
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 <style>
+    :root {
+    --bg: var(--tg-theme-bg-color, #09090f);
+    --bg2: var(--tg-theme-secondary-bg-color, #12121e);
+    --text: var(--tg-theme-text-color, #f5f5fc);
+    --text2: var(--tg-theme-hint-color, #a3a3c2);
+    --accent: var(--tg-theme-button-color, #7b61ff);
+    --accent2: #00e5ff;
+    --border: var(--tg-theme-secondary-bg-color, #2a2a46);
+  }
   body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; padding-bottom: 80px; }
   .header { padding: 15px; background: rgba(25, 25, 35, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; text-align: center; font-family: 'Outfit', sans-serif; font-weight: 800; font-size: 18px; }
   .cart-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(25, 25, 35, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-top: 1px solid var(--border); padding: 15px; box-sizing: border-box; display: flex; justify-content: space-between; align-items: center; z-index: 100; box-shadow: 0 -4px 20px rgba(0,0,0,0.1); }
@@ -40,7 +49,12 @@
   </div>
   
   <div id="client-page-menu" style="padding:15px">
-    <div id="productsGrid" style="display:grid; grid-template-columns:1fr; gap:10px;"></div>
+    <div class="tabs" id="categoryTabs" style="margin-bottom:15px; padding:0; background:transparent; border:none; gap:8px;">
+      <div class="tab active" onclick="filterCategory('all')" style="background:var(--bg2); border-radius:12px; padding:8px 16px; border:1px solid var(--border);">Barchasi</div>
+      <div class="tab" onclick="filterCategory('fastfood')" style="background:var(--bg2); border-radius:12px; padding:8px 16px; border:1px solid var(--border);">Fast-fud</div>
+      <div class="tab" onclick="filterCategory('drinks')" style="background:var(--bg2); border-radius:12px; padding:8px 16px; border:1px solid var(--border);">Ichimliklar</div>
+    </div>
+    <div id="productsGrid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px;"></div>
   </div>
   
   <div id="client-page-orders" style="display:none; padding:15px">
@@ -115,6 +129,6 @@
   </div>
 </div>
 
-<script src="client.js?v=14"></script>
+<script src="client.js?v=15"></script>
 </body>
 </html>
