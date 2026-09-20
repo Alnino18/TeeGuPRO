@@ -1159,7 +1159,8 @@ async function saveNewCourier(){
   const c = {id:Date.now(), name, pin};
   try {
     const updatedCouriers = [...(state.couriers || []), c];
-    await db.collection('settings').doc('main').update({ couriers: updatedCouriers });
+    const newSettings = { ...(state.settings || {}), couriers: updatedCouriers };
+    await db.collection('settings').doc('main').set(newSettings);
     closeModal('addCourierModal');
     showToast('✅ '+(lang==='uz'?"Qo'shildi":'Добавлен'), 'success');
   } catch (err) {
@@ -1169,7 +1170,8 @@ async function saveNewCourier(){
 async function deleteCourier(id){
   try {
     const updatedCouriers = (state.couriers || []).filter(c => c.id != id);
-    await db.collection('settings').doc('main').update({ couriers: updatedCouriers });
+    const newSettings = { ...(state.settings || {}), couriers: updatedCouriers };
+    await db.collection('settings').doc('main').set(newSettings);
   } catch (err) {
     alert("Firebase xatosi (O'chirishda): " + err.message);
   }
