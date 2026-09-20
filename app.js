@@ -17,7 +17,7 @@ async function checkAdminPassword() {
     localStorage.setItem('adminAuth', hash);
     document.getElementById('loginOverlay').style.opacity = '0';
     setTimeout(() => { document.getElementById('loginOverlay').style.display = 'none'; }, 300);
-    initAdminApp(); // call the main init function
+    init(); // call the main init function
   } else {
     document.getElementById('loginError').style.display = 'block';
   }
@@ -27,7 +27,7 @@ function verifyAuth() {
   const auth = localStorage.getItem('adminAuth');
   if(auth === ADMIN_HASH) {
     document.getElementById('loginOverlay').style.display = 'none';
-    initAdminApp();
+    init();
   } else {
     document.getElementById('loginOverlay').style.display = 'flex';
   }
@@ -1469,7 +1469,7 @@ function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.modal-overlay').forEach(overlay=>{overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.classList.remove('open');});});
 
-init();
+verifyAuth();
 if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
 // ==================== SWIPE NAVIGATION ====================
 const PAGE_ORDER = [
