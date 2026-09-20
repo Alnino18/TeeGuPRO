@@ -98,11 +98,14 @@ function startListeners() {
   // Listen for agent's recent orders (last 50)
   db.collection('orders')
     .where('agent', '==', loggedAgentName)
-    .orderBy('id', 'desc')
     .limit(50)
     .onSnapshot(snap => {
       myOrders = snap.docs.map(d => d.data());
+      // sort manually to avoid requiring Firestore composite index
+      myOrders.sort((a,b) => b.id - a.id);
       renderHistory();
+    }, err => {
+      console.error("Orders listener error:", err);
     });
 }
 
@@ -187,13 +190,13 @@ function submitOrder() {
     if(cart[p.id] > 0) {
       items.push({
         id: p.id,
-        name: p.name,
-        emoji: p.emoji,
+        name: p.name || '',
+        emoji: p.emoji || '',
         qty: cart[p.id],
-        price: p.price,
-        unit: p.unit
+        price: p.price || 0,
+        unit: p.unit || ''
       });
-      total += cart[p.id] * p.price;
+      total += cart[p.id] * (p.price || 0);
     }
   });
   
