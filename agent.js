@@ -227,12 +227,23 @@ function submitOrder() {
     }
   }
   
+  // Find existing client to reuse their ID, or create new ID
+  let finalClientId = Date.now();
+  const existingClient = CLIENTS.find(c => {
+    const displayStr = c.name + (c.phone ? ' — ' + c.phone : '');
+    return displayStr === clientInput || (c.name === cName && c.phone === cPhone);
+  });
+  
+  if (existingClient) {
+    finalClientId = existingClient.id;
+  }
+  
   const orderId = Date.now();
   const orderData = {
     id: orderId,
     date: new Date().toISOString(),
     client: cName,
-    clientId: cPhone.replace(/\D/g,'') || cName,
+    clientId: finalClientId,
     phone: cPhone,
     address: address,
     items: items,
@@ -246,17 +257,16 @@ function submitOrder() {
   };
   
   db.collection('orders').doc(String(orderId)).set(orderData)
-    .then(() => {
+    .then(async () => {
       // Also save client if new, or update coordinates if provided
       const cIdStr = String(orderData.clientId);
-      const existingClient = CLIENTS.find(c => String(c.id) === cIdStr);
       
       const clientUpdate = {
         id: cIdStr,
         name: cName,
         phone: cPhone,
         address: address,
-        type: 'Oddiy'
+        type: existingClient ? (existingClient.type || 'Oddiy') : 'Oddiy'
       };
       
       if(currentLat && currentLng) {
