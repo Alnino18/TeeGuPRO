@@ -70,6 +70,7 @@ let state={
   deliveryStatus: {},
   templates: [],
   couriers: [],
+  agents: [],
   quantities:{},selectedPayment:'наличные',currentOrderId:null,dateFilter:'all',
 };
 
@@ -103,6 +104,11 @@ db.collection('settings').doc('main').onSnapshot(snap => {
 db.collection('couriers').onSnapshot(snap => {
   state.couriers = snap.docs.map(d => d.data());
   renderCouriersSettings(); populateCourierSelects();
+});
+
+db.collection('agents').onSnapshot(snap => {
+  state.agents = snap.docs.map(d => d.data());
+  renderAgentsSettings();
 });
 
 db.collection('templates').onSnapshot(snap => {
@@ -1166,6 +1172,32 @@ function populateCourierSelects(){
   const html = '<option value="">-- Без курьера --</option>' + state.couriers.map(c=>`<option value="${c.name}">${c.name}</option>`).join('');
   const oc = document.getElementById('orderCourier'); if(oc) oc.innerHTML=html;
   const eoc = document.getElementById('editOrderCourier'); if(eoc) eoc.innerHTML=html;
+}
+
+function renderAgentsSettings(){
+  const el=document.getElementById('agentsSettingsList');if(!el)return;
+  if(!state.agents.length) { el.innerHTML = `<div style="font-size:12px;color:var(--text3);padding:10px 0">Нет агентов</div>`; return; }
+  el.innerHTML=state.agents.map(a=>`<div style="display:flex;justify-content:space-between;background:var(--bg2);border:1px solid var(--border);padding:10px;border-radius:10px;margin-bottom:8px">
+    <div><div style="font-weight:700">${a.name}</div><div style="font-size:11px;color:var(--text2)">PIN: ${a.pin}</div></div>
+    <button onclick="deleteAgent(${a.id})" style="background:rgba(247,90,90,.1);color:var(--danger);border:none;border-radius:6px;padding:4px 8px;cursor:pointer">🗑️</button>
+  </div>`).join('');
+}
+function openAddAgentModal() {
+  document.getElementById('newAgentName').value = '';
+  document.getElementById('newAgentPin').value = '';
+  openModal('addAgentModal');
+}
+function saveNewAgent(){
+  const name=document.getElementById('newAgentName').value.trim();
+  const pin=document.getElementById('newAgentPin').value.trim();
+  if(!name || !pin) { showToast('⚠️ Введите логин и пин', 'error'); return; }
+  const a = {id:Date.now(), name, pin};
+  db.collection('agents').doc(String(a.id)).set(a);
+  closeModal('addAgentModal');
+  showToast('✅ '+(lang==='uz'?"Qo'shildi":'Добавлен'), 'success');
+}
+function deleteAgent(id){
+  db.collection('agents').doc(String(id)).delete();
 }
 
 // SETTINGS

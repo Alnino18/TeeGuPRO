@@ -1,5 +1,5 @@
-const CACHE = 'salat-v1';
-const ASSETS = ['./index.html', './manifest.json'];
+const CACHE = 'salat-v2';
+const ASSETS = ['./index.html', './courier.html', './agent.html', './manifest.json', './manifest-courier.json', './manifest-agent.json'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));

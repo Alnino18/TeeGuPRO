@@ -266,6 +266,17 @@
     </div>
     <div id="couriersSettingsList"></div>
   </div>
+  
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">👨‍💼 <span class="t" data-ru="Агенты" data-uz="Agentlar">Агенты</span></div>
+        <div class="card-sub t" data-ru="Логин: Имя, Пароль: ПИН" data-uz="Login: Ism, Parol: PIN">Логин: Имя, Пароль: ПИН</div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="openAddAgentModal()">+ <span class="t" data-ru="Добавить" data-uz="Qo'shish">Добавить</span></button>
+    </div>
+    <div id="agentsSettingsList"></div>
+  </div>
 
 </div>
 
@@ -491,6 +502,26 @@
     <div class="row">
       <button class="btn btn-primary" onclick="saveNewCourier()">✅ <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
       <button class="btn btn-outline" onclick="closeModal('addCourierModal')"><span class="t" data-ru="Отмена" data-uz="Bekor">Отмена</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: ADD AGENT -->
+<div class="modal-overlay" id="addAgentModal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">👨‍💼 <span class="t" data-ru="Новый агент" data-uz="Yangi agent">Новый агент</span></div>
+    <div class="form-group">
+      <label class="form-label t" data-ru="Имя (Логин) *" data-uz="Ism (Login) *">Имя (Логин) *</label>
+      <input class="form-input" type="text" id="newAgentName" placeholder="Алишер">
+    </div>
+    <div class="form-group">
+      <label class="form-label t" data-ru="ПИН-код (Пароль) *" data-uz="PIN-kod (Parol) *">ПИН-код (Пароль) *</label>
+      <input class="form-input" type="number" id="newAgentPin" placeholder="1234">
+    </div>
+    <div class="row">
+      <button class="btn btn-primary" onclick="saveNewAgent()">✅ <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
+      <button class="btn btn-outline" onclick="closeModal('addAgentModal')"><span class="t" data-ru="Отмена" data-uz="Bekor">Отмена</span></button>
     </div>
   </div>
 </div>
