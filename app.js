@@ -1157,7 +1157,7 @@ function saveNewCourier(){
   const c = {id:Date.now(), name, pin};
   db.collection('couriers').doc(String(c.id)).set(c);
   closeModal('addCourierModal');
-  showToast('✅ '+(lang==='uz'?'Qo\\'shildi':'Добавлен'), 'success');
+  showToast('✅ '+(lang==='uz'?"Qo'shildi":'Добавлен'), 'success');
 }
 function deleteCourier(id){
   db.collection('couriers').doc(String(id)).delete();
