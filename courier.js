@@ -61,7 +61,7 @@ function login() {
     showMainScreen();
     startOrdersListener();
   } else {
-    showToast('Noto\\'g\\'ri PIN kod', 'error');
+    showToast("Noto'g'ri PIN kod", 'error');
   }
 }
 
