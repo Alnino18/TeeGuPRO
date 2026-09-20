@@ -20,6 +20,8 @@ db.collection('couriers').onSnapshot(snap => {
   if(select) {
     select.innerHTML = '<option value="">-- Tanlang --</option>' + allCouriers.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
   }
+}, err => {
+  alert("Firebase xatosi: " + err.message + "\nIltimos, Firebase Rules'da couriers uchun ruxsat borligini tekshiring.");
 });
 
 function init() {
