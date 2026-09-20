@@ -97,14 +97,12 @@ db.collection('orders').onSnapshot(snap => {
 });
 
 db.collection('settings').doc('main').onSnapshot(snap => {
-  if (snap.exists) {
-    state.settings = snap.data();
-    state.couriers = state.settings.couriers || [];
-    renderCouriersSettings();
-    populateCourierSelects();
-    document.getElementById('tgToken').value = state.settings.tgToken || '';
-    document.getElementById('tgChatId').value = state.settings.tgChatId || '';
-  }
+  if (snap.exists) { state.settings = snap.data(); loadSettings(); }
+});
+
+db.collection('couriers').onSnapshot(snap => {
+  state.couriers = snap.docs.map(d => d.data());
+  renderCouriersSettings(); populateCourierSelects();
 });
 
 db.collection('templates').onSnapshot(snap => {
@@ -1152,29 +1150,17 @@ function openAddCourierModal() {
   document.getElementById('newCourierPin').value = '';
   openModal('addCourierModal');
 }
-async function saveNewCourier(){
+function saveNewCourier(){
   const name=document.getElementById('newCourierName').value.trim();
   const pin=document.getElementById('newCourierPin').value.trim();
   if(!name || !pin) { showToast('⚠️ Введите логин и пин', 'error'); return; }
   const c = {id:Date.now(), name, pin};
-  try {
-    const updatedCouriers = [...(state.couriers || []), c];
-    const newSettings = { ...(state.settings || {}), couriers: updatedCouriers };
-    await db.collection('settings').doc('main').set(newSettings);
-    closeModal('addCourierModal');
-    showToast('✅ '+(lang==='uz'?"Qo'shildi":'Добавлен'), 'success');
-  } catch (err) {
-    alert("Firebase xatosi (Kuryer qo'shishda): " + err.message);
-  }
+  db.collection('couriers').doc(String(c.id)).set(c);
+  closeModal('addCourierModal');
+  showToast('✅ '+(lang==='uz'?"Qo'shildi":'Добавлен'), 'success');
 }
-async function deleteCourier(id){
-  try {
-    const updatedCouriers = (state.couriers || []).filter(c => c.id != id);
-    const newSettings = { ...(state.settings || {}), couriers: updatedCouriers };
-    await db.collection('settings').doc('main').set(newSettings);
-  } catch (err) {
-    alert("Firebase xatosi (O'chirishda): " + err.message);
-  }
+function deleteCourier(id){
+  db.collection('couriers').doc(String(id)).delete();
 }
 function populateCourierSelects(){
   const html = '<option value="">-- Без курьера --</option>' + state.couriers.map(c=>`<option value="${c.name}">${c.name}</option>`).join('');
