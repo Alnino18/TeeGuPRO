@@ -17,11 +17,65 @@ if(tg && tg.initData) {
   tg.expand();
 }
 
-let tgUser = tg?.initDataUnsafe?.user || { id: Date.now(), first_name: "Клиент" };
+let tgUser = tg?.initDataUnsafe?.user || { id: Date.now(), first_name: "Клиент", language_code: "ru" };
+
+const clientLang = (tgUser.language_code === 'uz' || tgUser.language_code === 'uzb') ? 'uz' : 'ru';
+const T = {
+  uz: {
+    menu: 'Menyu', orders: 'Buyurtmalarim', add: 'Qo\'shish', sum: 'so\'m',
+    loading: 'Yuklanmoqda...', noOrders: 'Sizda hali buyurtmalar yo\'q',
+    orderError: 'Buyurtmalarni yuklashda xatolik', repeat: 'Qaytarish',
+    cartTotal: 'Jami to\'lov:', orderBtn: 'Buyurtma berish',
+    statusNew: 'Yangi', statusPreparing: 'Tayyorlanmoqda', statusDelivering: 'Yo\'lda',
+    statusDone: 'Bajarildi', statusCancelled: 'Bekor qilindi',
+    ratePrompt: 'Buyurtmani baholang', orderStr: 'Buyurtma',
+    addressPrompt: 'Manzilingizni kiriting', namePrompt: 'Ismingiz', phonePrompt: 'Telefon raqamingiz',
+    orderSuccess: 'Buyurtma qabul qilindi!', fillAll: 'Iltimos, barcha maydonlarni to\'ldiring',
+    cartEmpty: 'Savatchangiz bo\'sh'
+  },
+  ru: {
+    menu: 'Меню', orders: 'Мои заказы', add: 'Добавить', sum: 'сум',
+    loading: 'Загрузка...', noOrders: 'У вас еще нет заказов',
+    orderError: 'Ошибка загрузки заказов', repeat: 'Повторить',
+    cartTotal: 'Итого к оплате:', orderBtn: 'Заказать',
+    statusNew: 'Принят', statusPreparing: 'Готовится', statusDelivering: 'В пути',
+    statusDone: 'Завершен', statusCancelled: 'Отменен',
+    ratePrompt: 'Оцените заказ', orderStr: 'Заказ',
+    addressPrompt: 'Введите адрес', namePrompt: 'Ваше имя', phonePrompt: 'Ваш телефон',
+    orderSuccess: 'Заказ принят!', fillAll: 'Пожалуйста, заполните все поля',
+    cartEmpty: 'Ваша корзина пуста'
+  }
+};
+const t = T[clientLang];
 
 let currentClient = null;
 let products = [];
 let cart = {};
+
+// Update static text in HTML
+document.addEventListener('DOMContentLoaded', () => {
+  const m = document.getElementById('tab-menu');
+  if(m) m.innerHTML = `🥗 ${t.menu}`;
+  const o = document.getElementById('tab-orders');
+  if(o) o.innerHTML = `📦 ${t.orders}`;
+  const ct = document.getElementById('cartTotalLabel');
+  if(ct) ct.innerText = t.cartTotal;
+  const ob = document.getElementById('btnOrder');
+  if(ob) ob.innerText = t.orderBtn;
+  
+  const chkT = document.getElementById('checkoutTitle');
+  if(chkT) chkT.innerText = t.orderStr;
+  const chkN = document.getElementById('checkoutNameLabel');
+  if(chkN) chkN.innerText = t.namePrompt;
+  const chkP = document.getElementById('checkoutPhoneLabel');
+  if(chkP) chkP.innerText = t.phonePrompt;
+  const chkA = document.getElementById('checkoutAddressLabel');
+  if(chkA) chkA.innerText = t.addressPrompt;
+  const chkCancel = document.getElementById('checkoutCancelBtn');
+  if(chkCancel) chkCancel.innerText = t.statusCancelled; // Using cancelled text for 'Cancel'
+  const chkSub = document.getElementById('checkoutSubmitBtn');
+  if(chkSub) chkSub.innerText = t.orderBtn;
+});
 
 async function init() {
   try {
@@ -66,8 +120,12 @@ function renderProducts() {
     const hasCustomPrice = currentClient?.customPrices?.[p.id] ? '<span style="color:var(--orange)">★</span>' : '';
     
     let qtyControls = '';
-    if (!qty) {
-      qtyControls = `<button class="btn btn-outline" style="padding:6px 16px; border-radius:12px; font-weight:800; background:var(--bg3); border:none; color:var(--accent); transition:transform 0.2s" onclick="changeQty('${p.id}', ${p.step || 0.5})">➕ Добавить</button>`;
+    const isOutOfStock = p.stock !== undefined && p.stock !== '' && p.stock < (p.step || 0.5);
+    
+    if (isOutOfStock) {
+      qtyControls = `<div style="padding:6px 16px; border-radius:12px; font-weight:800; background:var(--bg3); color:var(--text3); font-size:13px; text-align:center">${clientLang==='uz'?'Tugadi':'Нет в наличии'}</div>`;
+    } else if (!qty) {
+      qtyControls = `<button class="btn btn-outline" style="padding:6px 16px; border-radius:12px; font-weight:800; background:var(--bg3); border:none; color:var(--accent); transition:transform 0.2s" onclick="changeQty('${p.id}', ${p.step || 0.5})">➕ ${t.add}</button>`;
     } else {
       qtyControls = `
         <div style="display:flex; align-items:center; justify-content:space-between; background:var(--bg); border-radius:12px; border:1px solid var(--border); padding:2px; min-width:90px;">
@@ -115,11 +173,16 @@ function updateCart() {
     const p = products.find(x => x.id === id);
     if(p) total += cart[id] * getPrice(p);
   }
-  document.getElementById('cartTotal').innerText = fmt(total) + ' сум';
+  document.getElementById('cartTotal').innerText = fmt(total) + ' ' + t.sum;
   document.getElementById('cartBar').style.display = total > 0 ? 'flex' : 'none';
 }
 
 function placeOrder() {
+  if (Object.keys(cart).length === 0) {
+    if (tg && tg.showAlert) tg.showAlert(t.cartEmpty);
+    else alert(t.cartEmpty);
+    return;
+  }
   document.getElementById('checkoutOverlay').classList.add('open');
   document.getElementById('cartBar').style.display = 'none';
   if(currentClient) {
@@ -141,11 +204,14 @@ async function submitOrder() {
   const note = document.getElementById('orderNote').value.trim();
   const paymentMethod = document.getElementById('orderPayment') ? document.getElementById('orderPayment').value : 'наличные';
   
-  if(!name) return alert('Пожалуйста, введите ваше имя');
-  if(!phone) return alert('Пожалуйста, введите номер телефона');
+  if(!name || !phone || !address) {
+    if(tg && tg.showAlert) tg.showAlert(t.fillAll);
+    else alert(t.fillAll);
+    return;
+  }
   
   document.getElementById('submitBtn').disabled = true;
-  document.getElementById('submitBtn').innerText = 'Отправка...';
+  document.getElementById('submitBtn').innerText = t.loading;
   
   try {
     // If no currentClient, search by phone or create new
@@ -189,7 +255,7 @@ async function submitOrder() {
   } catch(e) {
     alert("Ошибка при сохранении профиля: " + e.message);
     document.getElementById('submitBtn').disabled = false;
-    document.getElementById('submitBtn').innerText = 'Подтвердить заказ';
+    document.getElementById('submitBtn').innerText = t.orderBtn;
     return;
   }
 
@@ -224,7 +290,18 @@ async function submitOrder() {
   
 
   try {
-    await db.collection('orders').doc(String(order.id)).set(order);
+    const batch = db.batch();
+    
+    order.items.forEach(i => {
+      const p = products.find(x => x.id === i.id);
+      if(p && p.stock !== undefined && p.stock !== '') {
+        const prodRef = db.collection('products').doc(String(p.id));
+        batch.update(prodRef, { stock: firebase.firestore.FieldValue.increment(-i.qty) });
+      }
+    });
+    
+    batch.set(db.collection('orders').doc(String(order.id)), order);
+    await batch.commit();
     
     try {
       const setSnap = await db.collection('settings').doc('main').get();
@@ -239,6 +316,16 @@ async function submitOrder() {
           headers:{'Content-Type':'application/json'},
           body:JSON.stringify({chat_id:tgChatId, text:text, parse_mode:'HTML'})
         });
+        
+        // Also send warning if stock drops
+        for (const i of order.items) {
+           const p = products.find(x => x.id === i.id);
+           if(p && p.stock !== undefined && p.stock !== '' && (p.stock - i.qty) < 5) {
+               const warning = `⚠️ Diqqat! ${p.name} zaxirasi tugayapti. Qoldiq: ${p.stock - i.qty} ${p.unit||'kg'}`;
+               fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:warning})}).catch(()=>{});
+           }
+        }
+        
         await db.collection('orders').doc(String(order.id)).update({sent: true});
       }
 
@@ -320,7 +407,7 @@ let orderListener = null;
 
 function fetchClientOrders() {
   const el = document.getElementById('clientOrdersList');
-  el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Загрузка...</div>';
+  el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text3)">${t.loading}</div>`;
   if(!currentClient) return;
   
   if(orderListener) orderListener(); // unsubscribe
@@ -333,7 +420,7 @@ function fetchClientOrders() {
       orders.sort((a,b) => new Date(b.date) - new Date(a.date));
       
       if (orders.length === 0) {
-        el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">У вас еще нет заказов</div>';
+        el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text3)">${t.noOrders}</div>`;
         return;
       }
       
@@ -353,9 +440,9 @@ function fetchClientOrders() {
            statusHtml = `
            <div style="background:var(--bg); border-radius:12px; padding:12px; margin-bottom:12px; border:1px solid var(--border)">
              <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                <div style="font-size:10px; font-weight:800; color:${stepIndex>=0?'var(--accent)':'var(--text3)'};">Qabul qilindi</div>
-                <div style="font-size:10px; font-weight:800; color:${stepIndex>=1?'var(--orange)':'var(--text3)'};">Tayyorlanmoqda</div>
-                <div style="font-size:10px; font-weight:800; color:${stepIndex>=2?'var(--blue)':'var(--text3)'};">Yo'lda</div>
+                <div style="font-size:10px; font-weight:800; color:${stepIndex>=0?'var(--accent)':'var(--text3)'};">${t.statusNew}</div>
+                <div style="font-size:10px; font-weight:800; color:${stepIndex>=1?'var(--orange)':'var(--text3)'};">${t.statusPreparing}</div>
+                <div style="font-size:10px; font-weight:800; color:${stepIndex>=2?'var(--blue)':'var(--text3)'};">${t.statusDelivering}</div>
              </div>
              <div style="display:flex; height:6px; background:var(--bg3); border-radius:3px; overflow:hidden;">
                 <div style="width:${(stepIndex+1)*33.3}%; background:linear-gradient(90deg, var(--accent), var(--accent2)); transition:width 0.5s ease;"></div>
@@ -365,29 +452,56 @@ function fetchClientOrders() {
         } else {
            // Delivered or Cancelled
            let badgeColor = o.status==='done' ? 'var(--green)' : 'var(--text2)';
-           let badgeText = o.status==='done' ? 'Завершен' : o.status;
-           statusHtml = `<div style="text-align:right; font-size:12px; font-weight:700; color:${badgeColor}; margin-bottom:8px;">${badgeText}</div>`;
+           let badgeText = o.status==='done' ? t.statusDone : t.statusCancelled;
+           
+           // ADDING RATING UI
+           let ratingHtml = '';
+           if(o.status === 'done' && !o.rating) {
+             ratingHtml = `
+               <div style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); text-align:center;">
+                 <div style="font-size:12px; font-weight:600; color:var(--text2); margin-bottom:6px;">${t.ratePrompt}</div>
+                 <div style="display:flex; justify-content:center; gap:8px;">
+                   ${[1,2,3,4,5].map(star => `<span style="font-size:24px; color:var(--text3); cursor:pointer" onclick="rateOrder(${o.id}, ${star})">⭐</span>`).join('')}
+                 </div>
+               </div>
+             `;
+           } else if(o.status === 'done' && o.rating) {
+             ratingHtml = `
+               <div style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); text-align:center;">
+                 <div style="display:flex; justify-content:center; gap:2px;">
+                   ${Array(o.rating).fill('<span style="font-size:16px;">⭐</span>').join('')}
+                 </div>
+               </div>
+             `;
+           }
+           
+           statusHtml = `<div style="text-align:right; font-size:12px; font-weight:700; color:${badgeColor}; margin-bottom:8px;">${badgeText}</div>${ratingHtml}`;
         }
 
         return `
           <div class="card" style="padding:15px;margin-bottom:12px; background:var(--bg2);">
             ${statusHtml}
             <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-              <div style="font-weight:800; font-size:15px;">Заказ #${String(o.id).slice(-4)}</div>
+              <div style="font-weight:800; font-size:15px;">${t.orderStr} #${String(o.id).slice(-4)}</div>
               <div style="font-size:12px;color:var(--text2)">${dateStr}</div>
             </div>
             <div style="font-size:13px;color:var(--text);margin-bottom:12px; line-height:1.4;">${itemsStr}</div>
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <div style="font-weight:900;color:var(--accent2);font-size:16px;">${o.total.toLocaleString('ru-RU')} сум</div>
-              <button class="btn-repeat" onclick="repeatOrder('${safeItems}')" style="width:auto; margin:0; padding:6px 14px;">🔄 Повторить</button>
+              <div style="font-weight:900;color:var(--accent2);font-size:16px;">${o.total.toLocaleString('ru-RU')} ${t.sum}</div>
+              <button class="btn-repeat" onclick="repeatOrder('${safeItems}')" style="width:auto; margin:0; padding:6px 14px;">🔄 ${t.repeat}</button>
             </div>
           </div>
         `;
       }).join('');
     }, err => {
       console.log(err);
-      el.innerHTML = '<div style="color:var(--danger);text-align:center">Ошибка загрузки заказов</div>';
+      el.innerHTML = `<div style="color:var(--danger);text-align:center">${t.orderError}</div>`;
     });
+}
+
+window.rateOrder = function(orderId, rating) {
+  if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+  db.collection('orders').doc(String(orderId)).update({ rating: rating });
 }
 
 window.repeatOrder = function(itemsJson) {

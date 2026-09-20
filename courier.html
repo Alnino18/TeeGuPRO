@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Kuryer Oynasi | TeeGu.PRO</title>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <style>
+    :root {
+      --bg: #1e1e2e;
+      --bg2: #27293d;
+      --accent: #7c6af7;
+      --accent2: #56d4a0;
+      --text: #e1e1e6;
+      --text2: #a9a9b3;
+      --danger: #f75a5a;
+      --green: #56d4a0;
+      --border: rgba(255,255,255,0.05);
+      --font: 'Inter', system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: var(--font); }
+    body { background: var(--bg); color: var(--text); -webkit-tap-highlight-color: transparent; }
+    .container { padding: 16px; max-width: 600px; margin: 0 auto; }
+    
+    .header { padding: 20px 16px; text-align: center; background: var(--bg2); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; display: flex; justify-content: space-between; align-items: center; }
+    .header-title { font-weight: 900; font-size: 18px; }
+    
+    .form-group { margin-bottom: 16px; }
+    .form-label { display: block; font-size: 12px; font-weight: 600; color: var(--text2); margin-bottom: 6px; }
+    .form-input { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 12px; border-radius: 12px; font-size: 15px; outline: none; }
+    .form-input:focus { border-color: var(--accent); }
+    
+    .btn { display: inline-flex; align-items: center; justify-content: center; padding: 14px; border-radius: 14px; font-weight: 700; font-size: 15px; cursor: pointer; border: none; width: 100%; transition: opacity 0.2s; text-decoration: none; }
+    .btn:active { opacity: 0.7; }
+    .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: white; box-shadow: 0 4px 15px rgba(124, 106, 247, 0.3); }
+    .btn-outline { background: var(--bg2); color: var(--text); border: 1px solid var(--border); }
+    .btn-success { background: var(--green); color: white; box-shadow: 0 4px 15px rgba(86, 212, 160, 0.3); }
+    
+    .login-screen { position: fixed; inset: 0; background: var(--bg); z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; }
+    .login-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 20px; padding: 24px; width: 100%; max-width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+    
+    .order-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 12px; }
+    .order-header { display: flex; justify-content: space-between; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+    .order-id { font-weight: 900; font-size: 18px; color: var(--accent); }
+    .order-date { font-size: 12px; color: var(--text2); }
+    .order-client { font-weight: 700; font-size: 16px; margin-bottom: 4px; }
+    .order-phone { color: var(--accent2); font-size: 14px; font-weight: 700; margin-bottom: 8px; display: inline-block; text-decoration: none;}
+    .order-address { font-size: 13px; color: var(--text2); margin-bottom: 12px; line-height: 1.4; }
+    .order-items { background: rgba(0,0,0,0.1); border-radius: 8px; padding: 10px; font-size: 13px; margin-bottom: 12px; }
+    .order-total { font-weight: 900; font-size: 16px; text-align: right; margin-bottom: 12px; }
+    
+    .tag { display: inline-block; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; background: rgba(255,255,255,0.1); }
+    
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .toast { position: fixed; bottom: -50px; left: 50%; transform: translateX(-50%); background: var(--bg2); color: white; padding: 12px 20px; border-radius: 100px; font-size: 13px; font-weight: 700; border: 1px solid var(--border); transition: 0.3s; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+    .toast.show { bottom: 20px; }
+    .toast.success { border-color: var(--green); color: var(--green); }
+    .toast.error { border-color: var(--danger); color: var(--danger); }
+  </style>
+</head>
+<body>
+
+  <div id="loginScreen" class="login-screen">
+    <div class="login-card">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <div style="font-size: 40px; margin-bottom: 10px;">🛵</div>
+        <h2 style="font-weight: 900;">Kuryer Oynasi</h2>
+        <div style="font-size: 13px; color: var(--text2); margin-top: 5px;">Tizimga kirish</div>
+      </div>
+      
+      <div class="form-group">
+        <label class="form-label">Kuryer tanlang</label>
+        <select class="form-input" id="courierSelect">
+          <option value="">Yuklanmoqda...</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">PIN kod</label>
+        <input type="password" class="form-input" id="courierPin" placeholder="****" inputmode="numeric">
+      </div>
+      <button class="btn btn-primary" onclick="login()">Kirish</button>
+    </div>
+  </div>
+
+  <div id="mainScreen" style="display:none;">
+    <div class="header">
+      <div class="header-title">🛵 <span id="courierNameDisplay"></span></div>
+      <button onclick="logout()" style="background:transparent;border:none;color:var(--danger);font-weight:700;font-size:14px;cursor:pointer">Chiqish</button>
+    </div>
+    <div class="container" id="ordersList">
+      <div style="text-align:center; padding:40px; color:var(--text2)">
+        Barcha ma'lumotlar yuklanmoqda...
+      </div>
+    </div>
+  </div>
+  
+  <div id="toast" class="toast"></div>
+
+  <script src="courier.js"></script>
+</body>
+</html>

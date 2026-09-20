@@ -60,10 +60,10 @@
 
   <div class="cart-bar" id="cartBar" style="display:none">
     <div>
-      <div style="font-size:12px; color:var(--text2)">Итого к оплате:</div>
+      <div style="font-size:12px; color:var(--text2)" id="cartTotalLabel">Итого к оплате:</div>
       <div class="cart-total" id="cartTotal">0 сум</div>
     </div>
-    <button class="btn-order" onclick="placeOrder()">Заказать</button>
+    <button class="btn-order" onclick="placeOrder()" id="btnOrder">Заказать</button>
   </div>
 </div>
 
@@ -71,26 +71,26 @@
 <div id="checkoutOverlay" class="modal-overlay">
   <div id="checkoutModal" class="modal">
     <div class="modal-content">
-      <h3>Подтверждение заказа</h3>
+      <h3 id="checkoutTitle">Подтверждение заказа</h3>
       <div class="form-group">
-        <label class="form-label">Ваше имя</label>
-        <input type="text" id="orderName" class="form-input" placeholder="Имя...">
+        <label class="form-label" id="checkoutNameLabel">Ваше имя</label>
+        <input type="text" id="orderName" class="form-input" placeholder="...">
       </div>
       <div class="form-group">
-        <label class="form-label">Ваш телефон</label>
+        <label class="form-label" id="checkoutPhoneLabel">Ваш телефон</label>
         <input type="text" id="orderPhone" class="form-input" placeholder="+998 90 123 45 67">
       </div>
       <div class="form-group">
-        <label class="form-label">Адрес доставки / Lokatsiya</label>
+        <label class="form-label" id="checkoutAddressLabel">Адрес доставки / Lokatsiya</label>
         <div style="display:flex;gap:8px">
-          <input type="text" id="orderAddress" class="form-input" placeholder="Город, улица, дом..." style="flex:1">
+          <input type="text" id="orderAddress" class="form-input" placeholder="..." style="flex:1">
           <button class="btn btn-outline" onclick="openClientMap()" style="padding:0 15px; font-size:18px">📍</button>
         </div>
         <div id="locationStatus" style="font-size:11px; color:var(--green); margin-top:4px; display:none">✅ Lokatsiya tanlandi</div>
       </div>
       <div class="form-group">
-        <label class="form-label">Примечание к заказу</label>
-        <input type="text" id="orderNote" class="form-input" placeholder="Например: без лука">
+        <label class="form-label" id="checkoutNoteLabel">Примечание к заказу</label>
+        <input type="text" id="orderNote" class="form-input" placeholder="...">
       </div>
       <div class="form-group">
         <label class="form-label">Тип оплаты / To'lov turi</label>
@@ -100,8 +100,8 @@
         </select>
       </div>
       <div style="display:flex; gap:10px; margin-top:20px">
-        <button class="btn btn-secondary" onclick="closeCheckout()">Отмена</button>
-        <button class="btn btn-primary" onclick="submitOrder()" id="submitBtn">Подтвердить заказ</button>
+        <button class="btn btn-secondary" onclick="closeCheckout()" id="checkoutCancelBtn">Отмена</button>
+        <button class="btn btn-primary" onclick="submitOrder()" id="checkoutSubmitBtn">Подтвердить заказ</button>
       </div>
     </div>
   </div>

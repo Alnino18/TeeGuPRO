@@ -340,8 +340,28 @@ async function submitOrder(){
     debtPaid:state.selectedPayment!=='консигнация',
     partialPaid:0,
     delivered:false,
+    courier:''
   };
-  db.collection('orders').doc(String(order.id)).set(order);
+  
+  // Decrement stock if defined
+  const batch = db.batch();
+  order.items.forEach(i => {
+    const p = PRODUCTS.find(x => x.id === i.id);
+    if(p && p.stock !== undefined && p.stock !== '') {
+      const prodRef = db.collection('products').doc(String(p.id));
+      batch.update(prodRef, { stock: firebase.firestore.FieldValue.increment(-i.qty) });
+      if (p.stock - i.qty < 5) {
+        // Warning if stock drops below 5
+        const warning = `⚠️ Diqqat! ${p.name} zaxirasi tugayapti. Qoldiq: ${p.stock - i.qty} ${p.unit||'kg'}`;
+        if (state.settings.tgToken && state.settings.tgChatId) {
+          fetch(`https://api.telegram.org/bot${state.settings.tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:state.settings.tgChatId,text:warning})}).catch(()=>{});
+        }
+      }
+    }
+  });
+  batch.set(db.collection('orders').doc(String(order.id)), order);
+  batch.commit();
+  
   const btn=document.getElementById('submitBtn');btn.innerHTML='<div class="spinner"></div>';btn.disabled=true;
   let tgOk=false;
   try{tgOk=await sendToTelegram(order);}catch(e){}
@@ -522,6 +542,13 @@ function saveEditOrder(){
   if(clientId&&client){o.clientId=clientId;o.client=client.name;}
   o.payment=document.getElementById('editOrderPayment').value;
   o.note=document.getElementById('editOrderNote').value;
+  const courierName = document.getElementById('editOrderCourier').value;
+  if(courierName) {
+    o.courier = courierName;
+    o.status = 'delivering';
+  } else {
+    o.courier = '';
+  }
   o.debtPaid=o.payment!=='консигнация';
   const newItems=PRODUCTS.map(p=>{
     const qty=parseFloat(document.getElementById('eqty-'+p.id).textContent)||0;
@@ -545,6 +572,7 @@ function showOrderDetail(id){
     <div style="font-size:13px;color:var(--text2);line-height:2">
       ${pi[o.payment]||'💳'} <b>${o.payment}</b> · 📅 ${d.toLocaleDateString('ru-RU')} ${d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}
       ${o.phone?`<br>📞 ${o.phone}`:''}${o.note?`<br>📝 ${o.note}`:''}
+      ${o.rating ? `<br><div style="display:inline-block; margin-top:8px; padding:4px 10px; background:rgba(255,215,0,0.1); border-radius:12px; border:1px solid rgba(255,215,0,0.3); color:gold; font-size:16px;">${'⭐'.repeat(o.rating)}</div>` : ''}
     </div>`;
   openModal('orderDetailModal');
 }
@@ -1083,7 +1111,7 @@ function deleteProduct(idx){
   showToast('🗑 '+(lang==='uz'?"O'chirildi":'Удалён'),'info');
 }
 function openAddProductModal(){
-  ['newProdName','newProdNameUz','newProdEmoji','newProdPrice','newProdCost'].forEach(id=>document.getElementById(id).value='');
+  ['newProdName','newProdNameUz','newProdEmoji','newProdPrice','newProdCost','newProdStock'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('newProdUnit').value='кг';
   openModal('addProductModal');
 }
@@ -1092,9 +1120,11 @@ function saveNewProduct(){
   const price=parseInt(document.getElementById('newProdPrice').value)||0;
   if(!name||!price){showToast('⚠️ '+(lang==='uz'?'Nom va narx kiriting':'Введите название и цену'),'error');return;}
   const unit=document.getElementById('newProdUnit').value;
+  let stockStr = document.getElementById('newProdStock').value.trim();
+  let stock = stockStr === '' ? '' : parseFloat(stockStr);
   PRODUCTS.push({id:'prod_'+Date.now(),name,nameUz:document.getElementById('newProdNameUz').value.trim()||name,
     price,cost:parseInt(document.getElementById('newProdCost').value)||0,
-    emoji:document.getElementById('newProdEmoji').value.trim()||'📦',unit,step:unit==='шт'?1:0.5});
+    emoji:document.getElementById('newProdEmoji').value.trim()||'📦',unit,step:unit==='шт'?1:0.5, stock});
   saveProducts();closeModal('addProductModal');renderProductsGrid();renderProductsSettings();
   showToast('✅ '+name,'success');
 }
@@ -1109,17 +1139,25 @@ function exportToExcel(){
 
 function renderCouriersSettings(){
   const el=document.getElementById('couriersSettingsList');if(!el)return;
+  if(!state.couriers.length) { el.innerHTML = `<div style="font-size:12px;color:var(--text3);padding:10px 0">Нет курьеров</div>`; return; }
   el.innerHTML=state.couriers.map(c=>`<div style="display:flex;justify-content:space-between;background:var(--bg2);border:1px solid var(--border);padding:10px;border-radius:10px;margin-bottom:8px">
-    <div style="font-weight:700">${c.name}</div>
+    <div><div style="font-weight:700">${c.name}</div><div style="font-size:11px;color:var(--text2)">PIN: ${c.pin}</div></div>
     <button onclick="deleteCourier(${c.id})" style="background:rgba(247,90,90,.1);color:var(--danger);border:none;border-radius:6px;padding:4px 8px;cursor:pointer">🗑</button>
   </div>`).join('');
 }
-function addCourier(){
+function openAddCourierModal() {
+  document.getElementById('newCourierName').value = '';
+  document.getElementById('newCourierPin').value = '';
+  openModal('addCourierModal');
+}
+function saveNewCourier(){
   const name=document.getElementById('newCourierName').value.trim();
-  if(!name)return;
-  const c = {id:Date.now(), name};
+  const pin=document.getElementById('newCourierPin').value.trim();
+  if(!name || !pin) { showToast('⚠️ Введите логин и пин', 'error'); return; }
+  const c = {id:Date.now(), name, pin};
   db.collection('couriers').doc(String(c.id)).set(c);
-  document.getElementById('newCourierName').value='';
+  closeModal('addCourierModal');
+  showToast('✅ '+(lang==='uz'?'Qo\\'shildi':'Добавлен'), 'success');
 }
 function deleteCourier(id){
   db.collection('couriers').doc(String(id)).delete();
