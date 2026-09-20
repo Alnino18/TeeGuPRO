@@ -14,8 +14,9 @@ let allCouriers = [];
 let myOrders = [];
 let loggedCourierName = localStorage.getItem('courierAuth') || null;
 
-db.collection('couriers').onSnapshot(snap => {
-  allCouriers = snap.docs.map(d => d.data());
+db.collection('settings').doc('main').onSnapshot(snap => {
+  const data = snap.data() || {};
+  allCouriers = data.couriers || [];
   const select = document.getElementById('courierSelect');
   if(select) {
     select.innerHTML = '<option value="">-- Tanlang --</option>' + allCouriers.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
