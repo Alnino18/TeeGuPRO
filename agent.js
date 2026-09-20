@@ -292,8 +292,13 @@ function renderHistory() {
     const d = new Date(o.date);
     const dateStr = d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
     
-    let statusText = o.status === 'done' ? '✅ Yetkazildi' : (o.status === 'delivering' ? '🛵 Yuborildi' : '⏳ Yangi');
-    let statusColor = o.status === 'done' ? 'var(--green)' : (o.status === 'delivering' ? 'var(--accent)' : 'var(--text2)');
+    let statusText = '⏳ Yangi';
+    let statusColor = 'var(--text2)';
+    
+    if (o.status === 'done') { statusText = '✅ Yetkazildi'; statusColor = 'var(--green)'; }
+    else if (o.status === 'delivering') { statusText = '🛵 Yuborildi'; statusColor = 'var(--accent)'; }
+    else if (o.status === 'accepted') { statusText = '🧑‍🍳 Tayyorlanmoqda'; statusColor = '#3b82f6'; }
+    else if (o.status === 'cancelled') { statusText = '❌ Bekor qilindi'; statusColor = 'var(--danger)'; }
     
     return `
       <div class="order-card">

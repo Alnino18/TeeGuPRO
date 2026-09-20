@@ -451,7 +451,13 @@ function renderOrdersList(filterText='',dateFilter=state.dateFilter){
     const ds=d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
     return`<div class="order-item payment-${pc[o.payment]}">
       <div class="order-top">
-        <div><div class="order-client">${o.client}</div><div class="order-meta">${ds} · ${o.type}</div></div>
+        <div>
+          <div class="order-client" style="display:flex;align-items:center;gap:6px;">
+            ${o.client}
+            ${o.agent ? `<span style="font-size:10px;background:rgba(255,152,0,0.15);color:#ff9800;padding:2px 6px;border-radius:6px;border:1px solid rgba(255,152,0,0.3);font-weight:800;">👨‍💼 ${o.agent}</span>` : ''}
+          </div>
+          <div class="order-meta">${ds} · ${o.type}</div>
+        </div>
         <div style="text-align:right;">
           <div class="order-badge ${pc[o.payment]}">${pi[o.payment]||'💳'} ${o.payment}</div>
           <div style="margin-top:4px; margin-bottom:4px;">${o.sent?'<span class="sent-badge">✅ TG</span>':'<span class="unsent-badge">❌ TG</span>'}</div>
