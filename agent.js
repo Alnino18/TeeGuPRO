@@ -19,8 +19,13 @@ let cart = {};
 let currentLat = null;
 let currentLng = null;
 let agentMapInstance = null;
+let SETTINGS = {};
 
 let loggedAgentName = localStorage.getItem('agentAuth') || null;
+
+db.collection('settings').doc('main').onSnapshot(snap => {
+  if (snap.exists) SETTINGS = snap.data();
+});
 
 db.collection('agents').onSnapshot(snap => {
   allAgents = snap.docs.map(d => d.data());
@@ -263,6 +268,12 @@ function submitOrder() {
         db.collection('clients').doc(cIdStr).set(clientUpdate, {merge: true});
       }
       
+      sendToTelegram(orderData).then(ok => {
+        if(ok) {
+          db.collection('orders').doc(String(orderId)).update({sent: true});
+        }
+      });
+      
       showToast("Buyurtma yuborildi!", 'success');
       
       // Reset form
@@ -322,6 +333,39 @@ function showToast(msg, type='info') {
   t.textContent = msg;
   t.className = 'toast ' + type + ' show';
   setTimeout(() => { t.className = 'toast ' + type; }, 3000);
+}
+
+// TELEGRAM LOGIC
+async function sendToTelegram(order) {
+  const tgToken = SETTINGS.tgToken || '8796588071:AAFQuei_M9fwC_J3oTCp_KKgCKg4Z4aYXpY';
+  const tgChatId = SETTINGS.tgChatId || '483325961';
+  if(!tgToken || !tgChatId) return false;
+  
+  const pi = {'Naqd': '💵', 'Karta': '💳', 'Qarz': '📒'};
+  const d = new Date(order.date);
+  const ds = d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
+  let l = [`🆕 <b>Yangi buyurtma (Agent)</b>`, ``, `👤 <b>${order.client}</b>`];
+  if(order.phone) l.push(`📞 ${order.phone}`);
+  if(order.agent) l.push(`👨‍💼 Agent: <b>${order.agent}</b>`);
+  l.push(``, `🛒 <b>Buyurtma:</b>`);
+  order.items.forEach((i, n) => {
+    l.push(`  ${n+1}. ${i.emoji} ${i.name} - <b>${i.qty}${i.unit||'kg'}</b> (${Math.round(i.qty*i.price).toLocaleString('ru-RU')} so'm)`);
+  });
+  l.push(``, `💰 <b>Jami: ${Math.round(order.total).toLocaleString('ru-RU')} so'm</b>`, `${pi[order.payment]||'💳'} ${order.payment}`);
+  if(order.note) l.push(`📝 ${order.note}`);
+  if(order.address) l.push(`📍 ${order.address}`);
+  l.push(``, `🕒 ${ds}`);
+  
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({chat_id: tgChatId, text: l.join('\n'), parse_mode: 'HTML'})
+    });
+    return (await r.json()).ok;
+  } catch(e) {
+    return false;
+  }
 }
 
 // MAP LOGIC
