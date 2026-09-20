@@ -16,6 +16,10 @@ let PRODUCTS = [];
 let CLIENTS = [];
 let cart = {};
 
+let currentLat = null;
+let currentLng = null;
+let agentMapInstance = null;
+
 let loggedAgentName = localStorage.getItem('agentAuth') || null;
 
 db.collection('agents').onSnapshot(snap => {
@@ -140,9 +144,20 @@ function renderProducts() {
   calcTotal();
 }
 
-function updateQty(id, diff) {
+function updateQty(id, sign) {
   if(!cart[id]) cart[id] = 0;
-  cart[id] += diff;
+  
+  const p = PRODUCTS.find(x => x.id === id);
+  let step = 0.5;
+  if(p && (p.unit === 'sht' || p.unit === 'dona' || p.unit === 'ta')) {
+    step = 1;
+  }
+  
+  cart[id] += sign * step;
+  
+  // round to avoid floating point issues
+  cart[id] = Math.round(cart[id] * 10) / 10;
+  
   if(cart[id] < 0) cart[id] = 0;
   renderProducts();
 }
@@ -224,16 +239,25 @@ function submitOrder() {
   
   db.collection('orders').doc(String(orderId)).set(orderData)
     .then(() => {
-      // Also save client if new
+      // Also save client if new, or update coordinates if provided
       const cIdStr = String(orderData.clientId);
-      if(!CLIENTS.find(c => String(c.id) === cIdStr)) {
-        db.collection('clients').doc(cIdStr).set({
-          id: cIdStr,
-          name: cName,
-          phone: cPhone,
-          address: address,
-          type: 'Oddiy'
-        });
+      const existingClient = CLIENTS.find(c => String(c.id) === cIdStr);
+      
+      const clientUpdate = {
+        id: cIdStr,
+        name: cName,
+        phone: cPhone,
+        address: address,
+        type: 'Oddiy'
+      };
+      
+      if(currentLat && currentLng) {
+        clientUpdate.lat = currentLat;
+        clientUpdate.lng = currentLng;
+      }
+      
+      if(!existingClient || (currentLat && currentLng)) {
+        db.collection('clients').doc(cIdStr).set(clientUpdate, {merge: true});
       }
       
       showToast("Buyurtma yuborildi!", 'success');
@@ -242,6 +266,9 @@ function submitOrder() {
       document.getElementById('orderClient').value = '';
       document.getElementById('orderAddress').value = '';
       document.getElementById('orderNote').value = '';
+      document.getElementById('coordDisplay').style.display = 'none';
+      currentLat = null;
+      currentLng = null;
       cart = {};
       renderProducts();
       switchTab('history');
@@ -287,6 +314,64 @@ function showToast(msg, type='info') {
   t.textContent = msg;
   t.className = 'toast ' + type + ' show';
   setTimeout(() => { t.className = 'toast ' + type; }, 3000);
+}
+
+// MAP LOGIC
+function openAgentMap() {
+  document.getElementById('agentMapModal').style.display = 'flex';
+  
+  if(!agentMapInstance && window.ymaps) {
+    ymaps.ready(() => {
+      const center = (currentLat && currentLng) ? [currentLat, currentLng] : [41.2995, 69.2401]; // Tashkent default
+      agentMapInstance = new ymaps.Map("agentYandexMap", {
+        center: center,
+        zoom: 14,
+        controls: ['zoomControl']
+      });
+    });
+  } else if (agentMapInstance && currentLat && currentLng) {
+    agentMapInstance.setCenter([currentLat, currentLng]);
+  }
+}
+
+function closeAgentMap() {
+  document.getElementById('agentMapModal').style.display = 'none';
+}
+
+function saveAgentMap() {
+  if (agentMapInstance) {
+    const center = agentMapInstance.getCenter();
+    currentLat = center[0];
+    currentLng = center[1];
+    
+    document.getElementById('coordDisplay').style.display = 'block';
+    document.getElementById('coordVal').innerText = currentLat.toFixed(5) + ', ' + currentLng.toFixed(5);
+    
+    showToast("Joylashuv saqlandi!", 'success');
+  }
+  closeAgentMap();
+}
+
+function getMyLocation() {
+  if (navigator.geolocation) {
+    showToast("Joylashuv aniqlanmoqda...", 'info');
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        if(agentMapInstance) {
+          agentMapInstance.setCenter([lat, lng], 16);
+        }
+        showToast("Joylashuv topildi", 'success');
+      },
+      err => {
+        showToast("Joylashuvni aniqlab bo'lmadi. GPS yoniqligiga ishonch hosil qiling.", 'error');
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  } else {
+    showToast("Qurilmangiz joylashuv aniqlashni qo'llab-quvvatlamaydi", 'error');
+  }
 }
 
 init();

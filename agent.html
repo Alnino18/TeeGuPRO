@@ -7,6 +7,7 @@
   <link rel="manifest" href="manifest-agent.json">
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <script src="https://api-maps.yandex.ru/2.1/?apikey=72b7a2d8-2169-4eeb-b6b6-a19da4c0a5f0&lang=ru_RU"></script>
   <style>
     :root {
       --bg: #1e1e2e;
@@ -106,7 +107,11 @@
           
           <div class="form-group">
             <label class="form-label">Manzil (agar yangi bo'lsa)</label>
-            <input type="text" id="orderAddress" class="form-input" placeholder="Manzilni kiriting (ixtiyoriy)">
+            <div style="display:flex; gap:8px;">
+              <input type="text" id="orderAddress" class="form-input" placeholder="Manzilni kiriting (ixtiyoriy)">
+              <button class="btn btn-outline" style="width:auto; padding:0 14px;" onclick="openAgentMap()" title="Xaritadan belgilash">📍</button>
+            </div>
+            <div id="coordDisplay" style="font-size:11px; color:var(--text2); margin-top:4px; display:none;">Kordinata: <span id="coordVal"></span></div>
           </div>
           
           <h4 style="margin: 20px 0 10px 0; border-bottom: 1px solid var(--border); padding-bottom: 8px;">Mahsulotlar</h4>
@@ -150,6 +155,29 @@
   
   <div id="toast" class="toast"></div>
 
-  <script src="agent.js?v=1"></script>
+  <!-- MODAL: COORDINATES -->
+  <div class="login-screen" id="agentMapModal" style="display:none; padding:10px;">
+    <div class="login-card" style="max-width:500px; padding:16px; width:100%; height:90vh; display:flex; flex-direction:column;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <div style="font-weight:900;">📍 Joylashuvni tanlang</div>
+        <button onclick="closeAgentMap()" style="background:transparent; border:none; color:var(--text2); font-size:24px; cursor:pointer;">&times;</button>
+      </div>
+      <div style="font-size:12px; color:var(--text2); margin-bottom:8px;">O'zingiz turgan joyni belgilash uchun "Mening joylashuvim" (Aktivatsiya qilish) tugmasini bosing yoki xaritaga nuqta qo'ying.</div>
+      
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <button class="btn btn-primary" style="flex:1; padding:10px; font-size:13px;" onclick="getMyLocation()">🎯 Mening joylashuvim</button>
+      </div>
+      
+      <div id="agentYandexMap" style="flex:1; width:100%; border-radius:12px; overflow:hidden; background:#333; position:relative;">
+        <div id="mapCenterMarker" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -100%); z-index:100; font-size:32px; pointer-events:none; filter:drop-shadow(0 4px 4px rgba(0,0,0,0.5));">📍</div>
+      </div>
+      
+      <div style="margin-top:16px;">
+        <button class="btn btn-success" onclick="saveAgentMap()">✅ Shu joyni saqlash</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="agent.js?v=2"></script>
 </body>
 </html>
