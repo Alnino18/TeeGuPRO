@@ -3,14 +3,15 @@
   "short_name": "TeeGu Agent",
   "description": "TeeGu agentlari uchun mobil ilova",
   "id": "/TeeGuPRO/agent",
-  "start_url": "./agent.html",
+  "start_url": "./index.html",
   "display": "standalone",
+  "scope": "./",
   "background_color": "#1e1e2e",
   "theme_color": "#ff9800",
   "orientation": "portrait",
   "icons": [
     {
-      "src": "./agent-icon.jpg",
+      "src": "../agent-icon.jpg",
       "sizes": "192x192",
       "type": "image/jpeg"
     }

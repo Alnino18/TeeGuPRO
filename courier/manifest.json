@@ -3,14 +3,15 @@
   "short_name": "TeeGu Kuryer",
   "description": "TeeGu kuryerlari uchun mobil ilova",
   "id": "/TeeGuPRO/courier",
-  "start_url": "./courier.html",
+  "start_url": "./index.html",
   "display": "standalone",
+  "scope": "./",
   "background_color": "#1e1e2e",
   "theme_color": "#7c6af7",
   "orientation": "portrait",
   "icons": [
     {
-      "src": "./courier-icon.jpg",
+      "src": "../courier-icon.jpg",
       "sizes": "192x192",
       "type": "image/jpeg"
     }

@@ -5,12 +5,13 @@
   "id": "/TeeGuPRO/admin",
   "start_url": "./index.html",
   "display": "standalone",
+  "scope": "./",
   "background_color": "#0f0f1a",
   "theme_color": "#7c6af7",
   "orientation": "portrait",
   "icons": [
     {
-      "src": "./app-icon.png",
+      "src": "../app-icon.png",
       "sizes": "192x192",
       "type": "image/png"
     }

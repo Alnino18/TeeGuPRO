@@ -1508,7 +1508,7 @@ function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.modal-overlay').forEach(overlay=>{overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.classList.remove('open');});});
 
 verifyAuth();
-if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
+if('serviceWorker' in navigator){navigator.serviceWorker.register('../sw.js').catch(()=>{});}
 // ==================== SWIPE NAVIGATION ====================
 const PAGE_ORDER = [
   'dashboard','new-order','orders','debts',
