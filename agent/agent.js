@@ -100,10 +100,9 @@ function startListeners() {
     list.innerHTML = CLIENTS.map(c => `<option value="${c.name} — ${c.phone}"></option>`).join('');
   });
   
-  // Listen for agent's recent orders (last 50)
+  // Listen for agent's recent orders
   db.collection('orders')
     .where('agent', '==', loggedAgentName)
-    .limit(50)
     .onSnapshot(snap => {
       myOrders = snap.docs.map(d => d.data());
       // sort manually to avoid requiring Firestore composite index
