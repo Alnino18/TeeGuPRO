@@ -2,6 +2,7 @@
   "name": "TeeGu Kuryer",
   "short_name": "TeeGu Kuryer",
   "description": "TeeGu kuryerlari uchun mobil ilova",
+  "id": "/TeeGuPRO/courier",
   "start_url": "./courier.html",
   "display": "standalone",
   "background_color": "#1e1e2e",

@@ -1,7 +1,8 @@
 {
   "name": "TeeGu",
   "short_name": "TeeGu.PRO",
-  "description": "Управление заказами салатов для кафе и фаст-фуд",
+  "description": "Система управления заказами для Доставки",
+  "id": "/TeeGuPRO/admin",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#0f0f1a",

@@ -2,6 +2,7 @@
   "name": "TeeGu Agent",
   "short_name": "TeeGu Agent",
   "description": "TeeGu agentlari uchun mobil ilova",
+  "id": "/TeeGuPRO/agent",
   "start_url": "./agent.html",
   "display": "standalone",
   "background_color": "#1e1e2e",
