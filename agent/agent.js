@@ -445,3 +445,5 @@ function getMyLocation() {
 }
 
 init();
+i f ( ' s e r v i c e W o r k e r '   i n   n a v i g a t o r ) { n a v i g a t o r . s e r v i c e W o r k e r . r e g i s t e r ( ' . . / s w . j s ' ) . c a t c h ( ( ) = > { } ) ; }  
+ 

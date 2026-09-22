@@ -1,5 +1,25 @@
-const CACHE = 'salat-v3';
-const ASSETS = ['./index.html', './courier.html', './agent.html', './manifest.json', './manifest-courier.json', './manifest-agent.json', './courier-icon.jpg', './agent-icon.jpg'];
+const CACHE = 'salat-v4';
+const ASSETS = [
+  './',
+  './admin/',
+  './admin/index.html',
+  './admin/app.js',
+  './admin/manifest.json',
+  './agent/',
+  './agent/index.html',
+  './agent/agent.js',
+  './agent/manifest.json',
+  './courier/',
+  './courier/index.html',
+  './courier/courier.js',
+  './courier/manifest.json',
+  './style.css',
+  './app-icon.png',
+  './agent-icon.jpg',
+  './courier-icon.jpg',
+  './icon192.png',
+  './icon512.png'
+];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
