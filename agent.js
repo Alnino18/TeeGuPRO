@@ -286,14 +286,22 @@ function submitOrder() {
       
       showToast("Buyurtma yuborildi!", 'success');
       
-      // Reset form
-      document.getElementById('orderClient').value = '';
-      document.getElementById('orderAddress').value = '';
-      document.getElementById('orderNote').value = '';
-      document.getElementById('coordDisplay').style.display = 'none';
+      // Reset form safely
+      try {
+        if(document.getElementById('orderClient')) document.getElementById('orderClient').value = '';
+        if(document.getElementById('orderAddress')) document.getElementById('orderAddress').value = '';
+        if(document.getElementById('orderNote')) document.getElementById('orderNote').value = '';
+        if(document.getElementById('orderPayment')) document.getElementById('orderPayment').value = 'Naqd';
+        if(document.getElementById('coordDisplay')) document.getElementById('coordDisplay').style.display = 'none';
+      } catch(e) {}
+      
       currentLat = null;
       currentLng = null;
+      
+      // Clear cart keys explicitly to avoid any reference issues
+      Object.keys(cart).forEach(k => delete cart[k]);
       cart = {};
+      
       renderProducts();
       switchTab('history');
     })
