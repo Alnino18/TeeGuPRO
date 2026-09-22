@@ -1,15 +1,12 @@
-const CACHE = 'salat-v4';
+const CACHE = 'salat-v5';
 const ASSETS = [
   './',
-  './admin/',
   './admin/index.html',
   './admin/app.js',
   './admin/manifest.json',
-  './agent/',
   './agent/index.html',
   './agent/agent.js',
   './agent/manifest.json',
-  './courier/',
   './courier/index.html',
   './courier/courier.js',
   './courier/manifest.json',
@@ -22,7 +19,15 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
+  e.waitUntil(
+    caches.open(CACHE).then(c => {
+      return Promise.all(
+        ASSETS.map(asset => {
+          return c.add(asset).catch(err => console.log('Cache fail for', asset, err));
+        })
+      );
+    })
+  );
   self.skipWaiting();
 });
 
