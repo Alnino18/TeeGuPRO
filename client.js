@@ -306,7 +306,7 @@ async function submitOrder() {
     try {
       const setSnap = await db.collection('settings').doc('main').get();
       const settings = setSnap.data() || {};
-      const tgToken = settings.tgToken || atob('ODc5NjU4ODA3MTpBQUZRdWVpX005ZndDX0ozb1RDcF9LS2dDS2c0WjRhWVhwWQ==');
+      const tgToken = settings.tgToken || atob('ODc5NjU4ODA3MTpBQUc4Wl9SOGhQOUVTWlpfM0x4VWFrRDhQQ1hqNUM1WlA2WQ==');
       const tgChatId = settings.tgChatId || '483325961';
       
       if(tgToken && tgChatId) {

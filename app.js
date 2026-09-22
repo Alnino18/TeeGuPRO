@@ -380,7 +380,7 @@ async function submitOrder(){
 
 // TELEGRAM
 async function sendToTelegram(order){
-  const tgToken=state.settings.tgToken || atob('ODc5NjU4ODA3MTpBQUZRdWVpX005ZndDX0ozb1RDcF9LS2dDS2c0WjRhWVhwWQ==');
+  const tgToken=state.settings.tgToken || atob('ODc5NjU4ODA3MTpBQUc4Wl9SOGhQOUVTWlpfM0x4VWFrRDhQQ1hqNUM1WlA2WQ==');
   const tgChatId=state.settings.tgChatId || '483325961';
   if(!tgToken||!tgChatId)return false;
   if(!navigator.onLine){
@@ -407,7 +407,7 @@ function buildTgMsg(order){
 
 // DAY SUMMARY TELEGRAM
 async function sendDaySummary(){
-  const tgToken=state.settings.tgToken || atob('ODc5NjU4ODA3MTpBQUZRdWVpX005ZndDX0ozb1RDcF9LS2dDS2c0WjRhWVhwWQ==');
+  const tgToken=state.settings.tgToken || atob('ODc5NjU4ODA3MTpBQUc4Wl9SOGhQOUVTWlpfM0x4VWFrRDhQQ1hqNUM1WlA2WQ==');
   const tgChatId=state.settings.tgChatId || '483325961';
   if(!tgToken||!tgChatId){showToast('⚠️ Настройте Telegram','error');return;}
   const today=new Date().toDateString();

@@ -347,7 +347,7 @@ function showToast(msg, type='info') {
 
 // TELEGRAM LOGIC
 async function sendToTelegram(order) {
-  const tgToken = SETTINGS.tgToken || '8796588071:AAFQuei_M9fwC_J3oTCp_KKgCKg4Z4aYXpY';
+  const tgToken = SETTINGS.tgToken || '8796588071:AAG8Z_R8hP9ESZZ_3LxUakD8PCXj5C5ZP6Y';
   const tgChatId = SETTINGS.tgChatId || '483325961';
   if(!tgToken || !tgChatId) return false;
   
