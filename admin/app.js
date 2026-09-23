@@ -379,6 +379,12 @@ async function submitOrder(){
 }
 
 // TELEGRAM
+
+function escapeHTML(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 async function sendToTelegram(order){
   const tgToken=state.settings.tgToken || atob('ODc5NjU4ODA3MTpBQUc4Wl9SOGhQOUVTWlpfM0x4VWFrRDhQQ1hqNUM1WlA2WQ==');
   const tgChatId=state.settings.tgChatId || '483325961';
@@ -395,12 +401,12 @@ function buildTgMsg(order){
   const pi={'наличные':'💵','клик':'📱','консигнация':'📝'};
   const d=new Date(order.date);
   const ds=d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
-  let l=[`🥗 <b>НОВЫЙ ЗАКАЗ</b>`,``,`👤 <b>${order.client}</b>`];
-  if(order.phone)l.push(`📞 ${order.phone}`);
+  let l=[`🥗 <b>НОВЫЙ ЗАКАЗ</b>`,``,`👤 <b>${escapeHTML(order.client)}</b>`];
+  if(order.phone)l.push(`📞 ${escapeHTML(order.phone)}`);
   l.push(``,'📦 <b>Заказ:</b>');
   order.items.forEach((i,n)=>l.push(`  ${n+1}. ${i.emoji} ${i.name} — <b>${i.qty}${i.unit||'кг'}</b> (${fmt(i.qty*i.price)} so'm)`));
   l.push(``,`💰 <b>Итого: ${fmt(order.total)} so'm</b>`,`${pi[order.payment]||'💳'} ${order.payment}`);
-  if(order.note)l.push(`📝 ${order.note}`);
+  if(order.note)l.push(`📝 ${escapeHTML(order.note)}`);
   l.push(``,`🕐 ${ds}`);
   return l.join('\n');
 }

@@ -353,6 +353,12 @@ function showToast(msg, type='info') {
 }
 
 // TELEGRAM LOGIC
+
+function escapeHTML(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 async function sendToTelegram(order) {
   const tgToken = SETTINGS.tgToken || '8796588071:AAG8Z_R8hP9ESZZ_3LxUakD8PCXj5C5ZP6Y';
   const tgChatId = SETTINGS.tgChatId || '483325961';
@@ -361,16 +367,16 @@ async function sendToTelegram(order) {
   const pi = {'Naqd': '💵', 'Karta': '💳', 'Qarz': '📒'};
   const d = new Date(order.date);
   const ds = d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
-  let l = [`🆕 <b>Yangi buyurtma (Agent)</b>`, ``, `👤 <b>${order.client}</b>`];
-  if(order.phone) l.push(`📞 ${order.phone}`);
-  if(order.agent) l.push(`👨‍💼 Agent: <b>${order.agent}</b>`);
+  let l = [`🆕 <b>Yangi buyurtma (Agent)</b>`, ``, `👤 <b>${escapeHTML(order.client)}</b>`];
+  if(order.phone) l.push(`📞 ${escapeHTML(order.phone)}`);
+  if(order.agent) l.push(`👨‍💼 Agent: <b>${escapeHTML(order.agent)}</b>`);
   l.push(``, `🛒 <b>Buyurtma:</b>`);
   order.items.forEach((i, n) => {
-    l.push(`  ${n+1}. ${i.emoji} ${i.name} - <b>${i.qty}${i.unit||'kg'}</b> (${Math.round(i.qty*i.price).toLocaleString('ru-RU')} so'm)`);
+    l.push(`  ${n+1}. ${i.emoji||''} ${escapeHTML(i.name)} - <b>${i.qty}${i.unit||'kg'}</b> (${Math.round(i.qty*i.price).toLocaleString('ru-RU')} so'm)`);
   });
   l.push(``, `💰 <b>Jami: ${Math.round(order.total).toLocaleString('ru-RU')} so'm</b>`, `${pi[order.payment]||'💳'} ${order.payment}`);
-  if(order.note) l.push(`📝 ${order.note}`);
-  if(order.address) l.push(`📍 ${order.address}`);
+  if(order.note) l.push(`📝 ${escapeHTML(order.note)}`);
+  if(order.address) l.push(`📍 ${escapeHTML(order.address)}`);
   l.push(``, `🕒 ${ds}`);
   
   try {
