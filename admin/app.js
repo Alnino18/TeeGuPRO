@@ -404,8 +404,8 @@ function buildTgMsg(order){
   let l=[`🥗 <b>НОВЫЙ ЗАКАЗ</b>`,``,`👤 <b>${escapeHTML(order.client)}</b>`];
   if(order.phone)l.push(`📞 ${escapeHTML(order.phone)}`);
   l.push(``,'📦 <b>Заказ:</b>');
-  order.items.forEach((i,n)=>l.push(`  ${n+1}. ${i.emoji} ${i.name} — <b>${i.qty}${i.unit||'кг'}</b> (${fmt(i.qty*i.price)} so'm)`));
-  l.push(``,`💰 <b>Итого: ${fmt(order.total)} so'm</b>`,`${pi[order.payment]||'💳'} ${order.payment}`);
+  order.items.forEach((i,n)=>l.push(`  ${n+1}. ${i.emoji||''} ${escapeHTML(i.name)} — <b>${i.qty}${escapeHTML(i.unit||'кг')}</b> (${fmt(i.qty*i.price)} so'm)`));
+  l.push(``,`💰 <b>Итого: ${fmt(order.total)} so'm</b>`,`${pi[order.payment]||'💳'} ${escapeHTML(order.payment)}`);
   if(order.note)l.push(`📝 ${escapeHTML(order.note)}`);
   l.push(``,`🕐 ${ds}`);
   return l.join('\n');
@@ -423,7 +423,7 @@ async function sendDaySummary(){
   const totalDebt=debts.reduce((s,o)=>s+o.total-(o.partialPaid||0),0);
   const prodTotals={};PRODUCTS.forEach(p=>{prodTotals[p.id]=0;});
   todayOrders.forEach(o=>o.items.forEach(i=>{if(prodTotals[i.id]!==undefined)prodTotals[i.id]+=i.qty;}));
-  const prodLines=PRODUCTS.map(p=>prodTotals[p.id]>0?`  ${p.emoji} ${p.name}: <b>${prodTotals[p.id]}${p.unit||'кг'}</b>`:'').filter(Boolean);
+  const prodLines=PRODUCTS.map(p=>prodTotals[p.id]>0?`  ${p.emoji||''} ${escapeHTML(p.name)}: <b>${prodTotals[p.id]}${escapeHTML(p.unit||'кг')}</b>`:'').filter(Boolean);
   const d=new Date();
   const lines=[
     `📊 <b>СВОДКА ЗА ДЕНЬ — ${d.toLocaleDateString('ru-RU')}</b>`,``,
