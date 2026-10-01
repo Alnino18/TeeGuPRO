@@ -369,17 +369,27 @@ async function submitOrder() {
 
 init();
 
+function escapeHTML(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function buildTgMsg(order){
   const pi={'наличные':'💵','клик':'📱','консигнация':'📝'};
   const d=new Date(order.date);
   const ds=d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
-  let l=[`🥗 <b>НОВЫЙ ЗАКАЗ ИЗ WEB APP</b>`,``,`👤 <b>${order.client}</b>`];
-  if(order.phone)l.push(`📞 ${order.phone}`);
-  if(order.address)l.push(`📍 ${order.address}`);
-  if(order.note)l.push(`📌 <i>${order.note}</i>`);
+  let l=[`🥗 <b>НОВЫЙ ЗАКАЗ ИЗ WEB APP</b>`,``,`👤 <b>${escapeHTML(order.client)}</b>`];
+  if(order.phone)l.push(`📞 ${escapeHTML(order.phone)}`);
+  if(order.address)l.push(`📍 ${escapeHTML(order.address)}`);
+  if(order.note)l.push(`📌 <i>${escapeHTML(order.note)}</i>`);
   l.push(``,`📦 <b>Заказ:</b>`);
-  order.items.forEach((i,idx)=>l.push(`${idx+1}. ${i.emoji||''} ${i.name} — ${i.qty}${i.unit||'кг'}`));
-  l.push(``,`💰 <b>Итого: ${fmt(order.total)} сум</b>`,`💳 ${pi[order.payment]||''} ${order.payment}`);
+  order.items.forEach((i,idx)=>l.push(`${idx+1}. ${i.emoji||''} ${escapeHTML(i.name)} — ${i.qty}${escapeHTML(i.unit||'кг')}`));
+  l.push(``,`💰 <b>Итого: ${fmt(order.total)} сум</b>`,`💳 ${pi[order.payment]||''} ${escapeHTML(order.payment)}`);
   if(order.type==='доставка')l.push(`🛵 Доставка`);
   l.push(``,`⏱ ${ds}`);
   return l.join('\n');

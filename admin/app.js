@@ -424,6 +424,8 @@ async function sendDaySummary(){
   const prodTotals={};PRODUCTS.forEach(p=>{prodTotals[p.id]=0;});
   todayOrders.forEach(o=>o.items.forEach(i=>{if(prodTotals[i.id]!==undefined)prodTotals[i.id]+=i.qty;}));
   const prodLines=PRODUCTS.map(p=>prodTotals[p.id]>0?`  ${p.emoji||''} ${escapeHTML(p.name)}: <b>${prodTotals[p.id]}${escapeHTML(p.unit||'кг')}</b>`:'').filter(Boolean);
+  const deliveredOrders = todayOrders.filter(o => o.status === 'done' || o.delivered);
+  const deliveredClients = deliveredOrders.length > 0 ? deliveredOrders.map(o => `  👤 ${escapeHTML(o.client)}`).join('\n') : `  Нет доставленных`;
   const d=new Date();
   const lines=[
     `📊 <b>СВОДКА ЗА ДЕНЬ — ${d.toLocaleDateString('ru-RU')}</b>`,``,
@@ -432,13 +434,27 @@ async function sendDaySummary(){
     `📦 <b>Продано:</b>`,
     ...prodLines,``,
     `💸 <b>Общий долг (консигнация):</b> ${fmt(totalDebt)} so'm`,
-    `👥 <b>Должников:</b> ${new Set(debts.map(o=>o.clientId)).size}`,
+    `👥 <b>Должников:</b> ${new Set(debts.map(o=>o.clientId)).size}`,``,
+    `✅ <b>Доставленные клиенты:</b>`,
+    deliveredClients
   ];
   try{
     const r=await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:lines.join('\n'),parse_mode:'HTML'})});
     if((await r.json()).ok)showToast('✅ Сводка отправлена!','success');else showToast('❌ Ошибка Telegram','error');
   }catch(e){showToast('❌ Сеть','error');}
 }
+
+// Avtomatik kunlik xisobot yuborish (23:30 da)
+setInterval(() => {
+  const d = new Date();
+  if (d.getHours() === 23 && d.getMinutes() === 30) {
+    const todayStr = d.toDateString();
+    if (localStorage.getItem('lastAutoSummary') !== todayStr) {
+      localStorage.setItem('lastAutoSummary', todayStr);
+      sendDaySummary();
+    }
+  }
+}, 60000);
 
 // ORDERS LIST
 function renderOrdersList(filterText='',dateFilter=state.dateFilter){
@@ -448,6 +464,13 @@ function renderOrdersList(filterText='',dateFilter=state.dateFilter){
   const now=new Date();
   if(dateFilter==='today')orders=orders.filter(o=>new Date(o.date).toDateString()===now.toDateString());
   else if(dateFilter==='week'){const w=new Date(now-7*86400000);orders=orders.filter(o=>new Date(o.date)>w);}
+  else if(dateFilter && dateFilter.match(/^\d{4}-\d{2}-\d{2}$/)){
+    orders = orders.filter(o => {
+      const d = new Date(o.date);
+      const iso = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+      return iso === dateFilter;
+    });
+  }
   const list=document.getElementById('ordersList');
   if(!orders.length){list.innerHTML=`<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">${T[lang].noOrders}</div></div>`;return;}
   const pi={'наличные':'💵','клик':'📱','консигнация':'📝'};
@@ -491,7 +514,7 @@ function renderOrdersList(filterText='',dateFilter=state.dateFilter){
   }).join('');
 }
 function filterOrders(v){renderOrdersList(v);}
-function filterByDate(f,el){document.querySelectorAll('#page-orders .pill').forEach(p=>p.classList.remove('selected'));el.classList.add('selected');renderOrdersList(document.getElementById('ordersSearch').value,f);}
+function filterByDate(f,el){document.querySelectorAll('#page-orders .pill, #customOrderDate').forEach(p=>p.classList.remove('selected'));if(el)el.classList.add('selected');renderOrdersList(document.getElementById('ordersSearch').value,f);}
 
 window.updateOrderStatus = function(id, newStatus) {
   db.collection('orders').doc(String(id)).update({status: newStatus}).then(()=>{
@@ -901,7 +924,22 @@ function saveNewClient(){
 
 // STATS
 function renderStats(){
-  const orders=state.orders;
+  let orders=state.orders;
+  const sd = document.getElementById('statsStartDate')?.value;
+  const ed = document.getElementById('statsEndDate')?.value;
+  if(sd || ed) {
+    orders = orders.filter(o => {
+      const d = new Date(o.date);
+      d.setHours(0,0,0,0);
+      let ok = true;
+      if(sd) { const start = new Date(sd); start.setHours(0,0,0,0); if(d < start) ok = false; }
+      if(ed) { const end = new Date(ed); end.setHours(0,0,0,0); if(d > end) ok = false; }
+      return ok;
+    });
+  }
+  const originalOrders = state.orders;
+  state.orders = orders;
+
   const today=new Date().toDateString();
   const todayO=orders.filter(o=>new Date(o.date).toDateString()===today);
   const totalRev=orders.reduce((s,o)=>s+o.total,0);
@@ -912,6 +950,9 @@ function renderStats(){
     <div class="stat-card"><div class="stat-val" style="font-size:16px">${fmt(totalRev)}</div><div class="stat-label">${T[lang].totalRev}</div></div>
     <div class="stat-card"><div class="stat-val" style="font-size:16px">${fmt(todayRev)}</div><div class="stat-label">${T[lang].todayRev}</div></div>`;
   renderAvgStats();renderWeekCompare();renderChart();renderForecast();renderTopClients();renderMonthlyReport();renderSeasonality();
+  
+  state.orders = originalOrders;
+
   const ps={};PRODUCTS.forEach(p=>{ps[p.id]={name:lang==='uz'?p.nameUz:p.name,emoji:p.emoji,qty:0,rev:0,cost:p.cost||0,unit:p.unit||'кг'};});
   orders.forEach(o=>o.items.forEach(i=>{if(ps[i.id]){ps[i.id].qty+=i.qty;ps[i.id].rev+=i.qty*i.price;}}));
   const sorted=Object.values(ps).sort((a,b)=>b.qty-a.qty);

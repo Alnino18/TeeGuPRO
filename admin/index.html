@@ -140,6 +140,7 @@
     <div class="pill selected" onclick="filterByDate('all',this)" id="pill-all">Все</div>
     <div class="pill" onclick="filterByDate('today',this)" id="pill-today">Сегодня</div>
     <div class="pill" onclick="filterByDate('week',this)" id="pill-week">Неделя</div>
+    <input type="date" class="form-input" style="padding:4px 8px; font-size:13px; height:28px; width:auto; border-radius:12px; border:1px solid var(--border); background:var(--card); color:var(--text);" id="customOrderDate" onchange="filterByDate(this.value, this)">
   </div>
   <div id="ordersList"><div class="empty"><div class="empty-icon">📋</div><div class="empty-text">Нет заказов</div></div></div>
 </div>
@@ -182,6 +183,15 @@
 
 <!-- PAGE: STATS -->
 <div class="page" id="page-stats">
+  <div class="card" style="margin-bottom:14px; padding:12px;">
+    <div style="font-size:12px; color:var(--text2); margin-bottom:8px;">📅 <span class="t" data-ru="Произвольный период отчёта" data-uz="Ixtiyoriy hisobot davri">Произвольный период отчёта</span></div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <input type="date" id="statsStartDate" class="form-input" style="padding:6px; font-size:13px;" onchange="renderStats()">
+      <span style="color:var(--text3)">-</span>
+      <input type="date" id="statsEndDate" class="form-input" style="padding:6px; font-size:13px;" onchange="renderStats()">
+      <button class="btn btn-outline btn-sm" onclick="document.getElementById('statsStartDate').value=''; document.getElementById('statsEndDate').value=''; renderStats();" style="padding:6px 10px;">🔄</button>
+    </div>
+  </div>
   <div class="stats-grid" id="statsGrid"></div>
 
   <!-- AVG CHECK -->

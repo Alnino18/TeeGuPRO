@@ -372,9 +372,9 @@ async function sendToTelegram(order) {
   if(order.agent) l.push(`👨‍💼 Agent: <b>${escapeHTML(order.agent)}</b>`);
   l.push(``, `🛒 <b>Buyurtma:</b>`);
   order.items.forEach((i, n) => {
-    l.push(`  ${n+1}. ${i.emoji||''} ${escapeHTML(i.name)} - <b>${i.qty}${i.unit||'kg'}</b> (${Math.round(i.qty*i.price).toLocaleString('ru-RU')} so'm)`);
+    l.push(`  ${n+1}. ${i.emoji||''} ${escapeHTML(i.name)} - <b>${i.qty}${escapeHTML(i.unit||'kg')}</b> (${Math.round(i.qty*i.price).toLocaleString('ru-RU')} so'm)`);
   });
-  l.push(``, `💰 <b>Jami: ${Math.round(order.total).toLocaleString('ru-RU')} so'm</b>`, `${pi[order.payment]||'💳'} ${order.payment}`);
+  l.push(``, `💰 <b>Jami: ${Math.round(order.total).toLocaleString('ru-RU')} so'm</b>`, `${pi[order.payment]||'💳'} ${escapeHTML(order.payment)}`);
   if(order.note) l.push(`📝 ${escapeHTML(order.note)}`);
   if(order.address) l.push(`📍 ${escapeHTML(order.address)}`);
   l.push(``, `🕒 ${ds}`);
