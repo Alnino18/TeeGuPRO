@@ -961,6 +961,40 @@ function renderStats(){
     const margin=p.cost>0?p.rev-(p.qty*p.cost):null;
     return`<div class="summary-row"><span>${p.emoji} ${p.name}</span><div style="text-align:right"><div><b>${p.qty}${p.unit}</b> · <span class="summary-price">${fmt(p.rev)} so'm</span></div>${margin!==null?`<div style="font-size:11px;color:${margin>=0?'var(--green)':'var(--danger)'}">${lang==='uz'?'Foyda':'Маржа'}: ${fmt(margin)} so'm</div>`:''}</div></div>`;
   }).join('')}`;
+
+  // Product Price Stats
+  const priceStats = {};
+  PRODUCTS.forEach(p => {
+    priceStats[p.id] = { name: lang==='uz'?(p.nameUz||p.name):p.name, emoji: p.emoji, unit: p.unit||'кг', prices: {} };
+  });
+  orders.forEach(o => o.items.forEach(i => {
+    if(priceStats[i.id]) {
+      if(!priceStats[i.id].prices[i.price]) priceStats[i.id].prices[i.price] = 0;
+      priceStats[i.id].prices[i.price] += i.qty;
+    }
+  }));
+  
+  let priceHtml = `<div class="card-title" style="margin-bottom:12px">🏷️ ${lang==='uz'?'Narxlar bo\'yicha sotuv':'Продажи по ценам'}</div>`;
+  Object.values(priceStats).forEach(p => {
+    const pricesObj = p.prices;
+    const priceKeys = Object.keys(pricesObj).map(Number).sort((a,b)=>a-b);
+    if(priceKeys.length > 0) {
+      priceHtml += `<div style="margin-bottom:10px;">
+        <div style="font-weight:700;margin-bottom:4px;color:var(--text);">${p.emoji||''} ${p.name}</div>`;
+      priceKeys.forEach(price => {
+        priceHtml += `<div class="summary-row" style="padding:4px 0;border-bottom:1px dashed rgba(255,255,255,0.05);font-size:13px;align-items:center;">
+          <span style="color:var(--text2);">${fmt(price)} so'm</span>
+          <span style="font-weight:bold;color:var(--accent);font-size:14px;">${pricesObj[price]} ${p.unit}</span>
+        </div>`;
+      });
+      priceHtml += `</div>`;
+    }
+  });
+  const ppsEl = document.getElementById('productPriceStats');
+  if(ppsEl) {
+    ppsEl.innerHTML = priceHtml;
+    ppsEl.style.display = Object.keys(priceStats).some(id => Object.keys(priceStats[id].prices).length > 0) ? 'block' : 'none';
+  }
 }
 
 function renderAvgStats(){
