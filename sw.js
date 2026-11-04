@@ -1,4 +1,4 @@
-const CACHE = 'salat-v7';
+const CACHE = 'salat-v8';
 const ASSETS = [
   './',
   './admin/index.html',

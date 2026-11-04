@@ -92,9 +92,12 @@ db.collection('clients').onSnapshot(snap => {
   populateClientSelect(); renderClientsList(); renderDashboard();
 });
 
+let isOrdersLoaded = false;
 db.collection('orders').onSnapshot(snap => {
+  isOrdersLoaded = true;
   state.orders = snap.docs.map(d => d.data()).sort((a, b) => new Date(b.date) - new Date(a.date));
   renderOrdersList(); renderStats(); renderDebts(); renderDelivery(); renderFavorites(); renderDashboard(); updateBadges();
+  if (typeof checkAutoDailySummary === 'function') checkAutoDailySummary();
 });
 
 db.collection('settings').doc('main').onSnapshot(snap => {
@@ -415,46 +418,77 @@ function buildTgMsg(order){
 async function sendDaySummary(){
   const tgToken=state.settings.tgToken || atob('ODc5NjU4ODA3MTpBQUc4Wl9SOGhQOUVTWlpfM0x4VWFrRDhQQ1hqNUM1WlA2WQ==');
   const tgChatId=state.settings.tgChatId || '483325961';
-  if(!tgToken||!tgChatId){showToast('⚠️ Настройте Telegram','error');return;}
+  if(!tgToken||!tgChatId){showToast('⚠️ ' + (lang === 'uz' ? 'Telegram sozlanmagan' : 'Настройте Telegram'),'error');return false;}
   const today=new Date().toDateString();
-  const todayOrders=state.orders.filter(o=>new Date(o.date).toDateString()===today);
-  const totalRev=todayOrders.reduce((s,o)=>s+o.total,0);
-  const debts=state.orders.filter(o=>o.payment==='консигнация'&&!o.debtPaid);
-  const totalDebt=debts.reduce((s,o)=>s+o.total-(o.partialPaid||0),0);
-  const prodTotals={};PRODUCTS.forEach(p=>{prodTotals[p.id]=0;});
-  todayOrders.forEach(o=>o.items.forEach(i=>{if(prodTotals[i.id]!==undefined)prodTotals[i.id]+=i.qty;}));
-  const prodLines=PRODUCTS.map(p=>prodTotals[p.id]>0?`  ${p.emoji||''} ${escapeHTML(p.name)}: <b>${prodTotals[p.id]}${escapeHTML(p.unit||'кг')}</b>`:'').filter(Boolean);
+  const todayOrders=(state.orders || []).filter(o=>new Date(o.date).toDateString()===today);
+  const totalRev=todayOrders.reduce((s,o)=>s+(o.total||0),0);
+  const debts=(state.orders || []).filter(o=>o.payment==='консигнация'&&!o.debtPaid);
+  const totalDebt=debts.reduce((s,o)=>s+(o.total||0)-(o.partialPaid||0),0);
+  const prodTotals={};(PRODUCTS || []).forEach(p=>{prodTotals[p.id]=0;});
+  todayOrders.forEach(o=>(o.items || []).forEach(i=>{if(prodTotals[i.id]!==undefined)prodTotals[i.id]+=i.qty;}));
+  const isUz = lang === 'uz';
+  const prodLines=(PRODUCTS || []).map(p=>{
+    const pName = isUz && p.nameUz ? p.nameUz : p.name;
+    const pUnit = p.unit || (isUz ? 'kg' : 'кг');
+    return prodTotals[p.id]>0?('  ' + (p.emoji||'') + ' ' + escapeHTML(pName) + ': <b>' + prodTotals[p.id] + escapeHTML(pUnit) + '</b>'):'';
+  }).filter(Boolean);
   const deliveredOrders = todayOrders.filter(o => o.status === 'done' || o.delivered);
-  const deliveredClients = deliveredOrders.length > 0 ? deliveredOrders.map(o => `  👤 ${escapeHTML(o.client)}`).join('\n') : `  Нет доставленных`;
+  const deliveredClients = deliveredOrders.length > 0 ? deliveredOrders.map(o => '  👤 ' + escapeHTML(o.client)).join('\n') : (isUz ? '  Yetkazilganlar yo\'q' : '  Нет доставленных');
   const d=new Date();
   const lines=[
-    `📊 <b>СВОДКА ЗА ДЕНЬ — ${d.toLocaleDateString('ru-RU')}</b>`,``,
-    `📦 <b>Заказов:</b> ${todayOrders.length}`,
-    `💰 <b>Выручка:</b> ${fmt(totalRev)} so'm`,``,
-    `📦 <b>Продано:</b>`,
-    ...prodLines,``,
-    `💸 <b>Общий долг (консигнация):</b> ${fmt(totalDebt)} so'm`,
-    `👥 <b>Должников:</b> ${new Set(debts.map(o=>o.clientId)).size}`,``,
-    `✅ <b>Доставленные клиенты:</b>`,
+    '📊 <b>' + (isUz ? 'KUNLIK HISOBOT' : 'СВОДКА ЗА ДЕНЬ') + ' — ' + d.toLocaleDateString('ru-RU') + '</b>', '',
+    '📦 <b>' + (isUz ? 'Buyurtmalar' : 'Заказов') + ':</b> ' + todayOrders.length,
+    '💰 <b>' + (isUz ? 'Tushum' : 'Выручка') + ':</b> ' + fmt(totalRev) + ' so\'m', '',
+    '📦 <b>' + (isUz ? 'Sotildi' : 'Продано') + ':</b>',
+    ...prodLines, '',
+    '💸 <b>' + (isUz ? 'Umumiy qarz (konsignatsiya)' : 'Общий долг (консигнация)') + ':</b> ' + fmt(totalDebt) + ' so\'m',
+    '👥 <b>' + (isUz ? 'Qarzdorlar' : 'Должников') + ':</b> ' + new Set(debts.map(o=>o.clientId)).size, '',
+    '✅ <b>' + (isUz ? 'Yetkazilgan mijozlar' : 'Доставленные клиенты') + ':</b>',
     deliveredClients
   ];
   try{
-    const r=await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:lines.join('\n'),parse_mode:'HTML'})});
-    if((await r.json()).ok)showToast('✅ Сводка отправлена!','success');else showToast('❌ Ошибка Telegram','error');
-  }catch(e){showToast('❌ Сеть','error');}
+    const r=await fetch('https://api.telegram.org/bot' + tgToken + '/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:lines.join('\n'),parse_mode:'HTML'})});
+    const res = await r.json();
+    if(res.ok){
+      showToast('✅ ' + (isUz ? 'Hisobot yuborildi!' : 'Сводка отправлена!'),'success');
+      return true;
+    } else {
+      showToast('❌ Ошибка Telegram','error');
+      return false;
+    }
+  }catch(e){
+    showToast('❌ Сеть','error');
+    return false;
+  }
 }
 
-// Avtomatik kunlik xisobot yuborish (23:30 da)
-setInterval(() => {
+// Avtomatik kunlik xisobot yuborish (har kuni kechki 22:00 da)
+async function checkAutoDailySummary() {
+  if (!isOrdersLoaded || !state.orders) return;
   const d = new Date();
-  if (d.getHours() === 23 && d.getMinutes() === 30) {
+  const targetTime = (state.settings && state.settings.tgSummaryTime) ? state.settings.tgSummaryTime : '22:00';
+  const parts = targetTime.split(':').map(Number);
+  const targetHour = isNaN(parts[0]) ? 22 : parts[0];
+  const targetMinute = isNaN(parts[1]) ? 0 : parts[1];
+  
+  const currentMinutes = d.getHours() * 60 + d.getMinutes();
+  const targetMinutes = targetHour * 60 + targetMinute;
+  
+  // Agar belgilangan vaqtdan (masalan 22:00) o'tgan bo'lsa va bugun yuborilmagan bo'lsa
+  if (currentMinutes >= targetMinutes) {
     const todayStr = d.toDateString();
     if (localStorage.getItem('lastAutoSummary') !== todayStr) {
       localStorage.setItem('lastAutoSummary', todayStr);
-      sendDaySummary();
+      const ok = await sendDaySummary();
+      if (!ok) {
+        localStorage.removeItem('lastAutoSummary');
+      }
     }
   }
-}, 60000);
+}
+
+// Har 30 sekundda tekshirib turadi
+setInterval(checkAutoDailySummary, 30000);
 
 // ORDERS LIST
 function renderOrdersList(filterText='',dateFilter=state.dateFilter){
@@ -1288,9 +1322,22 @@ function deleteAgent(id){
 }
 
 // SETTINGS
-function loadSettings(){const s=state.settings;if(s.tgToken)document.getElementById('tgToken').value=s.tgToken;if(s.tgChatId)document.getElementById('tgChatId').value=s.tgChatId;}
+function loadSettings(){
+  const s=state.settings;
+  if(s.tgToken)document.getElementById('tgToken').value=s.tgToken;
+  if(s.tgChatId)document.getElementById('tgChatId').value=s.tgChatId;
+  const timeEl = document.getElementById('tgSummaryTime');
+  if(timeEl) timeEl.value = s.tgSummaryTime || '22:00';
+}
 
-function saveSettings(){state.settings.tgToken=document.getElementById('tgToken').value.trim();state.settings.tgChatId=document.getElementById('tgChatId').value.trim();db.collection('settings').doc('main').set(state.settings);showToast('✅ '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');}
+function saveSettings(){
+  state.settings.tgToken=document.getElementById('tgToken').value.trim();
+  state.settings.tgChatId=document.getElementById('tgChatId').value.trim();
+  const timeEl = document.getElementById('tgSummaryTime');
+  if(timeEl) state.settings.tgSummaryTime = timeEl.value || '22:00';
+  db.collection('settings').doc('main').set(state.settings);
+  showToast('✅ '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');
+}
 async function testTelegram(){saveSettings();const{tgToken,tgChatId}=state.settings;if(!tgToken||!tgChatId){showToast('⚠️','error');return;}try{const r=await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:'🥗 <b>СалатПро</b> – тест ✅',parse_mode:'HTML'})});if((await r.json()).ok)showToast('✅ Telegram OK!','success');else showToast('❌','error');}catch(e){showToast('❌','error');}}
 
 

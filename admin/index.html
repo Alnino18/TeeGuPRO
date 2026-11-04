@@ -263,6 +263,10 @@
       <div class="settings-label">Chat ID</div>
       <input class="form-input" type="text" id="tgChatId" placeholder="-1001234567890">
     </div>
+    <div class="settings-item">
+      <div class="settings-label"><span class="t" data-ru="Время авто-отчёта" data-uz="Avto-hisobot vaqti">Время авто-отчёта</span></div>
+      <input class="form-input" type="time" id="tgSummaryTime" value="22:00">
+    </div>
     <button class="btn btn-primary" onclick="saveSettings()" style="margin-top:8px">💾 <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
     <button class="btn btn-outline" style="margin-top:8px" onclick="testTelegram()">🧪 Тест Telegram</button>
   </div>
@@ -587,7 +591,7 @@
   </div>
 </div>
 
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=3"></script>
 
 </body>
 </html>

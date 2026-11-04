@@ -1,0 +1,23 @@
+name: Daily Telegram Report
+
+on:
+  schedule:
+    # Har kuni Toshkent vaqti bilan kechki 22:00 da (UTC 17:00 da)
+    - cron: '0 17 * * *'
+  workflow_dispatch: # GitHub orqali qo'lda ham istalgan payt ishga tushirish imkoniyati
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kodni yuklab olish
+        uses: actions/checkout@v4
+
+      - name: Node.js o'rnatish
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Kunlik hisobotni Telegramga yuborish
+        run: node scripts/send-daily-report.js
+
