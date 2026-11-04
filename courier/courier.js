@@ -11,9 +11,12 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
 let allCouriers = [];
+let allClientsMap = {};
 let myOrders = [];
 let loggedCourierName = localStorage.getItem('courierAuth') || null;
+let routeSummary = null;
 
+// Listen to couriers
 db.collection('couriers').onSnapshot(snap => {
   allCouriers = snap.docs.map(d => d.data());
   const select = document.getElementById('courierSelect');
@@ -21,7 +24,15 @@ db.collection('couriers').onSnapshot(snap => {
     select.innerHTML = '<option value="">-- Tanlang --</option>' + allCouriers.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
   }
 }, err => {
-  alert("Firebase xatosi: " + err.message + "\nIltimos, Firebase Rules'da couriers uchun ruxsat borligini tekshiring.");
+  alert("Firebase xatosi: " + err.message);
+});
+
+// Listen to clients for coordinates fallback
+db.collection('clients').onSnapshot(snap => {
+  snap.docs.forEach(d => {
+    allClientsMap[d.id] = d.data();
+  });
+  if (myOrders.length) renderOrders();
 });
 
 function init() {
@@ -68,6 +79,7 @@ function login() {
 function logout() {
   localStorage.removeItem('courierAuth');
   loggedCourierName = null;
+  routeSummary = null;
   showLoginScreen();
 }
 
@@ -79,31 +91,160 @@ function startOrdersListener() {
     .where('status', '==', 'delivering')
     .onSnapshot(snap => {
       myOrders = snap.docs.map(d => d.data()).sort((a,b) => new Date(b.date) - new Date(a.date));
+      routeSummary = null;
       renderOrders();
     });
 }
 
+function getOrderCoords(o) {
+  if (o.lat && o.lng) return { lat: parseFloat(o.lat), lng: parseFloat(o.lng) };
+  const c = allClientsMap[o.clientId];
+  if (c && c.lat && c.lng) return { lat: parseFloat(c.lat), lng: parseFloat(c.lng) };
+  return null;
+}
+
+function calcDistKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon/2) * Math.sin(dLon/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// 🗺️ AQLLI MARSHRUT (TSP NEAREST NEIGHBOR)
+function optimizeCourierRoute() {
+  if (!myOrders.length) {
+    showToast("Yetkaziladigan buyurtmalar yo'q", 'info');
+    return;
+  }
+  showToast("📍 Joylashuv aniqlanmoqda...", 'info');
+
+  const runTSP = (startLat, startLng) => {
+    const withCoords = [];
+    const withoutCoords = [];
+
+    myOrders.forEach(o => {
+      const coords = getOrderCoords(o);
+      if (coords) {
+        withCoords.push({ ...o, _coords: coords });
+      } else {
+        withoutCoords.push(o);
+      }
+    });
+
+    if (!withCoords.length) {
+      showToast("Buyurtmalarda koordinata topilmadi", 'error');
+      return;
+    }
+
+    let current = { lat: startLat, lng: startLng };
+    let remaining = [...withCoords];
+    const sorted = [];
+    let totalDistance = 0;
+
+    while (remaining.length > 0) {
+      let bestIdx = 0;
+      let minD = Infinity;
+      for (let i = 0; i < remaining.length; i++) {
+        const d = calcDistKm(current.lat, current.lng, remaining[i]._coords.lat, remaining[i]._coords.lng);
+        if (d < minD) {
+          minD = d;
+          bestIdx = i;
+        }
+      }
+      const next = remaining.splice(bestIdx, 1)[0];
+      next.stepNum = sorted.length + 1;
+      next.distKm = Math.round(minD * 10) / 10;
+      totalDistance += minD;
+      current = next._coords;
+      sorted.push(next);
+    }
+
+    myOrders = [...sorted, ...withoutCoords];
+
+    const points = [`${startLat.toFixed(6)},${startLng.toFixed(6)}`, ...sorted.map(s => `${s._coords.lat},${s._coords.lng}`)];
+    const yandexMultiUrl = `https://yandex.ru/maps/?rtext=${points.join('~')}&rtt=auto`;
+
+    routeSummary = {
+      totalKm: Math.round(totalDistance * 10) / 10,
+      count: sorted.length,
+      yandexUrl: yandexMultiUrl
+    };
+
+    showToast(`✅ Marshrut tuzildi: ~${routeSummary.totalKm} km!`, 'success');
+    renderOrders();
+  };
+
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      pos => runTSP(pos.coords.latitude, pos.coords.longitude),
+      err => {
+        console.warn("GPS ruxsat berilmadi, standart markazdan boshlanadi:", err.message);
+        runTSP(41.2995, 69.2401);
+      },
+      { timeout: 7000 }
+    );
+  } else {
+    runTSP(41.2995, 69.2401);
+  }
+}
+
 function renderOrders() {
   const container = document.getElementById('ordersList');
+  const summaryBox = document.getElementById('routeSummaryBox');
+
   if(!myOrders.length) {
+    if (summaryBox) summaryBox.innerHTML = '';
     container.innerHTML = `<div style="text-align:center; padding:40px; color:var(--text2)">
       <div style="font-size:40px; margin-bottom:10px;">🎉</div>
       Sizda hozircha buyurtmalar yo'q. Dam oling!
     </div>`;
     return;
   }
-  
+
+  if (summaryBox) {
+    if (routeSummary) {
+      summaryBox.innerHTML = `
+        <div style="background:linear-gradient(135deg,rgba(124,106,247,0.18),rgba(86,212,160,0.15));border:1px solid var(--accent);border-radius:14px;padding:14px;margin-bottom:14px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span style="font-weight:800;font-size:14px;">🧭 Optimal ketma-ketlik</span>
+            <span style="font-weight:900;color:var(--green);font-size:15px;">~${routeSummary.totalKm} km</span>
+          </div>
+          <div style="font-size:12px;color:var(--text2);margin-bottom:10px;">
+            ${routeSummary.count} ta do'kon eng qisqa yo'l bo'yicha saralandi.
+          </div>
+          <a href="${routeSummary.yandexUrl}" target="_blank" class="btn btn-primary" style="padding:11px;text-decoration:none;font-size:13px;">
+            🚀 Barcha marshrutni Yandex Xaritalarda ochish
+          </a>
+        </div>`;
+    } else {
+      summaryBox.innerHTML = '';
+    }
+  }
+
   container.innerHTML = myOrders.map(o => {
     const d = new Date(o.date);
     const dateStr = d.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
+    const coords = getOrderCoords(o);
     
     let mapBtn = '';
-    if (o.lat && o.lng) {
-      mapBtn = `<a href="https://yandex.ru/maps/?rtext=~${o.lat},${o.lng}" target="_blank" class="btn btn-outline" style="padding:10px; flex:1">📍 Xaritada ochish</a>`;
+    if (coords) {
+      mapBtn = `<a href="https://yandex.ru/maps/?rtext=~${coords.lat},${coords.lng}" target="_blank" class="btn btn-outline" style="padding:10px; flex:1">📍 Xaritada ochish</a>`;
+    }
+    
+    let stepBadge = '';
+    if (o.stepNum) {
+      const distText = o.distKm < 1 ? Math.round(o.distKm * 1000) + ' metr' : o.distKm + ' km';
+      stepBadge = `<div style="background:linear-gradient(135deg,var(--accent),#9b8bf7);color:white;font-weight:800;font-size:12px;padding:4px 10px;border-radius:8px;display:inline-flex;align-items:center;gap:4px;margin-bottom:8px;">
+        📍 ${o.stepNum}-manzil (${distText})
+      </div>`;
     }
     
     return `
-      <div class="order-card">
+      <div class="order-card" style="${o.stepNum ? 'border-color:rgba(124,106,247,0.4);' : ''}">
+        ${stepBadge}
         <div class="order-header">
           <div class="order-id">#${o.id.toString().slice(-4)}</div>
           <div class="order-date">${dateStr}</div>
@@ -113,14 +254,14 @@ function renderOrders() {
         <div class="order-address">📍 ${o.address || 'Manzil kiritilmagan'}</div>
         
         <div class="order-items">
-          ${o.items.map(i => `<div>${i.emoji} ${i.name} — ${i.qty}${i.unit||'kg'}</div>`).join('')}
+          ${(o.items || []).map(i => `<div>${i.emoji || '🥗'} ${i.name} — <b>${i.qty}${i.unit||'kg'}</b></div>`).join('')}
         </div>
         
         ${o.note ? `<div style="font-size:12px; color:var(--text2); margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.2); border-radius:8px;">📝 Izoh: ${o.note}</div>` : ''}
         
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
           <div style="font-size:12px; color:var(--text2)">To'lov usuli: <br><b style="color:white">${o.payment}</b></div>
-          <div class="order-total">${o.total.toLocaleString('ru-RU')} so'm</div>
+          <div class="order-total">${(o.total || 0).toLocaleString('ru-RU')} so'm</div>
         </div>
         
         <div style="display:flex; gap:8px;">

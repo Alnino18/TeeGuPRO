@@ -549,6 +549,7 @@ function renderOrdersList(filterText='',dateFilter=state.dateFilter){
         <button class="btn btn-outline btn-sm" onclick="openEditOrderModal(${o.id})">✏️</button>
         <button class="btn btn-outline btn-sm" onclick="copyOrder(${o.id})" title="${lang==='uz'?'Nusxa':'Копировать'}">📋</button>
         <button class="btn btn-outline btn-sm" onclick="printInvoice(${o.id})">🖨️</button>
+        <button class="btn btn-outline btn-sm" onclick="openLabelModal(${o.id})" title="${lang==='uz'?'Qadoq yorlig\'i (Etiketka)':'Печать этикеток'}">🏷️</button>
         <button class="btn btn-outline btn-sm" onclick="resendOrderById(${o.id})">📤</button>
         <button class="btn btn-danger btn-sm" onclick="deleteOrder(${o.id})">🗑</button>
       </div>
@@ -658,6 +659,9 @@ function showOrderDetail(id){
         <span>+${fmt(orderProfit)} so'm (${orderMarginPct}%)</span>
       </div>
     </div>
+    <button class="btn btn-outline" style="width:100%;margin-top:10px;padding:10px;font-weight:700;border-color:var(--accent);color:var(--accent);" onclick="openLabelModal(${o.id})">
+      🏷️ ${lang==='uz'?'Qadoq yorliqlarini chop etish (Termo-etiketka)':'Печать этикеток на упаковку'}
+    </button>
     <div style="font-size:13px;color:var(--text2);line-height:2">
       ${pi[o.payment]||'💳'} <b>${o.payment}</b> · 📅 ${d.toLocaleDateString('ru-RU')} ${d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}
       ${o.phone?`<br>📞 ${o.phone}`:''}${o.note?`<br>📝 ${o.note}`:''}
@@ -818,7 +822,7 @@ function renderDelivery(){
   if(!total){list.innerHTML=`<div class="empty"><div class="empty-icon">🚚</div><div class="empty-text">${T[lang].noOrders}</div></div>`;return;}
   list.innerHTML=todayOrders.map((o,i)=>`
     <div class="delivery-item ${o.delivered?'done':''}" id="ditem-${o.id}">
-      ${o.delivered?'<div class="delivery-check">✅</div>':`<div class="delivery-num">${i+1}</div>`}
+      ${o.delivered?'<div class="delivery-check">✅</div>':`<div class="delivery-num">${o.stepNum || (i+1)}</div>`}
       <div class="delivery-info">
         <div class="delivery-client">${o.client}</div>
         <div class="delivery-details">${o.items.map(i=>`${i.emoji}${i.qty}${i.unit||'кг'}`).join(' ')} · ${fmt(o.total)} so'm</div>
@@ -847,6 +851,7 @@ function populateClientSelect(){
   if(cur)sel.value=cur;
 }
 function renderClientsList(filterText=''){
+  if (typeof renderChurnRadar === 'function') renderChurnRadar();
   const list=document.getElementById('clientsList');
   let clients=state.clients;
   if(filterText)clients=clients.filter(c=>c.name.toLowerCase().includes(filterText.toLowerCase()));
@@ -2300,4 +2305,404 @@ function toggleVoiceInput() {
     isAiRecording = false;
     if (micBtn) micBtn.classList.remove('recording');
   }
+}
+
+// ==================== 1. THERMAL LABEL & BARCODE GENERATOR ====================
+function generateBarcodeSVG(text) {
+  const code39 = {
+    '0':'101001101101','1':'110100101011','2':'101100101011','3':'110110010101',
+    '4':'101001101011','5':'110100110101','6':'101100110101','7':'101001011011',
+    '8':'110100101101','9':'101100101101','A':'110101001011','B':'101101001011',
+    'C':'110110100101','D':'101011001011','E':'110101100101','F':'101101100101',
+    'G':'101010011011','H':'110101001101','I':'101101001101','J':'101011001101',
+    'K':'110101010011','L':'101101010011','M':'110110101001','N':'101011010011',
+    'O':'110101101001','P':'101101101001','Q':'101010110011','R':'110101011001',
+    'S':'101101011001','T':'101011011001','U':'110010101011','V':'100110101011',
+    'W':'110011010101','X':'100101101011','Y':'110010110101','Z':'100110110101',
+    '-':'100101011011','.':'110010101101',' ':'100110101101','*':'100101101101'
+  };
+  const clean = '*' + String(text).toUpperCase().replace(/[^0-9A-Z\-\.]/g, '') + '*';
+  let binary = '';
+  for (let char of clean) {
+    binary += (code39[char] || code39['-']) + '0';
+  }
+  const barWidth = 1.35;
+  const height = 34;
+  const width = Math.round(binary.length * barWidth);
+  let rects = '';
+  for (let i = 0; i < binary.length; i++) {
+    if (binary[i] === '1') {
+      rects += `<rect x="${(i * barWidth).toFixed(1)}" y="0" width="${barWidth.toFixed(1)}" height="${height}" fill="#000" />`;
+    }
+  }
+  return `<svg viewBox="0 0 ${width} ${height + 13}" style="width:100%;max-width:200px;height:auto;display:block;margin:0 auto;">
+    ${rects}
+    <text x="${width/2}" y="${height + 10}" font-family="monospace" font-size="10" font-weight="700" text-anchor="middle" fill="#000">${clean.replace(/\*/g,'')}</text>
+  </svg>`;
+}
+
+let currentLabelOrder = null;
+let currentLabelCounts = {};
+
+function openLabelModal(orderId) {
+  const o = (state.orders || []).find(x => x.id == orderId);
+  if (!o) return;
+  currentLabelOrder = o;
+  currentLabelCounts = {};
+
+  (o.items || []).forEach(item => {
+    currentLabelCounts[item.id] = (item.qty && item.qty >= 10) ? Math.ceil(item.qty / 5) : 1;
+  });
+
+  renderLabelModalContent();
+  openModal('labelModal');
+}
+
+function updateLabelItemCount(itemId, delta) {
+  if (currentLabelCounts[itemId] !== undefined) {
+    currentLabelCounts[itemId] = Math.max(0, currentLabelCounts[itemId] + delta);
+    renderLabelModalContent();
+  }
+}
+
+function renderLabelModalContent() {
+  if (!currentLabelOrder) return;
+  const o = currentLabelOrder;
+  const selector = document.getElementById('labelItemsSelector');
+  const preview = document.getElementById('labelPreviewArea');
+  if (!selector || !preview) return;
+
+  selector.innerHTML = (o.items || []).map(item => {
+    const count = currentLabelCounts[item.id] || 0;
+    const name = lang === 'uz' ? (item.nameUz || item.name) : item.name;
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px 12px;margin-bottom:6px;">
+        <div>
+          <div style="font-weight:700;font-size:13px;">${item.emoji || '🥗'} ${name}</div>
+          <div style="font-size:11px;color:var(--text3);">${lang==='uz'?'Jami vazn':'Общий вес'}: <b>${item.qty}${item.unit||'kg'}</b></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="btn btn-outline btn-sm" style="width:30px;height:30px;padding:0;font-size:16px;" onclick="updateLabelItemCount('${item.id}', -1)">−</button>
+          <span style="font-weight:800;font-size:14px;min-width:24px;text-align:center;">${count}</span>
+          <button class="btn btn-outline btn-sm" style="width:30px;height:30px;padding:0;font-size:16px;" onclick="updateLabelItemCount('${item.id}', 1)">+</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  const now = new Date(o.date || new Date());
+  const dateStr = now.toLocaleDateString('ru-RU') + ' ' + now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const orderNum = 'INV-' + String(o.id).slice(-4);
+
+  const labelsHtml = [];
+  (o.items || []).forEach(item => {
+    const count = currentLabelCounts[item.id] || 0;
+    if (count <= 0) return;
+    const singleWeight = Math.round((item.qty / count) * 10) / 10;
+    const pName = (item.name || '').toUpperCase();
+    const pNameUz = (item.nameUz || '').toUpperCase();
+    const barcodeCode = 'TG' + String(o.id).slice(-4) + '-' + (item.id || 'P').toUpperCase().slice(0, 6);
+    const barcodeSvg = generateBarcodeSVG(barcodeCode);
+
+    for (let c = 1; c <= count; c++) {
+      labelsHtml.push(`
+        <div class="thermal-label">
+          <div class="label-header">
+            <span class="label-brand">🥗 TeeGu.PRO</span>
+            <span class="label-badge">${lang === 'uz' ? 'TABIIY SALAT' : 'САЛАТЫ'}</span>
+          </div>
+          <div class="label-product">${pName}</div>
+          ${pNameUz && pNameUz !== pName ? `<div class="label-product-uz">${pNameUz}</div>` : ''}
+          <div class="label-weight-row">
+            <span class="label-weight">${singleWeight} ${item.unit || 'kg'}</span>
+            <span class="label-order">#${orderNum} ${count > 1 ? `(${c}/${count})` : ''}</span>
+          </div>
+          <div class="label-info">👤 <b>${lang === 'uz' ? 'Do\'kon' : 'Клиент'}:</b> ${o.client}</div>
+          <div class="label-info">📅 <b>${lang === 'uz' ? 'Sana' : 'Дата'}:</b> ${dateStr}</div>
+          <div class="label-info">⏱️ <b>${lang === 'uz' ? 'Yaroqlilik' : 'Срок годности'}:</b> 72 ${lang === 'uz' ? 'soat' : 'часа'} (+2°...+6°C)</div>
+          <div class="label-barcode-wrap">
+            ${barcodeSvg}
+          </div>
+          <div class="label-footer">Sertifikatlangan mahsulot · TeeGu.PRO</div>
+        </div>
+      `);
+    }
+  });
+
+  if (!labelsHtml.length) {
+    preview.innerHTML = `<div style="text-align:center;padding:20px;font-size:12px;color:var(--text3);">
+      ${lang === 'uz' ? 'Birorta ham yorliq tanlanmadi (+ tugmasini bosing)' : 'Выберите хотя бы одну этикетку (+)'}
+    </div>`;
+  } else {
+    preview.innerHTML = labelsHtml.join('');
+  }
+}
+
+function printGeneratedLabels() {
+  const preview = document.getElementById('labelPreviewArea');
+  if (!preview || !preview.innerHTML.trim()) {
+    showToast(lang === 'uz' ? 'Chop etish uchun yorliqlar yo\'q' : 'Нет этикеток для печати', 'error');
+    return;
+  }
+  const printArea = document.getElementById('print-area');
+  if (!printArea) return;
+
+  printArea.innerHTML = preview.innerHTML;
+  window.print();
+  closeModal('labelModal');
+  showToast(lang === 'uz' ? '🖨️ Chop etishga yuborildi' : '🖨️ Отправлено на печать', 'success');
+}
+
+// ==================== 2. CHURN RISK RADAR ====================
+let currentRadarFilter = 'all';
+
+function getClientRiskStatus(client) {
+  const orders = (state.orders || []).filter(o => o.clientId == client.id);
+  if (!orders.length) {
+    return {
+      level: 'none',
+      badge: lang === 'uz' ? 'Yangi mijoz' : 'Новый клиент',
+      desc: '',
+      daysSince: null,
+      avgInterval: null,
+      ordersCount: 0,
+      monthlyRisk: 0
+    };
+  }
+
+  const sorted = [...orders].sort((a,b) => new Date(b.date) - new Date(a.date));
+  const now = new Date();
+  const lastOrderDate = new Date(sorted[0].date);
+  const daysSince = Math.max(0, Math.floor((now - lastOrderDate) / (1000 * 60 * 60 * 24)));
+
+  let avgInterval = 3;
+  if (sorted.length >= 2) {
+    const oldest = new Date(sorted[sorted.length - 1].date);
+    const spanDays = Math.max(1, Math.floor((lastOrderDate - oldest) / (1000 * 60 * 60 * 24)));
+    avgInterval = Math.max(1, Math.round(spanDays / (sorted.length - 1)));
+  }
+
+  const avgOrderTotal = Math.round(orders.reduce((s,o)=>s+(o.total||0),0) / orders.length);
+  const monthlyRisk = Math.round(avgOrderTotal * (30 / avgInterval));
+
+  if (daysSince >= 14 || (sorted.length >= 2 && daysSince >= avgInterval * 2.8)) {
+    return {
+      level: 'critical',
+      badge: lang === 'uz' ? '🔴 Kritik' : '🔴 Критический',
+      desc: lang === 'uz' ? `Odatda har ${avgInterval} kunda · ${daysSince} kundan beri buyurtma yo'q!` : `Обычно каждые ${avgInterval} дн. · Нет заказов ${daysSince} дн.!`,
+      daysSince,
+      avgInterval,
+      ordersCount: orders.length,
+      monthlyRisk
+    };
+  } else if (daysSince >= 6 || (sorted.length >= 2 && daysSince >= avgInterval * 1.6)) {
+    return {
+      level: 'warning',
+      badge: lang === 'uz' ? '🟡 Ogohlantirish' : '🟡 Внимание',
+      desc: lang === 'uz' ? `Odatda har ${avgInterval} kunda · ${daysSince} kundan beri buyurtma yo'q` : `Обычно каждые ${avgInterval} дн. · Задержка ${daysSince} дн.`,
+      daysSince,
+      avgInterval,
+      ordersCount: orders.length,
+      monthlyRisk
+    };
+  } else {
+    return {
+      level: 'active',
+      badge: lang === 'uz' ? '🟢 Faol' : '🟢 Активен',
+      desc: '',
+      daysSince,
+      avgInterval,
+      ordersCount: orders.length,
+      monthlyRisk: 0
+    };
+  }
+}
+
+function filterRadarLevel(level, btnEl) {
+  currentRadarFilter = level;
+  document.querySelectorAll('#churnRadarCard .pill').forEach(p => p.classList.remove('selected'));
+  if (btnEl) btnEl.classList.add('selected');
+  renderChurnRadar(level);
+}
+
+function renderChurnRadar(levelFilter = currentRadarFilter) {
+  const container = document.getElementById('radarClientsList');
+  if (!container) return;
+
+  const clientsWithRisk = (state.clients || []).map(c => ({
+    client: c,
+    risk: getClientRiskStatus(c)
+  })).filter(x => x.risk.level === 'critical' || x.risk.level === 'warning');
+
+  clientsWithRisk.sort((a,b) => {
+    if (a.risk.level === 'critical' && b.risk.level !== 'critical') return -1;
+    if (b.risk.level === 'critical' && a.risk.level !== 'critical') return 1;
+    return b.risk.monthlyRisk - a.risk.monthlyRisk;
+  });
+
+  const critCount = clientsWithRisk.filter(x => x.risk.level === 'critical').length;
+  const warnCount = clientsWithRisk.filter(x => x.risk.level === 'warning').length;
+  const totalRisk = clientsWithRisk.length;
+
+  const countAllEl = document.getElementById('radarCountAll');
+  const countCritEl = document.getElementById('radarCountCrit');
+  const countWarnEl = document.getElementById('radarCountWarn');
+  const totalBadge = document.getElementById('radarTotalRiskCount');
+
+  if (countAllEl) countAllEl.textContent = totalRisk;
+  if (countCritEl) countCritEl.textContent = critCount;
+  if (countWarnEl) countWarnEl.textContent = warnCount;
+  if (totalBadge) totalBadge.textContent = totalRisk + (lang === 'uz' ? " ta do'kon xavfda" : ' магазинов');
+
+  let filtered = clientsWithRisk;
+  if (levelFilter === 'critical') filtered = clientsWithRisk.filter(x => x.risk.level === 'critical');
+  else if (levelFilter === 'warning') filtered = clientsWithRisk.filter(x => x.risk.level === 'warning');
+
+  if (!filtered.length) {
+    container.innerHTML = `<div style="text-align:center;padding:12px;font-size:13px;color:var(--text3);">
+      🎉 ${lang === 'uz' ? 'Hozircha xavf ostidagi mijozlar yo\'q. Barcha do\'konlar o\'z vaqtida buyurtma bermoqda!' : 'Клиентов в зоне риска нет! Все заказывают вовремя.'}
+    </div>`;
+    return;
+  }
+
+  container.innerHTML = filtered.slice(0, 10).map(({ client: c, risk: r }) => {
+    const isCrit = r.level === 'critical';
+    const borderClr = isCrit ? 'rgba(247,90,90,0.3)' : 'rgba(255,152,0,0.3)';
+    const bgClr = isCrit ? 'rgba(247,90,90,0.06)' : 'rgba(255,152,0,0.06)';
+    const tgLink = c.phone ? `https://t.me/+${c.phone.replace(/\D/g, '')}` : '';
+
+    return `
+      <div class="radar-item" style="border-color:${borderClr};background:${bgClr};flex-wrap:wrap;">
+        <div style="flex:1;min-width:180px;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
+            <span style="font-weight:800;font-size:14px;">${c.name}</span>
+            <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px;background:${isCrit?'rgba(247,90,90,0.2)':'rgba(255,152,0,0.2)'};color:${isCrit?'var(--danger)':'var(--orange)'};">${r.badge}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text2);margin-bottom:2px;">${r.desc}</div>
+          <div style="font-size:11px;color:var(--text3);">
+            ${lang === 'uz' ? 'Xavf ostidagi oylik aylanma:' : 'Риск оборота:'} <b style="color:${isCrit?'var(--danger)':'var(--orange)'}">~${fmt(r.monthlyRisk)} so'm/oy</b>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          ${c.phone ? `<a href="tel:${c.phone}" class="btn btn-outline btn-sm" style="padding:6px 10px;font-size:12px;" title="${lang==='uz'?'Qo\'ng\'iroq qilish':'Позвонить'}">📞</a>` : ''}
+          ${tgLink ? `<a href="${tgLink}" target="_blank" class="btn btn-outline btn-sm" style="padding:6px 10px;font-size:12px;" title="Telegram">💬</a>` : ''}
+          <button class="btn btn-primary btn-sm" style="padding:6px 12px;font-size:12px;" onclick="quickOrderForClient('${c.id}')">
+            📝 ${lang === 'uz' ? 'Buyurtma' : 'Заказ'}
+          </button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function quickOrderForClient(clientId) {
+  const sel = document.getElementById('clientSelect');
+  if (sel) sel.value = clientId;
+  switchTab('new-order');
+  renderProductsGrid();
+  showToast(lang === 'uz' ? 'Mijoz tanlandi, buyurtma qabul qiling' : 'Клиент выбран для нового заказа', 'info');
+}
+
+// ==================== 3. ADMIN SMART DELIVERY ROUTE ====================
+let adminOptimizedRoute = null;
+
+function optimizeAdminDeliveryRoute() {
+  const today = new Date().toDateString();
+  const todayOrders = (state.orders || []).filter(o => new Date(o.date).toDateString() === today);
+  if (!todayOrders.length) {
+    showToast(lang === 'uz' ? "Bugun yetkaziladigan buyurtmalar yo'q" : 'Нет заказов на сегодня', 'info');
+    return;
+  }
+
+  showToast(lang === 'uz' ? "📍 Optimal marshrut hisoblanmoqda..." : 'Расчёт оптимального маршрута...', 'info');
+
+  const withCoords = [];
+  const withoutCoords = [];
+
+  todayOrders.forEach(o => {
+    let lat = null, lng = null;
+    if (o.lat && o.lng) {
+      lat = parseFloat(o.lat); lng = parseFloat(o.lng);
+    } else {
+      const c = (state.clients || []).find(cl => cl.id == o.clientId);
+      if (c && c.lat && c.lng) {
+        lat = parseFloat(c.lat); lng = parseFloat(c.lng);
+      }
+    }
+    if (lat && lng) {
+      withCoords.push({ ...o, _lat: lat, _lng: lng });
+    } else {
+      withoutCoords.push(o);
+    }
+  });
+
+  if (!withCoords.length) {
+    showToast(lang === 'uz' ? "Mijozlarda xarita koordinatalari topilmadi" : 'У клиентов нет координат на карте', 'error');
+    return;
+  }
+
+  let current = { lat: 41.2995, lng: 69.2401 };
+  let remaining = [...withCoords];
+  const sorted = [];
+  let totalKm = 0;
+
+  function calcDist(lat1, lon1, lat2, lon2) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  while (remaining.length > 0) {
+    let bestIdx = 0;
+    let minD = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const d = calcDist(current.lat, current.lng, remaining[i]._lat, remaining[i]._lng);
+      if (d < minD) {
+        minD = d;
+        bestIdx = i;
+      }
+    }
+    const next = remaining.splice(bestIdx, 1)[0];
+    next.stepNum = sorted.length + 1;
+    next.distKm = Math.round(minD * 10) / 10;
+    totalKm += minD;
+    current = { lat: next._lat, lng: next._lng };
+    sorted.push(next);
+  }
+
+  const yandexPoints = [
+    '41.2995,69.2401',
+    ...sorted.map(s => `${s._lat},${s._lng}`)
+  ];
+  const yandexUrl = `https://yandex.ru/maps/?rtext=${yandexPoints.join('~')}&rtt=auto`;
+
+  adminOptimizedRoute = {
+    totalKm: Math.round(totalKm * 10) / 10,
+    count: sorted.length,
+    yandexUrl,
+    sortedOrders: [...sorted, ...withoutCoords]
+  };
+
+  const sumBox = document.getElementById('adminRouteSummaryBox');
+  if (sumBox) {
+    sumBox.innerHTML = `
+      <div style="background:linear-gradient(135deg,rgba(124,106,247,0.15),rgba(86,212,160,0.12));border:1px solid var(--accent);border-radius:12px;padding:12px;margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <span style="font-weight:800;font-size:14px;">🧭 ${lang === 'uz' ? 'Optimal ketma-ketlik' : 'Оптимальный маршрут'}</span>
+          <span style="font-weight:900;color:var(--green);font-size:15px;">~${adminOptimizedRoute.totalKm} km</span>
+        </div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">
+          ${adminOptimizedRoute.count} ${lang === 'uz' ? 'ta manzil eng qisqa yo\'l bo\'yicha saralandi.' : 'адресов упорядочены по кратчайшему расстоянию.'}
+        </div>
+        <a href="${adminOptimizedRoute.yandexUrl}" target="_blank" class="btn btn-primary btn-sm" style="padding:10px;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:6px;">
+          🚀 ${lang === 'uz' ? 'Barcha marshrutni Yandex Xaritalarda ochish' : 'Открыть весь маршрут в Яндекс Картах'}
+        </a>
+      </div>
+    `;
+  }
+
+  renderDelivery(adminOptimizedRoute.sortedOrders);
+  showToast(lang === 'uz' ? `✅ Marshrut tayyor: ~${adminOptimizedRoute.totalKm} km` : `✅ Маршрут готов: ~${adminOptimizedRoute.totalKm} км`, 'success');
 }

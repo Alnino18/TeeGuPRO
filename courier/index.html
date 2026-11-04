@@ -89,15 +89,23 @@
       <div class="header-title">🛵 <span id="courierNameDisplay"></span></div>
       <button onclick="logout()" style="background:transparent;border:none;color:var(--danger);font-weight:700;font-size:14px;cursor:pointer">Chiqish</button>
     </div>
-    <div class="container" id="ordersList">
-      <div style="text-align:center; padding:40px; color:var(--text2)">
-        Barcha ma'lumotlar yuklanmoqda...
+        <div class="container">
+      <div style="margin-bottom:14px;">
+        <button class="btn btn-primary" onclick="optimizeCourierRoute()" style="gap:8px;box-shadow:0 4px 15px rgba(124,106,247,0.4);">
+          🧭 Aqlli Marshrut (Eng qisqa yo'l)
+        </button>
+      </div>
+      <div id="routeSummaryBox"></div>
+      <div id="ordersList">
+        <div style="text-align:center; padding:40px; color:var(--text2)">
+          Barcha ma'lumotlar yuklanmoqda...
+        </div>
       </div>
     </div>
   </div>
   
   <div id="toast" class="toast"></div>
 
-  <script src="courier.js?v=2"></script>
+  <script src="courier.js?v=3"></script>
 </body>
 </html>
