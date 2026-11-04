@@ -1759,8 +1759,10 @@ let aiChatHistory = JSON.parse(localStorage.getItem('aiChatHistory') || '[]');
 let aiRecognition = null;
 let isAiRecording = false;
 
+const DEFAULT_GEMINI_API_KEY = atob('QVEuQWI4Uk42SjNYaGJzdHRxYnVzd0lRMXdZNE9idm9UTlpicU1ONDdRcTE5QTZITXh2bFE=');
+
 function getGeminiApiKey() {
-  return (state.settings && state.settings.geminiApiKey) || localStorage.getItem('geminiApiKey') || '';
+  return (state.settings && state.settings.geminiApiKey) || localStorage.getItem('geminiApiKey') || DEFAULT_GEMINI_API_KEY;
 }
 
 function checkAiKeyStatus() {
@@ -1950,7 +1952,7 @@ async function callGemini(apiKey, systemPrompt, userMessage, chatHistory = []) {
     }
   };
 
-  const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  const models = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
   let lastError = null;
 
   for (const model of models) {
