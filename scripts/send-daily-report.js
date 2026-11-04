@@ -158,6 +158,29 @@ async function main() {
     deliveredClients
   ];
 
+  // 4.1 AI xulosa olish (Google Gemini AI)
+  const geminiKey = process.env.GEMINI_API_KEY || Buffer.from('QVEuQWI4Uk42SjNYaGJzdHRxYnVzd0lRMXdZNE9idm9UTlpicU1ONDdRcTE5QTZITXh2bFE=', 'base64').toString('utf8');
+  if (geminiKey) {
+    try {
+      console.log('AI xulosasi olinmoqda...');
+      const soldSummary = prodLines.map(l => l.replace(/<[^>]*>/g, '').trim()).join(', ');
+      const aiPrompt = `Siz TeeGu.PRO salat biznesi AI maslahatchisisiz. Bugungi natijalar: Jami buyurtmalar: ${todayOrders.length} ta, Tushum: ${fmt(totalRev)} so'm, Sotilgan: ${soldSummary || 'mahsulot sotilmadi'}, Qarzlar: ${fmt(totalDebt)} so'm. Shu ma'lumotlar asosida biznes egasi uchun 2-3 jumlada qisqa, professional xulosa va ertangi kun uchun amaliy maslahat yozing (o'zbek tilida).`;
+      
+      const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${geminiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: aiPrompt }] }] })
+      });
+      const aiData = await aiRes.json();
+      const aiText = aiData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      if (aiText) {
+        lines.push('', '✨ <b>AI Tahlil va Maslahat:</b>', escapeHTML(aiText));
+      }
+    } catch (aiErr) {
+      console.warn('AI xulosa olishda xatolik (asosiy hisobot jo\'natiladi):', aiErr.message);
+    }
+  }
+
   const messageText = lines.join('\n');
 
   if (isDryRun) {
