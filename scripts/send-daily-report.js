@@ -146,7 +146,10 @@ async function main() {
   });
   const todayMarginPct = totalRev > 0 ? Math.round((todayProfit / totalRev) * 100) : 0;
 
-  const debts = orders.filter(o => o.payment === 'консигнация' && !o.debtPaid);
+  const debts = orders.filter(o => {
+    const p = (o.payment || '').toLowerCase();
+    return (p === 'консигнация' || p === 'qarz' || p === 'nasiya' || p === 'долг') && !o.debtPaid;
+  });
   const totalDebt = debts.reduce((sum, o) => sum + (o.total || 0) - (o.partialPaid || 0), 0);
 
   const prodTotals = {};

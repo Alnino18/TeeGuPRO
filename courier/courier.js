@@ -88,11 +88,14 @@ function startOrdersListener() {
   
   db.collection('orders')
     .where('courier', '==', loggedCourierName)
-    .where('status', '==', 'delivering')
     .onSnapshot(snap => {
-      myOrders = snap.docs.map(d => d.data()).sort((a,b) => new Date(b.date) - new Date(a.date));
+      myOrders = snap.docs.map(d => d.data())
+        .filter(o => !o.delivered && o.status !== 'done' && o.status !== 'cancelled')
+        .sort((a,b) => new Date(b.date) - new Date(a.date));
       routeSummary = null;
       renderOrders();
+    }, err => {
+      console.error("Courier orders error:", err);
     });
 }
 
@@ -250,8 +253,8 @@ function renderOrders() {
           <div class="order-date">${dateStr}</div>
         </div>
         <div class="order-client">${o.client}</div>
-        <a href="tel:${o.phone}" class="order-phone">📞 ${o.phone}</a>
-        <div class="order-address">📍 ${o.address || 'Manzil kiritilmagan'}</div>
+        ${(o.phone || (allClientsMap[o.clientId]?.phone)) ? `<a href="tel:${o.phone || allClientsMap[o.clientId]?.phone}" class="order-phone">📞 ${o.phone || allClientsMap[o.clientId]?.phone}</a>` : ''}
+        <div class="order-address">📍 ${o.address || (allClientsMap[o.clientId]?.address) || 'Manzil kiritilmagan'}</div>
         
         <div class="order-items">
           ${(o.items || []).map(i => `<div>${i.emoji || '🥗'} ${i.name} — <b>${i.qty}${i.unit||'kg'}</b></div>`).join('')}

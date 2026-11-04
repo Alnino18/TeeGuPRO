@@ -1,4 +1,11 @@
 
+function isDebtOrder(o) {
+  if (!o) return false;
+  const p = (o.payment || '').toLowerCase();
+  return (p === 'консигнация' || p === 'qarz' || p === 'nasiya' || p === 'долг') && !o.debtPaid;
+}
+
+
 // --- AUTHENTICATION LOGIC ---
 const ADMIN_HASH = "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9"; // admin123
 
@@ -402,7 +409,7 @@ async function sendToTelegram(order){
   return(await r.json()).ok;
 }
 function buildTgMsg(order){
-  const pi={'наличные':'💵','клик':'📱','консигнация':'📝'};
+  const pi={'наличные':'💵','клик':'📱','консигнация':'📝','Naqd':'💵','Karta':'📱','Qarz':'📝'};
   const d=new Date(order.date);
   const ds=d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
   let l=[`🥗 <b>НОВЫЙ ЗАКАЗ</b>`,``,`👤 <b>${escapeHTML(order.client)}</b>`];
@@ -509,7 +516,7 @@ function renderOrdersList(filterText='',dateFilter=state.dateFilter){
   const list=document.getElementById('ordersList');
   if(!orders.length){list.innerHTML=`<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">${T[lang].noOrders}</div></div>`;return;}
   const pi={'наличные':'💵','клик':'📱','консигнация':'📝'};
-  const pc={'наличные':'','клик':'click','консигнация':'consign'};
+  const pc={'наличные':'','клик':'click','консигнация':'consign','Naqd':'','Karta':'click','Qarz':'consign'};
   list.innerHTML=orders.map(o=>{
     const d=new Date(o.date);
     const ds=d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
@@ -1741,7 +1748,8 @@ function updateBadges(){
   const pendingDelivery=state.orders.filter(o=>new Date(o.date).toDateString()===today&&!o.delivered).length;
   document.getElementById('deliveryCount').textContent=pendingDelivery||'';
 }
-function resetOrder(){document.getElementById('orderCourier').value='';state.quantities={};state.selectedPayment='наличные';document.getElementById('clientSelect').value='';document.getElementById('clientPhone').value='';document.getElementById('orderNote').value='';document.getElementById('summaryBlock').style.display='none';renderProductsGrid();document.querySelectorAll('.payment-pills .pill').forEach((p,i)=>p.classList.toggle('selected',i===0));}
+function resetOrder(){
+  const oc=document.getElementById('orderCourier');if(oc)oc.value='';document.getElementById('orderCourier').value='';state.quantities={};state.selectedPayment='наличные';document.getElementById('clientSelect').value='';document.getElementById('clientPhone').value='';document.getElementById('orderNote').value='';document.getElementById('summaryBlock').style.display='none';renderProductsGrid();document.querySelectorAll('.payment-pills .pill').forEach((p,i)=>p.classList.toggle('selected',i===0));}
 function showToast(msg,type='info'){const t=document.getElementById('toast');t.textContent=msg;t.className='toast '+type+' show';setTimeout(()=>t.className='toast '+type,3000);}
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}

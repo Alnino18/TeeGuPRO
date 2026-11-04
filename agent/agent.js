@@ -12,7 +12,16 @@ const db = firebase.firestore();
 
 let allAgents = [];
 let myOrders = [];
-let PRODUCTS = [];
+
+const DEFAULT_PRODUCTS = [
+  {id:'funchoza', name:'Фунчоза', nameUz:'Funchoza', price:25000, emoji:'🍜', unit:'kg'},
+  {id:'morkovcha',name:'Морковча', nameUz:'Sabzi', price:25000, emoji:'🥕', unit:'kg'},
+  {id:'sologurc', name:'Сол огурцы', nameUz:'Tuzlangan bodring', price:20000, emoji:'🥒', unit:'kg'},
+  {id:'kapusta', name:'Сладкая капуста', nameUz:'Shirin karam', price:20000, emoji:'🥬', unit:'kg'},
+  {id:'kuksi', name:'Кукси', nameUz:'Kuksi', price:35000, emoji:'🍝', unit:'шт'},
+];
+let PRODUCTS = DEFAULT_PRODUCTS;
+
 let CLIENTS = [];
 let cart = {};
 
@@ -97,7 +106,7 @@ function startListeners() {
   db.collection('clients').onSnapshot(snap => {
     CLIENTS = snap.docs.map(d => d.data());
     const list = document.getElementById('clientList');
-    list.innerHTML = CLIENTS.map(c => `<option value="${c.name} — ${c.phone}"></option>`).join('');
+    list.innerHTML = CLIENTS.map(c => `<option value="${c.name}${c.phone ? ' — ' + c.phone : ''}"></option>`).join('');
   });
   
   // Listen for agent's recent orders
@@ -122,6 +131,41 @@ function switchTab(tab) {
   
   document.getElementById('tab-'+tab).classList.add('active');
   document.getElementById('view-'+tab).style.display = 'block';
+}
+
+
+function onClientSelectChange() {
+  const clientInput = document.getElementById('orderClient').value.trim();
+  const found = CLIENTS.find(c => {
+    const s = c.name + (c.phone ? ' — ' + c.phone : '');
+    return s === clientInput || c.name === clientInput;
+  });
+  if (found) {
+    if (found.address && !document.getElementById('orderAddress').value) {
+      document.getElementById('orderAddress').value = found.address;
+    }
+    if (found.lat && found.lng) {
+      currentLat = parseFloat(found.lat);
+      currentLng = parseFloat(found.lng);
+      document.getElementById('coordDisplay').style.display = 'block';
+      document.getElementById('coordVal').innerText = currentLat.toFixed(5) + ', ' + currentLng.toFixed(5);
+    }
+  }
+  renderProducts();
+}
+
+function getProductPrice(p) {
+  const clientInput = document.getElementById('orderClient')?.value.trim();
+  if (clientInput) {
+    const found = CLIENTS.find(c => {
+      const s = c.name + (c.phone ? ' — ' + c.phone : '');
+      return s === clientInput || c.name === clientInput;
+    });
+    if (found && found.customPrices && found.customPrices[p.id]) {
+      return found.customPrices[p.id];
+    }
+  }
+  return p.price || 0;
 }
 
 function renderProducts() {
@@ -156,7 +200,7 @@ function updateQty(id, sign) {
   
   const p = PRODUCTS.find(x => x.id === id);
   let step = 0.5;
-  if(p && (p.unit === 'sht' || p.unit === 'dona' || p.unit === 'ta')) {
+  if(p && (p.unit === 'sht' || p.unit === 'dona' || p.unit === 'ta' || p.unit === 'шт')) {
     step = 1;
   }
   

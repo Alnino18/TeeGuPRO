@@ -101,7 +101,7 @@
         <div class="order-card">
           <div class="form-group">
             <label class="form-label">Mijozni tanlang yoki yozing</label>
-            <input type="text" id="orderClient" class="form-input" placeholder="Ismi va telefoni" list="clientList">
+            <input type="text" id="orderClient" class="form-input" placeholder="Ismi va telefoni" list="clientList" oninput="onClientSelectChange()" onchange="onClientSelectChange()">
             <datalist id="clientList"></datalist>
           </div>
           
@@ -178,6 +178,6 @@
     </div>
   </div>
 
-  <script src="agent.js?v=2"></script>
+  <script src="agent.js?v=3"></script>
 </body>
 </html>
