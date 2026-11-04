@@ -513,6 +513,8 @@ function renderOrdersList(filterText='',dateFilter=state.dateFilter){
   list.innerHTML=orders.map(o=>{
     const d=new Date(o.date);
     const ds=d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+    const orderProfit = calculateOrderProfit(o);
+    const orderMarginPct = o.total > 0 ? Math.round((orderProfit / o.total) * 100) : 0;
     return`<div class="order-item payment-${pc[o.payment]}">
       <div class="order-top">
         <div>
@@ -536,7 +538,12 @@ function renderOrdersList(filterText='',dateFilter=state.dateFilter){
       </div>
       <div class="order-items">${o.items.map(i=>`${i.emoji} ${lang==='uz'?i.nameUz:i.name}: <b>${i.qty}${i.unit||'кг'}</b>`).join(' · ')}</div>
       ${o.note?`<div style="font-size:12px;color:var(--text3);margin-top:4px">📝 ${o.note}</div>`:''}
-      <div class="order-total">${fmt(o.total)} so'm ${o.payment==='консигнация'&&!o.debtPaid?`<span class="tag orange">${lang==='uz'?'Qarz':'Долг'} ${o.partialPaid?fmt(o.partialPaid)+' to\'landi':''}</span>`:''}</div>
+      <div class="order-total" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:8px;">
+        <div>${fmt(o.total)} so'm ${o.payment==='консигнация'&&!o.debtPaid?`<span class="tag orange">${lang==='uz'?'Qarz':'Долг'} ${o.partialPaid?fmt(o.partialPaid)+' to\'landi':''}</span>`:''}</div>
+        <div style="color:var(--green);font-size:12px;font-weight:700;background:rgba(86,212,160,0.12);border:1px solid rgba(86,212,160,0.25);padding:3px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:4px;">
+          📈 ${lang==='uz'?'Foyda':'Прибыль'}: +${fmt(orderProfit)} so'm <span style="font-size:11px;opacity:0.85">(${orderMarginPct}%)</span>
+        </div>
+      </div>
       <div class="order-actions">
         <button class="btn btn-primary btn-sm" onclick="showOrderDetail(${o.id})">👁</button>
         <button class="btn btn-outline btn-sm" onclick="openEditOrderModal(${o.id})">✏️</button>
@@ -640,10 +647,16 @@ function showOrderDetail(id){
   document.getElementById('detailTitle').textContent='📋 '+o.client;
   const pi={'наличные':'💵','клик':'📱','консигнация':'📝'};
   const d=new Date(o.date);
+  const orderProfit = calculateOrderProfit(o);
+  const orderMarginPct = o.total > 0 ? Math.round((orderProfit / o.total) * 100) : 0;
   document.getElementById('detailContent').innerHTML=`
     <div class="order-summary">
       ${o.items.map(i=>`<div class="summary-row"><span class="summary-name">${i.emoji} ${lang==='uz'?i.nameUz:i.name}</span><span class="summary-qty">${i.qty}${i.unit||'кг'} · ${fmt(i.qty*i.price)} so'm</span></div>`).join('')}
       <div class="total-row"><span class="total-label">${lang==='uz'?'Jami:':'Итого:'}</span><span class="total-amount">${fmt(o.total)} so'm</span></div>
+      <div class="summary-row" style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--border);color:var(--green);font-weight:700">
+        <span>📈 ${lang==='uz'?'Kutilayotgan sof foyda:':'Чистая прибыль:'}</span>
+        <span>+${fmt(orderProfit)} so'm (${orderMarginPct}%)</span>
+      </div>
     </div>
     <div style="font-size:13px;color:var(--text2);line-height:2">
       ${pi[o.payment]||'💳'} <b>${o.payment}</b> · 📅 ${d.toLocaleDateString('ru-RU')} ${d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}
@@ -1151,12 +1164,34 @@ function renderForecast(){
 }
 
 function renderTopClients(){
-  const byC={};state.orders.forEach(o=>{if(!byC[o.clientId])byC[o.clientId]={name:o.client,total:0,count:0};byC[o.clientId].total+=o.total;byC[o.clientId].count++;});
-  const top=Object.values(byC).sort((a,b)=>b.total-a.total).slice(0,5);
+  const byC={};
+  state.orders.forEach(o=>{
+    const cid=o.clientId||o.client;
+    if(!byC[cid])byC[cid]={name:o.client,total:0,count:0,profit:0};
+    byC[cid].total+=(o.total||0);
+    byC[cid].profit+=calculateOrderProfit(o);
+    byC[cid].count++;
+  });
+  const top=Object.values(byC).sort((a,b)=>b.profit-a.profit).slice(0,5);
   const ranks=['🥇','🥈','🥉','4️⃣','5️⃣'];
-  document.getElementById('topClients').innerHTML=!top.length
+  const el=document.getElementById('topClients');
+  if(!el)return;
+  el.innerHTML=!top.length
     ?`<div style="color:var(--text3);font-size:13px">${T[lang].noOrders}</div>`
-    :top.map((c,i)=>`<div class="top-client-row"><div class="top-rank">${ranks[i]}</div><div style="flex:1"><div style="font-weight:700">${c.name}</div><div style="font-size:12px;color:var(--text2)">${c.count} ${lang==='uz'?'buyurtma':'заказов'}</div></div><div style="font-weight:800;color:var(--accent2)">${fmt(c.total)} so'm</div></div>`).join('');
+    :top.map((c,i)=>{
+      const marginPct = c.total > 0 ? Math.round((c.profit / c.total) * 100) : 0;
+      return `<div class="top-client-row">
+        <div class="top-rank">${ranks[i]}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.name}</div>
+          <div style="font-size:11px;color:var(--text2)">${c.count} ${lang==='uz'?'buyurtma':'заказов'} · ${lang==='uz'?'Tushum':'Выручка'}: ${fmt(c.total)} so'm</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-weight:800;color:var(--green);font-size:13px">+${fmt(c.profit)} so'm</div>
+          <div style="font-size:11px;color:var(--text3);font-weight:600">${lang==='uz'?'Sof marja':'Маржа'}: ${marginPct}%</div>
+        </div>
+      </div>`;
+    }).join('');
 }
 
 // ==================== MONTHLY REPORT + SEASONALITY ====================
@@ -1166,27 +1201,36 @@ function renderMonthlyReport(){
   state.orders.forEach(o=>{
     const d=new Date(o.date);
     const key=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
-    if(!months[key])months[key]={label:d.toLocaleDateString(lang==='uz'?'uz-UZ':'ru-RU',{month:'long',year:'numeric'}),rev:0,count:0,debt:0};
-    months[key].rev+=o.total;months[key].count++;
+    if(!months[key])months[key]={label:d.toLocaleDateString(lang==='uz'?'uz-UZ':'ru-RU',{month:'long',year:'numeric'}),rev:0,profit:0,count:0,debt:0};
+    months[key].rev+=(o.total||0);
+    months[key].profit+=calculateOrderProfit(o);
+    months[key].count++;
     if(o.payment==='консигнация'&&!o.debtPaid)months[key].debt+=(o.total-(o.partialPaid||0));
   });
   const entries=Object.entries(months).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,12);
   if(!entries.length){el.innerHTML=`<div style="color:var(--text3);font-size:13px">${T[lang].noOrders}</div>`;return;}
   const maxRev=Math.max(...entries.map(e=>e[1].rev),1);
-  el.innerHTML=entries.map(([key,m])=>`
-    <div style="padding:8px 0;border-bottom:1px solid var(--border)">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-        <div style="font-weight:600;font-size:13px;text-transform:capitalize">${m.label}</div>
+  el.innerHTML=entries.map(([key,m])=>{
+    const marginPct = m.rev > 0 ? Math.round((m.profit / m.rev) * 100) : 0;
+    return `
+    <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+        <div>
+          <div style="font-weight:700;font-size:13px;text-transform:capitalize">${m.label}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px">${m.count} ${lang==='uz'?'buyurtma':'заказов'}${m.debt>0?' · <span style="color:var(--orange)">💰 '+fmt(m.debt)+'</span>':''}</div>
+        </div>
         <div style="text-align:right">
-          <div style="font-weight:800;color:var(--accent2)">${fmt(m.rev)} so'm</div>
-          <div style="font-size:11px;color:var(--text3)">${m.count} ${lang==='uz'?'buyurtma':'заказов'}${m.debt>0?' · <span style="color:var(--orange)">💰'+fmt(m.debt)+'</span>':''}</div>
+          <div style="font-weight:800;color:var(--accent2);font-size:13px">${fmt(m.rev)} so'm</div>
+          <div style="font-size:12px;color:var(--green);font-weight:700;margin-top:2px">📈 +${fmt(m.profit)} so'm <span style="font-size:11px;opacity:0.85">(${marginPct}%)</span></div>
         </div>
       </div>
       <div style="background:var(--bg3);border-radius:100px;height:6px;overflow:hidden">
-        <div style="height:100%;border-radius:100px;background:linear-gradient(90deg,var(--accent),var(--accent2));width:${Math.round(m.rev/maxRev*100)}%;transition:width .6s"></div>
+        <div style="height:100%;border-radius:100px;background:linear-gradient(90deg,var(--accent),var(--green));width:${Math.round(m.rev/maxRev*100)}%;transition:width .6s"></div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
+
 function renderSeasonality(){
   const el=document.getElementById('seasonalityBlock');if(!el)return;
   const days=[0,0,0,0,0,0,0],cnts=[0,0,0,0,0,0,0];
@@ -1974,6 +2018,32 @@ function buildBusinessContext() {
       sotilganSalatlarKg: prodTotalsWeek
     },
     aloqagaChiqishKerakBolganMijozlar: inactiveClients,
+    engDaromadliMijozlar: (function(){
+      const cp = {};
+      (state.orders||[]).forEach(o => {
+        const cid = o.clientId || o.client;
+        if (!cp[cid]) cp[cid] = { mijoz: o.client, jamiTushum: 0, sofFoyda: 0, buyurtmalar: 0 };
+        cp[cid].jamiTushum += (o.total || 0);
+        cp[cid].sofFoyda += calculateOrderProfit(o);
+        cp[cid].buyurtmalar++;
+      });
+      return Object.values(cp).sort((a,b)=>b.sofFoyda-a.sofFoyda).slice(0,5).map(c=>({
+        ...c,
+        marjaFoizi: c.jamiTushum > 0 ? Math.round((c.sofFoyda/c.jamiTushum)*100)+'%' : '0%'
+      }));
+    })(),
+    oylikSofFoydaTahlili: (function(){
+      const ms = {};
+      (state.orders||[]).forEach(o => {
+        const d = new Date(o.date);
+        const k = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+        if (!ms[k]) ms[k] = { oy: k, tushum: 0, sofFoyda: 0, buyurtmalar: 0 };
+        ms[k].tushum += (o.total || 0);
+        ms[k].sofFoyda += calculateOrderProfit(o);
+        ms[k].buyurtmalar++;
+      });
+      return Object.values(ms).sort((a,b)=>b.oy.localeCompare(a.oy)).slice(0,3);
+    })(),
     mahsulotlarNarxlari: (PRODUCTS || []).map(p => ({
       nomi: p.nameUz || p.name,
       narxi: p.price,
