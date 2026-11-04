@@ -116,6 +116,36 @@ async function main() {
   const todayOrders = orders.filter(o => getTashkentDateString(o.date) === todayStr);
   const totalRev = todayOrders.reduce((sum, o) => sum + (o.total || 0), 0);
 
+  // Foydani hisoblash qoidasi
+  function getItemProfit(item, prodFallback) {
+    const id = (item.id || '').toLowerCase();
+    const name = (item.name || '').toLowerCase();
+    const price = Math.round(item.price || 0);
+    const qty = parseFloat(item.qty || 0) || 0;
+    if (qty <= 0) return 0;
+    if (id === 'funchoza' || id === 'morkovcha' || name.includes('фунчоз') || name.includes('морков') || name.includes('sabzi')) {
+      if (price <= 20000) return 3000 * qty;
+      if (price <= 22000) return 4000 * qty;
+      return 5000 * qty;
+    }
+    if (id === 'sologurc' || name.includes('сол') || name.includes('огурц') || name.includes('tuzlangan')) {
+      if (price <= 15000) return 3000 * qty;
+      return 5000 * qty;
+    }
+    const cost = item.cost > 0 ? item.cost : (prodFallback?.cost > 0 ? prodFallback.cost : 0);
+    if (cost > 0 && price > cost) return (price - cost) * qty;
+    return 0;
+  }
+
+  let todayProfit = 0;
+  todayOrders.forEach(o => {
+    (o.items || []).forEach(i => {
+      const p = products.find(x => x.id === i.id);
+      todayProfit += getItemProfit(i, p);
+    });
+  });
+  const todayMarginPct = totalRev > 0 ? Math.round((todayProfit / totalRev) * 100) : 0;
+
   const debts = orders.filter(o => o.payment === 'консигнация' && !o.debtPaid);
   const totalDebt = debts.reduce((sum, o) => sum + (o.total || 0) - (o.partialPaid || 0), 0);
 
@@ -146,7 +176,8 @@ async function main() {
     `📊 <b>СВОДКА ЗА ДЕНЬ — ${displayDate}</b>`,
     ``,
     `📦 <b>Заказов:</b> ${todayOrders.length}`,
-    `💰 <b>Выручка:</b> ${fmt(totalRev)} so'm`,
+    `💰 <b>Выручка (Тушум):</b> ${fmt(totalRev)} so'm`,
+    `💵 <b>Чистая прибыль (Фойда):</b> ${fmt(todayProfit)} so'm (${todayMarginPct}%)`,
     ``,
     `📦 <b>Продано:</b>`,
     ...prodLines,

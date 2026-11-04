@@ -988,13 +988,23 @@ function renderStats(){
   
   state.orders = originalOrders;
 
-  const ps={};PRODUCTS.forEach(p=>{ps[p.id]={name:lang==='uz'?p.nameUz:p.name,emoji:p.emoji,qty:0,rev:0,cost:p.cost||0,unit:p.unit||'кг'};});
-  orders.forEach(o=>o.items.forEach(i=>{if(ps[i.id]){ps[i.id].qty+=i.qty;ps[i.id].rev+=i.qty*i.price;}}));
+  const ps={};
+  PRODUCTS.forEach(p=>{
+    ps[p.id]={id:p.id,name:lang==='uz'?p.nameUz:p.name,emoji:p.emoji,qty:0,rev:0,profit:0,unit:p.unit||'кг'};
+  });
+  orders.forEach(o=>o.items.forEach(i=>{
+    if(!ps[i.id]){
+      ps[i.id]={id:i.id,name:i.name,emoji:i.emoji||'📦',qty:0,rev:0,profit:0,unit:i.unit||'кг'};
+    }
+    const itemProfit = calculateItemProfit(i, PRODUCTS.find(x => x.id === i.id));
+    ps[i.id].qty += (i.qty || 0);
+    ps[i.id].rev += (i.qty * i.price || 0);
+    ps[i.id].profit += itemProfit;
+  }));
   const sorted=Object.values(ps).sort((a,b)=>b.qty-a.qty);
-  const hasCosts=PRODUCTS.some(p=>p.cost>0);
   document.getElementById('productStats').innerHTML=`<div class="card-title" style="margin-bottom:12px">📦 ${T[lang].products}</div>${sorted.map(p=>{
-    const margin=p.cost>0?p.rev-(p.qty*p.cost):null;
-    return`<div class="summary-row"><span>${p.emoji} ${p.name}</span><div style="text-align:right"><div><b>${p.qty}${p.unit}</b> · <span class="summary-price">${fmt(p.rev)} so'm</span></div>${margin!==null?`<div style="font-size:11px;color:${margin>=0?'var(--green)':'var(--danger)'}">${lang==='uz'?'Foyda':'Маржа'}: ${fmt(margin)} so'm</div>`:''}</div></div>`;
+    const marginPct = p.rev > 0 ? Math.round((p.profit / p.rev) * 100) : 0;
+    return`<div class="summary-row"><span>${p.emoji} ${p.name}</span><div style="text-align:right"><div><b>${p.qty}${p.unit}</b> · <span class="summary-price">${fmt(p.rev)} so'm</span></div><div style="font-size:11px;color:${p.profit>=0?'var(--green)':'var(--danger)'}">${lang==='uz'?'Foyda':'Маржа'}: <b>+${fmt(p.profit)} so'm</b> <span style="opacity:0.8">(${marginPct}%)</span></div></div></div>`;
   }).join('')}`;
 
   // Product Price Stats
@@ -1353,6 +1363,55 @@ async function testTelegram(){saveSettings();const{tgToken,tgChatId}=state.setti
 
 // UTILS
 function fmt(n){return Math.round(n).toLocaleString('ru-RU');}
+// ==================== FOYDA VA MARJA QOIDALARI ====================
+// 1. Funchoza & Morkovcha (Sabzi):
+//    - 20 000 so'm narx uchun -> 1 kg ga 3 000 so'm foyda
+//    - 22 000 so'm narx uchun -> 1 kg ga 4 000 so'm foyda
+//    - 25 000 so'm narx uchun -> 1 kg ga 5 000 so'm foyda
+// 2. Sol ogurtsy (Tuzlangan bodring):
+//    - 20 000 so'm narx uchun -> 1 kg ga 5 000 so'm foyda
+//    - 15 000 so'm narx uchun -> 1 kg ga 3 000 so'm foyda
+// 3. Boshqa mahsulotlar: agar tannarx kiritilgan bo'lsa -> (narx - tannarx) * kg
+function calculateItemProfit(item, prodFallback = null) {
+  const id = (item.id || '').toLowerCase();
+  const name = (item.name || '').toLowerCase();
+  const nameUz = (item.nameUz || '').toLowerCase();
+  const price = Math.round(item.price || 0);
+  const qty = parseFloat(item.qty || 0) || 0;
+  if (qty <= 0) return 0;
+
+  // 1. Funchoza yoki Morkovcha (Sabzi)
+  if (id === 'funchoza' || id === 'morkovcha' || 
+      name.includes('фунчоз') || name.includes('морков') || 
+      nameUz.includes('funchoz') || nameUz.includes('sabzi')) {
+    if (price <= 20000) return 3000 * qty;
+    if (price <= 22000) return 4000 * qty;
+    return 5000 * qty; // 25000 va undan yuqori
+  }
+
+  // 2. Sol ogurtsy (Tuzlangan bodring)
+  if (id === 'sologurc' || name.includes('сол') || name.includes('огурц') || nameUz.includes('tuzlangan')) {
+    if (price <= 15000) return 3000 * qty;
+    return 5000 * qty; // 20000 va undan yuqori
+  }
+
+  // 3. Boshqa mahsulotlar uchun (agar tannarxi bo'lsa)
+  const cost = item.cost > 0 ? item.cost : (prodFallback?.cost > 0 ? prodFallback.cost : 0);
+  if (cost > 0 && price > cost) {
+    return (price - cost) * qty;
+  }
+  return 0;
+}
+
+function calculateOrderProfit(order) {
+  let profit = 0;
+  (order.items || []).forEach(i => {
+    const p = (PRODUCTS || []).find(x => x.id === i.id);
+    profit += calculateItemProfit(i, p);
+  });
+  return profit;
+}
+
 // ==================== DASHBOARD ====================
 function renderDashboard(){
   const el=document.getElementById('dashboardContent');if(!el)return;
@@ -1362,14 +1421,11 @@ function renderDashboard(){
   const todayRev=todayOrders.reduce((s,o)=>s+o.total,0);
   const todayCount=todayOrders.length;
   
-  let todayCost = 0;
+  let todayProfit = 0;
   todayOrders.forEach(o => {
-    o.items.forEach(i => {
-      const p = PRODUCTS.find(x => x.id === i.id);
-      if(p) todayCost += (p.cost || 0) * i.qty;
-    });
+    todayProfit += calculateOrderProfit(o);
   });
-  const todayNetProfit = (todayRev - todayCost) * 0.5;
+  const todayMarginPct = todayRev > 0 ? Math.round((todayProfit / todayRev) * 100) : 0;
 
   const todayDelivered=todayOrders.filter(o=>o.delivered).length;
   const allDebts=state.orders.filter(o=>o.payment==='консигнация'&&!o.debtPaid);
@@ -1380,14 +1436,11 @@ function renderDashboard(){
   const weekOrders=state.orders.filter(o=>new Date(o.date)>=weekStart);
   const weekRev=weekOrders.reduce((s,o)=>s+o.total,0);
   
-  let weekCost = 0;
+  let weekProfit = 0;
   weekOrders.forEach(o => {
-    o.items.forEach(i => {
-      const p = PRODUCTS.find(x => x.id === i.id);
-      if(p) weekCost += (p.cost || 0) * i.qty;
-    });
+    weekProfit += calculateOrderProfit(o);
   });
-  const weekNetProfit = (weekRev - weekCost) * 0.5;
+  const weekMarginPct = weekRev > 0 ? Math.round((weekProfit / weekRev) * 100) : 0;
   
   const prodToday={};PRODUCTS.forEach(p=>prodToday[p.id]=0);
   todayOrders.forEach(o=>o.items.forEach(i=>{if(prodToday[i.id]!==undefined)prodToday[i.id]+=i.qty;}));
@@ -1410,8 +1463,8 @@ function renderDashboard(){
         <div style="font-size:22px;font-weight:900;color:var(--accent2)">${fmt(todayRev)}</div>
         <div style="font-size:10px;color:var(--text3);margin-top:2px;margin-bottom:6px">so'm · ${todayCount} ${lang==='uz'?'ta':'шт'}</div>
         <div style="background:rgba(86,212,160,.15);border-radius:8px;padding:6px;margin-top:4px">
-            <div style="font-size:9px;color:var(--text2);text-transform:uppercase">${lang==='uz'?'Sof foyda':'Чистая прибыль'}</div>
-            <div style="font-size:16px;font-weight:900;color:var(--green)">+${fmt(todayNetProfit)}</div>
+            <div style="font-size:9px;color:var(--text2);text-transform:uppercase">${lang==='uz'?'Sof foyda (Marja)':'Чистая прибыль (Маржа)'}</div>
+            <div style="font-size:16px;font-weight:900;color:var(--green)">+${fmt(todayProfit)} <span style="font-size:11px;font-weight:600">(${todayMarginPct}%)</span></div>
         </div>
       </div>
       <div style="background:linear-gradient(135deg,rgba(90,180,247,.15),rgba(124,106,247,.1));border:1px solid rgba(90,180,247,.3);border-radius:16px;padding:12px;text-align:center">
@@ -1419,8 +1472,8 @@ function renderDashboard(){
         <div style="font-size:22px;font-weight:900;color:var(--blue)">${fmt(weekRev)}</div>
         <div style="font-size:10px;color:var(--text3);margin-top:2px;margin-bottom:6px">so'm</div>
         <div style="background:rgba(86,212,160,.15);border-radius:8px;padding:6px;margin-top:4px">
-            <div style="font-size:9px;color:var(--text2);text-transform:uppercase">${lang==='uz'?'Sof foyda':'Чистая прибыль'}</div>
-            <div style="font-size:16px;font-weight:900;color:var(--green)">+${fmt(weekNetProfit)}</div>
+            <div style="font-size:9px;color:var(--text2);text-transform:uppercase">${lang==='uz'?'Sof foyda (Marja)':'Чистая прибыль (Маржа)'}</div>
+            <div style="font-size:16px;font-weight:900;color:var(--green)">+${fmt(weekProfit)} <span style="font-size:11px;font-weight:600">(${weekMarginPct}%)</span></div>
         </div>
       </div>
     </div>
@@ -1826,6 +1879,9 @@ function buildBusinessContext() {
   // 1. Bugungi buyurtmalar
   const todayOrders = (state.orders || []).filter(o => new Date(o.date).toDateString() === todayStr);
   const totalRev = todayOrders.reduce((s, o) => s + (o.total || 0), 0);
+  let todayProfit = 0;
+  todayOrders.forEach(o => { todayProfit += calculateOrderProfit(o); });
+  const todayMarginPct = totalRev > 0 ? Math.round((todayProfit / totalRev) * 100) : 0;
   
   // Bugun sotilgan salatlar
   const prodTotalsToday = {};
@@ -1900,6 +1956,8 @@ function buildBusinessContext() {
     bugungiSavdo: {
       buyurtmalarSoni: todayOrders.length,
       tushumSomda: totalRev,
+      sofFoydaSomda: todayProfit,
+      marjaFoizi: todayMarginPct + '%',
       yetkazilganlar: deliveredToday.length,
       kutilayotganlar: pendingToday.length,
       sotilganSalatlarKg: prodTotalsToday,
