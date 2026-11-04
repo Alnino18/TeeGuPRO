@@ -20,6 +20,98 @@
   body{padding-bottom:70px;}
   #loading{position:fixed;top:0;left:0;width:100%;height:100%;background:var(--bg);z-index:1000;display:flex;align-items:center;justify-content:center;font-weight:800;font-family:'Outfit',sans-serif;font-size:20px;}
   .bottom-nav{position:fixed;bottom:0;left:0;width:100%;height:60px;background:color-mix(in srgb, var(--card) 85%, transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid var(--border);display:flex;z-index:90;box-shadow:0 -4px 20px rgba(0,0,0,0.1);}
+
+  /* AI AGENT STYLES */
+  .ai-chip {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+  }
+  .ai-chip:hover {
+    border-color: var(--accent);
+    background: rgba(123, 97, 255, 0.12);
+    color: var(--accent2);
+    transform: translateY(-1px);
+  }
+  .ai-chip:active {
+    transform: scale(0.95);
+  }
+  .ai-msg {
+    display: flex;
+    flex-direction: column;
+    max-width: 88%;
+    word-break: break-word;
+    animation: fadeIn 0.25s ease;
+  }
+  .ai-msg.user {
+    align-self: flex-end;
+    background: linear-gradient(135deg, var(--accent), #5035ff);
+    color: #ffffff;
+    padding: 10px 14px;
+    border-radius: 18px 18px 4px 18px;
+    font-size: 14px;
+    box-shadow: 0 4px 14px rgba(123, 97, 255, 0.25);
+  }
+  .ai-msg.bot {
+    align-self: flex-start;
+    background: var(--bg3);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 12px 14px;
+    border-radius: 18px 18px 18px 4px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .ai-msg-time {
+    font-size: 10px;
+    color: rgba(255,255,255,0.6);
+    align-self: flex-end;
+    margin-top: 4px;
+  }
+  .ai-msg.bot .ai-msg-time {
+    color: var(--text3);
+  }
+  .ai-mic-btn.recording {
+    background: var(--danger) !important;
+    color: #fff !important;
+    border-color: var(--danger) !important;
+    animation: pulseMic 1.2s infinite;
+  }
+  @keyframes pulseMic {
+    0% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0.7); }
+    70% { box-shadow: 0 0 0 10px rgba(255, 75, 75, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0); }
+  }
+  .ai-typing {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 4px;
+  }
+  .ai-typing-dot {
+    width: 6px;
+    height: 6px;
+    background: var(--accent2);
+    border-radius: 50%;
+    animation: typingBounce 1.4s infinite ease-in-out;
+  }
+  .ai-typing-dot:nth-child(2) { animation-delay: 0.2s; }
+  .ai-typing-dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes typingBounce {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+    40% { transform: translateY(-5px); opacity: 1; }
+  }
 </style>
 <script src="https://api-maps.yandex.ru/2.1/?apikey=7db4b1da-3bb3-47a8-afc7-eab9e6d97c36&lang=ru_RU"></script>
 
@@ -44,6 +136,7 @@
     <div class="header-sub" id="headerSub">Система управления заказами</div>
   </div>
   <div class="header-right">
+    <div class="icon-btn" onclick="showPage('ai')" title="AI Agent" style="background:rgba(123,97,255,0.2);color:var(--accent2);border-color:var(--accent);font-size:15px;font-weight:bold;">✨</div>
     <div class="icon-btn lang-btn" onclick="toggleLang()" id="langBtn">UZ</div>
     <div class="icon-btn" onclick="toggleTheme()" id="themeBtn">🌙</div>
     <div class="icon-btn badge-wrap" onclick="showPage('orders')">⏳<span class="badge" id="pendingBadge" style="display:none"></span></div>
@@ -61,6 +154,7 @@
   <div class="tab" data-page="stats" onclick="showPage('stats')">📊 <span class="t" data-ru="Итоги" data-uz="Tahlil">Итоги</span></div>
   <div class="tab" data-page="products" onclick="showPage('products');renderProductsSettings()">🛒 <span class="t" data-ru="Прод." data-uz="Mahsulot">Прод.</span></div>
   <div class="tab" data-page="map" onclick="showPage('map')">🗺️ <span class="t" data-ru="Карта" data-uz="Xarita">Карта</span></div>
+  <div class="tab" data-page="ai" onclick="showPage('ai')" style="color:var(--accent2);font-weight:700">✨ <span class="t" data-ru="AI Агент" data-uz="AI Agent">AI Agent</span></div>
   <div class="tab" data-page="settings" onclick="showPage('settings')">⚙️</div>
 </div>
 
@@ -251,6 +345,74 @@
   </div>
 </div>
 
+<!-- PAGE: AI AGENT -->
+<div class="page" id="page-ai">
+  <div class="card" style="background: linear-gradient(135deg, rgba(123,97,255,0.12), rgba(0,229,255,0.06)); border-color: rgba(123,97,255,0.4); margin-bottom: 12px; padding: 14px 16px;">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <div style="font-size:17px; font-weight:800; display:flex; align-items:center; gap:6px;">
+          <span>✨</span>
+          <span style="background:linear-gradient(135deg, var(--accent2), var(--accent)); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">TeeGu AI Agent</span>
+        </div>
+        <div style="font-size:12px; color:var(--text2); margin-top:3px;">
+          <span class="t" data-ru="Умный бизнес-ассистент на базе Google Gemini" data-uz="Google Gemini asosidagi aqlli biznes maslahatchi">Google Gemini asosidagi aqlli biznes maslahatchi</span>
+        </div>
+      </div>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <button class="icon-btn" onclick="clearAiChat()" title="Tozalash" style="font-size:13px;">🗑️</button>
+        <button class="icon-btn" onclick="toggleAiKeyModal()" title="API Kalit" style="font-size:13px;">🔑</button>
+      </div>
+    </div>
+    
+    <!-- API KEY ALERT / SETUP IF NOT CONFIGURED -->
+    <div id="aiKeyWarning" style="display:none; margin-top:12px; background:rgba(255,153,0,0.12); border:1px solid var(--orange); border-radius:12px; padding:10px 12px;">
+      <div style="font-size:13px; font-weight:700; color:var(--orange); display:flex; align-items:center; gap:6px;">
+        <span>⚠️</span>
+        <span class="t" data-ru="Требуется ключ Google Gemini API" data-uz="Google Gemini API kaliti kerak">Google Gemini API kaliti kerak</span>
+      </div>
+      <div style="font-size:11px; color:var(--text2); margin-top:4px;">
+        <span class="t" data-ru="Для работы AI введите бесплатный ключ из Google AI Studio" data-uz="AI ishlashi uchun Google AI Studio'dan bepul kalit oling">AI ishlashi uchun Google AI Studio'dan bepul kalit oling</span>
+      </div>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <input type="password" id="aiKeyQuickInput" class="form-input" placeholder="AIzaSy..." style="padding:6px 10px; font-size:13px;">
+        <button class="btn btn-primary btn-sm" onclick="saveQuickAiKey()" style="white-space:nowrap; padding:6px 12px;">Saqlash</button>
+      </div>
+      <div style="margin-top:6px; font-size:11px;">
+        <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--accent2); text-decoration:none;">🔗 Bepul API kalit olish (Google AI Studio) &rarr;</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- QUICK CHIPS -->
+  <div style="margin-bottom:12px;">
+    <div style="font-size:11px; font-weight:700; color:var(--text3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">
+      ⚡ <span class="t" data-ru="Быстрый анализ" data-uz="Tezkor savollar">Tezkor savollar</span>
+    </div>
+    <div style="display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; scrollbar-width:none;">
+      <button class="ai-chip" onclick="askAiQuick('today')">📊 <span class="t" data-ru="Сводка за сегодня" data-uz="Bugungi savdo">Bugungi savdo</span></button>
+      <button class="ai-chip" onclick="askAiQuick('debts')">💸 <span class="t" data-ru="Должники" data-uz="Qarzdorlar">Qarzdorlar</span></button>
+      <button class="ai-chip" onclick="askAiQuick('forecast')">🔮 <span class="t" data-ru="Прогноз на завтра" data-uz="Ertangi prognoz">Ertangi prognoz</span></button>
+      <button class="ai-chip" onclick="askAiQuick('top-products')">🍜 <span class="t" data-ru="Топ салаты" data-uz="Eng ko'p sotilgan">Eng ko'p sotilgan</span></button>
+      <button class="ai-chip" onclick="askAiQuick('inactive-clients')">👥 <span class="t" data-ru="Уснувшие клиенты" data-uz="Nofaol mijozlar">Nofaol mijozlar</span></button>
+      <button class="ai-chip" onclick="askAiQuick('delivery')">🚚 <span class="t" data-ru="Статус доставки" data-uz="Yetkazish holati">Yetkazish holati</span></button>
+    </div>
+  </div>
+
+  <!-- CHAT MESSAGES CONTAINER -->
+  <div class="card" style="min-height:360px; max-height:60vh; display:flex; flex-direction:column; padding:0; overflow:hidden; border-color:var(--border);">
+    <div id="aiChatBox" style="flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:12px;">
+      <!-- Welcome message generated by JS -->
+    </div>
+    
+    <!-- INPUT BAR -->
+    <div style="border-top:1px solid var(--border); padding:10px 12px; background:var(--bg2); display:flex; align-items:center; gap:8px;">
+      <button id="aiMicBtn" class="icon-btn ai-mic-btn" onclick="toggleVoiceInput()" title="Ovozli kiritish" style="flex-shrink:0;">🎤</button>
+      <input type="text" id="aiInput" class="form-input" placeholder="Savol bering (masalan: Bugun kimlarga yetkazdik?)..." style="padding:9px 12px; font-size:14px;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAiUserMessage();}">
+      <button class="btn btn-primary" onclick="sendAiUserMessage()" style="width:auto; padding:9px 14px; border-radius:12px; flex-shrink:0; font-weight:700;">➤</button>
+    </div>
+  </div>
+</div>
+
 <!-- PAGE: SETTINGS -->
 <div class="page" id="page-settings">
   <div class="card">
@@ -269,6 +431,19 @@
     </div>
     <button class="btn btn-primary" onclick="saveSettings()" style="margin-top:8px">💾 <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
     <button class="btn btn-outline" style="margin-top:8px" onclick="testTelegram()">🧪 Тест Telegram</button>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <div class="card-title" style="margin-bottom:4px">✨ Google Gemini AI</div>
+    <div class="card-sub" style="margin-bottom:10px">TeeGu AI Agent uchun Google Gemini API kaliti</div>
+    <div class="settings-item">
+      <div class="settings-label">Gemini API Key</div>
+      <input class="form-input" type="password" id="geminiApiKey" placeholder="AIzaSy...">
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-top:6px;margin-bottom:10px;">
+      🔑 Bepul kalit olish: <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--accent2);text-decoration:none;">Google AI Studio &rarr;</a>
+    </div>
+    <button class="btn btn-primary" onclick="saveSettings()">💾 <span class="t" data-ru="Сохранить" data-uz="Saqlash">Сохранить</span></button>
   </div>
 
   <div class="card" style="margin-top:12px">
@@ -591,7 +766,7 @@
   </div>
 </div>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 
 </body>
 </html>

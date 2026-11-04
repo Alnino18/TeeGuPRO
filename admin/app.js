@@ -268,6 +268,7 @@ function showPage(id){
   if(id==='new-order')renderFavorites();
   if(id==='dashboard')renderDashboard();
   if(id==='map')renderMap();
+  if(id==='ai')renderAiPage();
 }
 
 // FAVORITES
@@ -1328,6 +1329,9 @@ function loadSettings(){
   if(s.tgChatId)document.getElementById('tgChatId').value=s.tgChatId;
   const timeEl = document.getElementById('tgSummaryTime');
   if(timeEl) timeEl.value = s.tgSummaryTime || '22:00';
+  const geminiEl = document.getElementById('geminiApiKey');
+  if(geminiEl) geminiEl.value = s.geminiApiKey || localStorage.getItem('geminiApiKey') || '';
+  if(typeof checkAiKeyStatus === 'function') checkAiKeyStatus();
 }
 
 function saveSettings(){
@@ -1335,6 +1339,12 @@ function saveSettings(){
   state.settings.tgChatId=document.getElementById('tgChatId').value.trim();
   const timeEl = document.getElementById('tgSummaryTime');
   if(timeEl) state.settings.tgSummaryTime = timeEl.value || '22:00';
+  const geminiEl = document.getElementById('geminiApiKey');
+  if(geminiEl) {
+    state.settings.geminiApiKey = geminiEl.value.trim();
+    localStorage.setItem('geminiApiKey', state.settings.geminiApiKey);
+  }
+  if(typeof checkAiKeyStatus === 'function') checkAiKeyStatus();
   db.collection('settings').doc('main').set(state.settings);
   showToast('✅ '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');
 }
@@ -1640,7 +1650,7 @@ if('serviceWorker' in navigator){navigator.serviceWorker.register('../sw.js').ca
 // ==================== SWIPE NAVIGATION ====================
 const PAGE_ORDER = [
   'dashboard','new-order','orders','debts',
-  'delivery','clients','stats','products','map','settings'
+  'delivery','clients','stats','products','map','ai','settings'
 ];
 
 (function initSwipe() {
@@ -1738,4 +1748,426 @@ window.confirmAdminMapPicker = function() {
     document.getElementById('coordLng').value = center[1].toFixed(6);
   }
   closeAdminMapPicker();
+}
+
+
+// ==========================================
+// TEEGU AI AGENT (GOOGLE GEMINI AI)
+// ==========================================
+
+let aiChatHistory = JSON.parse(localStorage.getItem('aiChatHistory') || '[]');
+let aiRecognition = null;
+let isAiRecording = false;
+
+function getGeminiApiKey() {
+  return (state.settings && state.settings.geminiApiKey) || localStorage.getItem('geminiApiKey') || '';
+}
+
+function checkAiKeyStatus() {
+  const key = getGeminiApiKey();
+  const warningEl = document.getElementById('aiKeyWarning');
+  const quickInput = document.getElementById('aiKeyQuickInput');
+  const geminiEl = document.getElementById('geminiApiKey');
+  if (warningEl) {
+    warningEl.style.display = key ? 'none' : 'block';
+  }
+  if (quickInput && key) {
+    quickInput.value = key;
+  }
+  if (geminiEl && key) {
+    geminiEl.value = key;
+  }
+}
+
+function toggleAiKeyModal() {
+  const warningEl = document.getElementById('aiKeyWarning');
+  if (warningEl) {
+    warningEl.style.display = (warningEl.style.display === 'none' || !warningEl.style.display) ? 'block' : 'none';
+  }
+}
+
+function saveQuickAiKey() {
+  const val = (document.getElementById('aiKeyQuickInput')?.value || '').trim();
+  if (!val) {
+    showToast(lang === 'uz' ? 'Kalitni kiriting' : 'Введите ключ', 'error');
+    return;
+  }
+  state.settings.geminiApiKey = val;
+  localStorage.setItem('geminiApiKey', val);
+  db.collection('settings').doc('main').set(state.settings, { merge: true });
+  const geminiEl = document.getElementById('geminiApiKey');
+  if (geminiEl) geminiEl.value = val;
+  checkAiKeyStatus();
+  showToast('✅ ' + (lang === 'uz' ? 'AI Kaliti saqlandi!' : 'Ключ AI сохранён!'), 'success');
+}
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/^### (.*$)/gim, '<div style="font-weight:700;color:var(--accent2);margin:8px 0 4px;">$1</div>')
+    .replace(/^## (.*$)/gim, '<div style="font-size:15px;font-weight:800;color:var(--accent);margin:10px 0 6px;">$1</div>')
+    .replace(/^# (.*$)/gim, '<div style="font-size:16px;font-weight:900;margin:12px 0 8px;">$1</div>')
+    .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
+    .replace(/\*(.*?)\*/g, '<i>$1</i>')
+    .replace(/`([^`]+)`/g, '<code style="background:var(--bg2);padding:2px 6px;border-radius:4px;font-size:13px;border:1px solid var(--border);">$1</code>')
+    .replace(/^\s*[-*]\s+(.*$)/gim, '<div style="margin-left:14px;margin-bottom:3px;position:relative;"><span style="position:absolute;left:-12px;color:var(--accent2);">•</span> $1</div>')
+    .replace(/(\+998\d{9})/g, '<a href="tel:$1" style="color:var(--accent2);text-decoration:none;font-weight:600;">📞 $1</a>')
+    .replace(/\n\n/g, '<div style="height:8px;"></div>')
+    .replace(/\n/g, '<br>');
+}
+
+function buildBusinessContext() {
+  const now = new Date();
+  const todayStr = now.toDateString();
+  
+  // 1. Bugungi buyurtmalar
+  const todayOrders = (state.orders || []).filter(o => new Date(o.date).toDateString() === todayStr);
+  const totalRev = todayOrders.reduce((s, o) => s + (o.total || 0), 0);
+  
+  // Bugun sotilgan salatlar
+  const prodTotalsToday = {};
+  (PRODUCTS || []).forEach(p => { prodTotalsToday[p.nameUz || p.name] = 0; });
+  todayOrders.forEach(o => {
+    (o.items || []).forEach(i => {
+      const p = (PRODUCTS || []).find(x => x.id === i.id);
+      const name = p ? (p.nameUz || p.name) : i.name;
+      if (prodTotalsToday[name] !== undefined) prodTotalsToday[name] += (i.qty || 0);
+      else prodTotalsToday[name] = (i.qty || 0);
+    });
+  });
+  
+  // 2. Qarzlar (Konsignatsiya)
+  const debts = (state.orders || []).filter(o => o.payment === 'консигнация' && !o.debtPaid);
+  const totalDebt = debts.reduce((s, o) => s + (o.total || 0) - (o.partialPaid || 0), 0);
+  
+  const clientDebts = {};
+  debts.forEach(o => {
+    const cid = o.clientId || o.client;
+    const debtAmount = (o.total || 0) - (o.partialPaid || 0);
+    if (!clientDebts[cid]) {
+      clientDebts[cid] = { name: o.client, phone: o.phone, totalDebt: 0, count: 0, oldestDate: o.date };
+    }
+    clientDebts[cid].totalDebt += debtAmount;
+    clientDebts[cid].count += 1;
+    if (new Date(o.date) < new Date(clientDebts[cid].oldestDate)) {
+      clientDebts[cid].oldestDate = o.date;
+    }
+  });
+  const topDebtors = Object.values(clientDebts).sort((a, b) => b.totalDebt - a.totalDebt).slice(0, 10);
+  
+  // 3. Oxirgi 7 kunlik statistika
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const weekOrders = (state.orders || []).filter(o => new Date(o.date) >= sevenDaysAgo);
+  const weekRev = weekOrders.reduce((s, o) => s + (o.total || 0), 0);
+  
+  const prodTotalsWeek = {};
+  (PRODUCTS || []).forEach(p => { prodTotalsWeek[p.nameUz || p.name] = 0; });
+  weekOrders.forEach(o => {
+    (o.items || []).forEach(i => {
+      const p = (PRODUCTS || []).find(x => x.id === i.id);
+      const name = p ? (p.nameUz || p.name) : i.name;
+      if (prodTotalsWeek[name] !== undefined) prodTotalsWeek[name] += (i.qty || 0);
+      else prodTotalsWeek[name] = (i.qty || 0);
+    });
+  });
+  
+  // 4. Nofaol mijozlar
+  const clientLastOrder = {};
+  (state.orders || []).forEach(o => {
+    const cid = o.clientId || o.client;
+    const orderDate = new Date(o.date);
+    if (!clientLastOrder[cid] || orderDate > new Date(clientLastOrder[cid])) {
+      clientLastOrder[cid] = o.date;
+    }
+  });
+  
+  const inactiveClients = (state.clients || []).map(c => {
+    const lastDate = clientLastOrder[c.id];
+    const daysSince = lastDate ? Math.floor((now - new Date(lastDate)) / (1000 * 60 * 60 * 24)) : 999;
+    return { name: c.name, phone: c.phone, daysSinceOrder: daysSince };
+  }).filter(c => c.daysSinceOrder >= 4 && c.daysSinceOrder < 900).sort((a, b) => b.daysSinceOrder - a.daysSinceOrder).slice(0, 8);
+  
+  // 5. Yetkazish
+  const deliveredToday = todayOrders.filter(o => o.status === 'done' || o.delivered);
+  const pendingToday = todayOrders.filter(o => o.status !== 'done' && !o.delivered);
+  
+  return {
+    sana: now.toLocaleDateString('uz-UZ'),
+    haftaKuni: now.toLocaleDateString('uz-UZ', { weekday: 'long' }),
+    bugungiSavdo: {
+      buyurtmalarSoni: todayOrders.length,
+      tushumSomda: totalRev,
+      yetkazilganlar: deliveredToday.length,
+      kutilayotganlar: pendingToday.length,
+      sotilganSalatlarKg: prodTotalsToday,
+      mijozlar: todayOrders.slice(0, 15).map(o => ({ client: o.client, total: o.total, payment: o.payment, delivered: !!(o.status === 'done' || o.delivered) }))
+    },
+    qarzlar: {
+      umumiyQarzSomda: totalDebt,
+      qarzdorlarSoni: Object.keys(clientDebts).length,
+      engKattaQarzdorlar: topDebtors
+    },
+    oxirgiHafta: {
+      buyurtmalarSoni: weekOrders.length,
+      tushumSomda: weekRev,
+      sotilganSalatlarKg: prodTotalsWeek
+    },
+    aloqagaChiqishKerakBolganMijozlar: inactiveClients,
+    mahsulotlarNarxlari: (PRODUCTS || []).map(p => ({
+      nomi: p.nameUz || p.name,
+      narxi: p.price,
+      tannarxi: p.cost,
+      birlik: p.unit || 'kg'
+    }))
+  };
+}
+
+async function callGemini(apiKey, systemPrompt, userMessage, chatHistory = []) {
+  const contents = [];
+  
+  // Oxirgi 6 ta xabar kontekst uchun
+  (chatHistory || []).slice(-6).forEach(msg => {
+    contents.push({
+      role: msg.role === 'user' ? 'user' : 'model',
+      parts: [{ text: msg.text }]
+    });
+  });
+  
+  contents.push({
+    role: 'user',
+    parts: [{ text: userMessage }]
+  });
+  
+  const payload = {
+    system_instruction: {
+      parts: [{ text: systemPrompt }]
+    },
+    contents: contents,
+    generationConfig: {
+      temperature: 0.35,
+      maxOutputTokens: 2048
+    }
+  };
+
+  const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  let lastError = null;
+
+  for (const model of models) {
+    try {
+      const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + apiKey;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      const data = await res.json();
+      if (res.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+        return data.candidates[0].content.parts[0].text;
+      }
+      if (data.error) {
+        lastError = data.error.message || JSON.stringify(data.error);
+      }
+    } catch (err) {
+      lastError = err.message;
+    }
+  }
+
+  throw new Error(lastError || 'Gemini API javob bermadi');
+}
+
+function renderAiPage() {
+  checkAiKeyStatus();
+  const box = document.getElementById('aiChatBox');
+  if (!box) return;
+  
+  if (aiChatHistory.length === 0) {
+    const isUz = lang === 'uz';
+    box.innerHTML = `
+      <div class="ai-msg bot">
+        <div style="font-size:15px;font-weight:700;">👋 ${isUz ? 'Assalomu alaykum!' : 'Здравствуйте!'}</div>
+        <div style="margin-top:6px;line-height:1.5;">
+          ${isUz 
+            ? 'Men sizning <b>TeeGu.PRO</b> tizimidagi shaxsiy <b>AI Biznes Maslahatchi</b>ngizman. Savdolar tahlili, qarzdorlar, buyurtmalar, kuryerlar va ertangi kun uchun salat tayyorlash prognozi bo\'yicha istalgan savolingizga javob beraman.'
+            : 'Я ваш персональный <b>AI бизнес-ассистент</b> в системе <b>TeeGu.PRO</b>. Могу ответить на любые вопросы по продажам, должникам, заказам, доставке и дать прогноз приготовления салатов на завтра.'
+          }
+        </div>
+        <div style="margin-top:8px; font-size:12px; color:var(--text2);">
+          ${isUz ? '💡 Yuqoridagi tezkor tugmalardan birini bosing yoki pastga savolingizni yozing / ovozli ayting:' : '💡 Нажмите на быструю кнопку сверху или напишите свой вопрос ниже:'}
+        </div>
+        <div class="ai-msg-time">${new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'})}</div>
+      </div>
+    `;
+  } else {
+    box.innerHTML = aiChatHistory.map(m => `
+      <div class="ai-msg ${m.role}">
+        <div>${m.role === 'bot' ? renderMarkdown(m.text) : escapeHTML(m.text)}</div>
+        <div class="ai-msg-time">${m.time || ''}</div>
+      </div>
+    `).join('');
+  }
+  
+  box.scrollTop = box.scrollHeight;
+}
+
+async function sendAiUserMessage(customText = null) {
+  const inputEl = document.getElementById('aiInput');
+  const text = (customText || (inputEl ? inputEl.value : '')).trim();
+  if (!text) return;
+  
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) {
+    showToast(lang === 'uz' ? 'Avval Gemini API kalitini kiriting' : 'Сначала введите ключ Gemini API', 'error');
+    document.getElementById('aiKeyWarning').style.display = 'block';
+    document.getElementById('aiKeyQuickInput').focus();
+    return;
+  }
+  
+  if (inputEl) inputEl.value = '';
+  
+  const timeStr = new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
+  aiChatHistory.push({ role: 'user', text: text, time: timeStr });
+  renderAiPage();
+  
+  const box = document.getElementById('aiChatBox');
+  const typingId = 'aiTypingIndicator';
+  const typingDiv = document.createElement('div');
+  typingDiv.id = typingId;
+  typingDiv.className = 'ai-msg bot';
+  typingDiv.innerHTML = `
+    <div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text2);">
+      <span>✨ Tahlil qilinmoqda...</span>
+      <div class="ai-typing">
+        <div class="ai-typing-dot"></div>
+        <div class="ai-typing-dot"></div>
+        <div class="ai-typing-dot"></div>
+      </div>
+    </div>
+  `;
+  box.appendChild(typingDiv);
+  box.scrollTop = box.scrollHeight;
+  
+  try {
+    const businessContext = buildBusinessContext();
+    const systemPrompt = `Siz "TeeGu.PRO" salat va oziq-ovqat yetkazib berish tizimining rasmiy aqlli AI Biznes Maslahatchisisiz.
+Biznes egasiga buyurtmalar, savdo tahlili, qarzdorlar, kuryerlar va ertangi kun uchun salat tayyorlash rejasini aniq hisoblab berishda yordam berasiz.
+
+Hozirgi real biznes ma'lumotlari (JSON):
+${JSON.stringify(businessContext, null, 2)}
+
+QOIDALAR:
+1. Foydalanuvchi qaysi tilda yozsa (o'zbekcha yoki ruscha), o'sha tilda javob bering.
+2. Ma'lumotlardagi aniq raqamlarga, summalar (so'm), tovar nomlari va mijozlarga tayanib gapiring. Hech qanday raqamni to'qimang.
+3. Javobni chiroyli va qulay qilib formatlang: emojilar, qalin shriftlar (**bold**), ro'yxatlar ishlating.
+4. Agar "Ertaga nima tayyorlaymiz?" deb so'ralsa, oxirgi kunlar va haftalik sotuv hajmiga qarab, har bir salat bo'yicha tavsiya qilingan kg miqdorini aniq raqamlar bilan yozib bering.
+5. Qarzlar bo'yicha gap ketganda, eng katta qarzdorlarni, ularning telefon raqamini ko'rsating.
+6. Javoblaringiz lo'nda, professional va biznes uchun amaliy foydali bo'lsin.`;
+
+    const aiResponse = await callGemini(apiKey, systemPrompt, text, aiChatHistory);
+    
+    const typingEl = document.getElementById(typingId);
+    if (typingEl) typingEl.remove();
+    
+    const botTime = new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
+    aiChatHistory.push({ role: 'bot', text: aiResponse, time: botTime });
+    
+    if (aiChatHistory.length > 20) aiChatHistory = aiChatHistory.slice(-20);
+    localStorage.setItem('aiChatHistory', JSON.stringify(aiChatHistory));
+    
+    renderAiPage();
+  } catch (err) {
+    const typingEl = document.getElementById(typingId);
+    if (typingEl) typingEl.remove();
+    
+    const errTime = new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
+    const isUz = lang === 'uz';
+    const errText = isUz 
+      ? ('❌ Xatolik yuz berdi: ' + err.message + '. Iltimos, Gemini API kalitini tekshiring.')
+      : ('❌ Произошла ошибка: ' + err.message + '. Пожалуйста, проверьте ключ Gemini API.');
+      
+    aiChatHistory.push({ role: 'bot', text: errText, time: errTime });
+    renderAiPage();
+    showToast(isUz ? 'AI xatolik berdi' : 'Ошибка AI', 'error');
+  }
+}
+
+function askAiQuick(type) {
+  const isUz = lang === 'uz';
+  const queries = {
+    'today': isUz ? 'Bugungi savdo, umumiy tushum, sotilgan salatlar va yetkazilgan buyurtmalar tahlilini ber.' : 'Дай полный отчет по сегодняшним продажам, выручке и доставленным заказам.',
+    'debts': isUz ? 'Eng katta qarzdor mijozlar kimlar? Umumiy qarz qancha va kimga birinchi navbatda qo\'ng\'iroq qilish kerak?' : 'Кто самые крупные должники? Каков общий долг и кому нужно позвонить в первую очередь?',
+    'forecast': isUz ? 'Oxirgi kunlar savdosi va statistikasiga qarab, ertaga qaysi salatlardan necha kg tayyorlashni maslahat berasan?' : 'На основе последних продаж, сколько кг каких салатов ты рекомендуешь приготовить на завтра?',
+    'top-products': isUz ? 'Oxirgi 7 kunda eng ko\'p sotilgan salatlar va mahsulotlar reytingini ko\'rsat.' : 'Покажи рейтинг самых продаваемых продуктов за последние 7 дней.',
+    'inactive-clients': isUz ? 'Oxirgi 4-5 kunda buyurtma bermagan, aloqaga chiqish tavsiya etiladigan mijozlar ro\'yxatini chiqar.' : 'Выведи список постоянных клиентов, которые не заказывали последние 4-5 дней.',
+    'delivery': isUz ? 'Bugungi yetkazib berish holati qanday? Qancha buyurtma topshirildi va kuryerlar nima qilmoqda?' : 'Каков статус доставки на сегодня? Сколько заказов доставлено и сколько в пути?'
+  };
+  
+  const text = queries[type] || type;
+  sendAiUserMessage(text);
+}
+
+function clearAiChat() {
+  if (confirm(lang === 'uz' ? 'AI suhbatlar tarixini tozalashni xohlaysizmi?' : 'Очистить историю чата с AI?')) {
+    aiChatHistory = [];
+    localStorage.removeItem('aiChatHistory');
+    renderAiPage();
+    showToast(lang === 'uz' ? 'Tarix tozalandi' : 'История очищена', 'info');
+  }
+}
+
+function toggleVoiceInput() {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) {
+    showToast(lang === 'uz' ? 'Brauzeringiz ovozli kiritishni qo\'llamaydi' : 'Голосовой ввод не поддерживается', 'error');
+    return;
+  }
+  
+  const micBtn = document.getElementById('aiMicBtn');
+  const inputEl = document.getElementById('aiInput');
+  
+  if (isAiRecording) {
+    if (aiRecognition) aiRecognition.stop();
+    isAiRecording = false;
+    if (micBtn) micBtn.classList.remove('recording');
+    return;
+  }
+  
+  try {
+    aiRecognition = new SpeechRec();
+    aiRecognition.lang = lang === 'uz' ? 'uz-UZ' : 'ru-RU';
+    aiRecognition.interimResults = false;
+    aiRecognition.maxAlternatives = 1;
+    
+    aiRecognition.onstart = function() {
+      isAiRecording = true;
+      if (micBtn) micBtn.classList.add('recording');
+      showToast(lang === 'uz' ? 'Gapiring...' : 'Слушаю...', 'info');
+    };
+    
+    aiRecognition.onresult = function(event) {
+      const speechResult = event.results[0][0].transcript;
+      if (speechResult && inputEl) {
+        inputEl.value = (inputEl.value ? inputEl.value + ' ' : '') + speechResult;
+        inputEl.focus();
+      }
+    };
+    
+    aiRecognition.onerror = function(event) {
+      console.warn('Speech recognition error:', event.error);
+      isAiRecording = false;
+      if (micBtn) micBtn.classList.remove('recording');
+    };
+    
+    aiRecognition.onend = function() {
+      isAiRecording = false;
+      if (micBtn) micBtn.classList.remove('recording');
+    };
+    
+    aiRecognition.start();
+  } catch (err) {
+    console.error('Speech recognition init error:', err);
+    isAiRecording = false;
+    if (micBtn) micBtn.classList.remove('recording');
+  }
 }
