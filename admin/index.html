@@ -293,7 +293,10 @@
     <div id="radarClientsList"></div>
   </div>
   <div class="search-wrap"><span class="search-icon">🔍</span><input class="form-input" type="text" oninput="filterClients(this.value)" placeholder="Поиск..."></div>
-  <button class="btn btn-primary" style="margin-bottom:14px" onclick="openNewClientModal()">➕ <span class="t" data-ru="Добавить клиента" data-uz="Mijoz qo'shish">Добавить клиента</span></button>
+  <div style="display:flex;gap:8px;margin-bottom:14px;">
+    <button class="btn btn-primary" style="flex:1;" onclick="openNewClientModal()">➕ <span class="t" data-ru="Добавить клиента" data-uz="Mijoz qo'shish">Mijoz qo'shish</span></button>
+    <button class="btn btn-outline" style="flex:1;border-color:var(--accent);color:var(--accent);" onclick="openBroadcastModal()">📢 <span class="t" data-ru="Рассылка / Прайс" data-uz="E'lon / Narxnoma">E'lon / Narxnoma</span></button>
+  </div>
   <div id="clientsList"></div>
 </div>
 
@@ -530,7 +533,10 @@
         <div class="card-title">⚙️ <span class="t" data-ru="Управление продуктами" data-uz="Mahsulotlarni boshqarish">Управление продуктами</span></div>
         <div class="card-sub t" data-ru="Цены, себестоимость, добавить/удалить" data-uz="Narxlar, tannarx, qo'shish/o'chirish">Цены, себестоимость, добавить/удалить</div>
       </div>
-      <button class="btn btn-primary btn-sm" onclick="openAddProductModal()">+ <span class="t" data-ru="Добавить" data-uz="Qo'shish">Добавить</span></button>
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-outline btn-sm" style="border-color:var(--accent);color:var(--accent);" onclick="openBroadcastModal('pricelist')">📢 <span class="t" data-ru="Прайс в TG" data-uz="Narxnoma (TG)">Narxnoma (TG)</span></button>
+        <button class="btn btn-primary btn-sm" onclick="openAddProductModal()">+ <span class="t" data-ru="Добавить" data-uz="Qo'shish">Добавить</span></button>
+      </div>
     </div>
     <div id="productsSettingsList"></div>
   </div>
@@ -788,7 +794,7 @@
   </div>
 </div>
 
-  <script src="app.js?v=9"></script>
+  
 
 
 <!-- MODAL: LABEL PRINTING -->
@@ -811,5 +817,55 @@
   </div>
 </div>
 
+
+<!-- MODAL: TELEGRAM BROADCAST -->
+<div class="modal-overlay" id="broadcastModal">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-handle"></div>
+    <div class="modal-title">📢 <span class="t" data-ru="Рассылка в Telegram" data-uz="Telegram orqali e'lon / narxnoma">Telegram orqali e'lon / narxnoma</span></div>
+    
+    <div class="form-group">
+      <label class="form-label">🎯 <span class="t" data-ru="Кому отправить" data-uz="Kimlarga yuborilsin">Kimlarga yuborilsin</span></label>
+      <select class="form-input" id="broadcastTarget" onchange="updateBroadcastTargetInfo()">
+        <option value="both">👥 Barcha do'konlarga + Asosiy guruhga</option>
+        <option value="group">🏢 Faqat asosiy Telegram guruh/kanalga</option>
+        <option value="clients">👤 Faqat do'konlarga (shaxsiy bot)</option>
+      </select>
+      <div id="broadcastTargetInfo" style="font-size:11px;color:var(--text3);margin-top:4px;"></div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">⚡ <span class="t" data-ru="Быстрые шаблоны" data-uz="Tezkor shablonlar">Tezkor shablonlar</span></label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button type="button" class="pill" onclick="loadBroadcastTemplate('pricelist')">📋 Narxnoma</button>
+        <button type="button" class="pill" onclick="loadBroadcastTemplate('price_update')">📈 Yangi narxlar</button>
+        <button type="button" class="pill" onclick="loadBroadcastTemplate('new_product')">✨ Yangi salat</button>
+        <button type="button" class="pill" onclick="loadBroadcastTemplate('holiday')">🌙 Dam olish / Bayram</button>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">📌 <span class="t" data-ru="Заголовок" data-uz="E'lon sarlavhasi">E'lon sarlavhasi</span></label>
+      <input type="text" id="broadcastTitle" class="form-input" placeholder="TeeGu.PRO — Yangi narxnoma" oninput="updateBroadcastPreview()">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">💬 <span class="t" data-ru="Текст сообщения" data-uz="Xabar matni">Xabar matni</span></label>
+      <textarea id="broadcastBody" class="form-input" style="height:130px;line-height:1.5;font-family:inherit;font-size:13px;" placeholder="Xabar matnini yozing..." oninput="updateBroadcastPreview()"></textarea>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">👁️ <span class="t" data-ru="Предпросмотр в Telegram" data-uz="Telegramdagi ko'rinishi">Telegramdagi ko'rinishi</span></label>
+      <div id="broadcastPreviewBox" style="background:rgba(0,0,0,0.3);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:10px;padding:12px;font-size:13px;line-height:1.6;max-height:160px;overflow-y:auto;white-space:pre-wrap;"></div>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:16px;">
+      <button class="btn btn-outline" style="flex:1;" onclick="closeModal('broadcastModal')"><span class="t" data-ru="Отмена" data-uz="Bekor qilish">Bekor qilish</span></button>
+      <button class="btn btn-primary" id="broadcastSendBtn" style="flex:2;" onclick="sendTelegramBroadcast()">🚀 <span class="t" data-ru="Отправить" data-uz="Yuborish">Yuborish</span></button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js?v=10"></script>
 </body>
 </html>

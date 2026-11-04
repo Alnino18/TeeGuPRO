@@ -2714,3 +2714,163 @@ function optimizeAdminDeliveryRoute() {
   renderDelivery(adminOptimizedRoute.sortedOrders);
   showToast(lang === 'uz' ? `✅ Marshrut tayyor: ~${adminOptimizedRoute.totalKm} km` : `✅ Маршрут готов: ~${adminOptimizedRoute.totalKm} км`, 'success');
 }
+
+
+// ==================== TELEGRAM BROADCAST / NARXNOMA ====================
+function openBroadcastModal(templateKey = null) {
+  updateBroadcastTargetInfo();
+  if (templateKey) {
+    loadBroadcastTemplate(templateKey);
+  } else if (!document.getElementById('broadcastBody').value) {
+    loadBroadcastTemplate('pricelist');
+  } else {
+    updateBroadcastPreview();
+  }
+  openModal('broadcastModal');
+}
+
+function updateBroadcastTargetInfo() {
+  const target = document.getElementById('broadcastTarget')?.value || 'both';
+  const infoEl = document.getElementById('broadcastTargetInfo');
+  if (!infoEl) return;
+
+  const defaultGroupId = (state.settings && state.settings.tgChatId) || '483325961';
+  const clientsWithTg = (state.clients || []).filter(c => c.tgId || c.chatId || c.telegramId);
+
+  if (target === 'group') {
+    infoEl.innerHTML = `🏢 Asosiy guruhga yuboriladi (Chat ID: <b>${defaultGroupId}</b>)`;
+  } else if (target === 'clients') {
+    infoEl.innerHTML = `👤 Bot orqali ulangan do'konlarga yuboriladi (Ulanganlar: <b>${clientsWithTg.length} ta</b>)`;
+  } else {
+    infoEl.innerHTML = `👥 Asosiy guruhga (ID: ${defaultGroupId}) hamda botdagi ${clientsWithTg.length} ta do'konga yuboriladi`;
+  }
+}
+
+function loadBroadcastTemplate(type) {
+  const titleInput = document.getElementById('broadcastTitle');
+  const bodyInput = document.getElementById('broadcastBody');
+  if (!titleInput || !bodyInput) return;
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('ru-RU');
+
+  if (type === 'pricelist') {
+    titleInput.value = `🥗 TeeGu.PRO — AMALDAGI NARXNOMA (${dateStr})`;
+    const prodLines = (PRODUCTS || []).map(p => {
+      const name = lang === 'uz' ? (p.nameUz || p.name) : p.name;
+      const unit = p.unit || 'kg';
+      return `${p.emoji || '🥗'} <b>${name}</b> — ${fmt(p.price)} so'm / ${unit}`;
+    }).join('\n');
+
+    bodyInput.value = `Hurmatli hamkorlar va do'kon egalari!\nBugungi amaldagi ulgurji narxlarimiz bilan tanishing:\n\n${prodLines}\n\n✨ Barcha salatlarimiz 100% yangi va tabiiy masalliqlardan tayyorlangan.\n🚚 Yetkazib berish har kuni ertalab soat 09:00 dan boshlanadi.\n📞 Buyurtma uchun: ${state.settings.phone || '+998 ...'}`;
+  } else if (type === 'price_update') {
+    titleInput.value = `📢 DIQQAT: YANGILANGAN NARXLAR (${dateStr})`;
+    const prodLines = (PRODUCTS || []).map(p => {
+      const name = lang === 'uz' ? (p.nameUz || p.name) : p.name;
+      return `• ${p.emoji || '🥗'} ${name}: <b>${fmt(p.price)} so'm</b>`;
+    }).join('\n');
+
+    bodyInput.value = `Hurmatli qadrli do'kon egalari!\nXomashyo va bozor narxlari o'zgarishi munosabati bilan yangilangan narxlar kuchga kirdi:\n\n${prodLines}\n\nSifatli va mazali mahsulotlarni o'z vaqtida yetkazishda davom etamiz.\nHurmat bilan, TeeGu.PRO jamoasi 🥗`;
+  } else if (type === 'new_product') {
+    titleInput.value = `✨ ASSORTIMENTDA YANGI SALAT!`;
+    bodyInput.value = `Hurmatli do'kon egalari va oshpazlar!\nBizning salatlar qatoriga yangi o'zgacha ta'mli salat qo'shildi!\n\nYuqori sifat, tabiiy masalliqlar va maxsus ulgurji narxda taklif etamiz.\n\nDo'koningiz peshtaxtasi uchun birinchi partiyaga hoziroq buyurtma bering!\n📞 ${state.settings.phone || '+998 ...'}`;
+  } else if (type === 'holiday') {
+    titleInput.value = `🌙 BAYRAM JADVALI VA YETKAZIB BERISH`;
+    bodyInput.value = `Hurmatli do'konlar va hamkorlar!\nYaqinlashib kelayotgan bayram munosabati bilan oshxonamiz va kuryerlarimiz ish rejasini ma'lum qilamiz.\n\nDo'koningizda salatlar uzilishlarsiz bo'lishi uchun bayramoldi buyurtmalarni 1 kun oldin berishingizni so'raymiz!\n\nSizga tinchlik va baraka tilaymiz! 🥗`;
+  }
+
+  updateBroadcastPreview();
+}
+
+function updateBroadcastPreview() {
+  const title = document.getElementById('broadcastTitle')?.value.trim() || '';
+  const body = document.getElementById('broadcastBody')?.value.trim() || '';
+  const previewBox = document.getElementById('broadcastPreviewBox');
+  if (!previewBox) return;
+
+  if (!title && !body) {
+    previewBox.innerHTML = '<span style="color:var(--text3);font-style:italic">Xabar matnini yozing yoki shablondan tanlang...</span>';
+    return;
+  }
+
+  let previewHtml = '';
+  if (title) previewHtml += `<div style="font-weight:900;font-size:15px;margin-bottom:8px;color:var(--accent);">${title}</div>`;
+  if (body) previewHtml += `<div>${body}</div>`;
+  previewBox.innerHTML = previewHtml;
+}
+
+async function sendTelegramBroadcast() {
+  const title = document.getElementById('broadcastTitle')?.value.trim();
+  const body = document.getElementById('broadcastBody')?.value.trim();
+  const target = document.getElementById('broadcastTarget')?.value || 'both';
+  const sendBtn = document.getElementById('broadcastSendBtn');
+
+  if (!title && !body) {
+    showToast(lang === 'uz' ? "Iltimos, xabar sarlavhasi yoki matnini kiriting" : "Введите текст сообщения", 'error');
+    return;
+  }
+
+  const tgToken = (state.settings && state.settings.tgToken) || '8796588071:AAG8Z_R8hP9ESZZ_3LxUakD8PCXj5C5ZP6Y';
+  const mainChatId = (state.settings && state.settings.tgChatId) || '483325961';
+
+  if (!tgToken) {
+    showToast("Telegram Bot Token sozlanmagan", 'error');
+    return;
+  }
+
+  // Build recipients list
+  const recipientIds = new Set();
+  if (target === 'group' || target === 'both') {
+    if (mainChatId) recipientIds.add(String(mainChatId));
+  }
+  if (target === 'clients' || target === 'both') {
+    (state.clients || []).forEach(c => {
+      const id = c.tgId || c.chatId || c.telegramId;
+      if (id) recipientIds.add(String(id));
+    });
+  }
+
+  if (recipientIds.size === 0) {
+    showToast("Hech qanday qabul qiluvchi topilmadi", 'error');
+    return;
+  }
+
+  const fullText = `<b>${title}</b>\n\n${body}`;
+
+  sendBtn.disabled = true;
+  sendBtn.innerHTML = '📤 Yuborilmoqda...';
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const chatId of recipientIds) {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: fullText,
+          parse_mode: 'HTML'
+        })
+      });
+      const data = await res.json();
+      if (data.ok) successCount++;
+      else failCount++;
+    } catch (e) {
+      failCount++;
+    }
+    // Small safe delay
+    await new Promise(r => setTimeout(r, 60));
+  }
+
+  sendBtn.disabled = false;
+  sendBtn.innerHTML = '🚀 ' + (lang === 'uz' ? 'Barchaga yuborish' : 'Отправить');
+  closeModal('broadcastModal');
+
+  if (successCount > 0) {
+    showToast(lang === 'uz' ? `✅ ${successCount} ta manzilga muvaffaqiyatli yuborildi!` : `✅ Отправлено (${successCount})`, 'success');
+  } else {
+    showToast(lang === 'uz' ? "Xatolik: Xabar yuborilmadi" : "Ошибка отправки", 'error');
+  }
+}
