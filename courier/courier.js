@@ -245,31 +245,32 @@ function renderOrders() {
       </div>`;
     }
     
+    const oId = String(o.id || '');
     return `
       <div class="order-card" style="${o.stepNum ? 'border-color:rgba(124,106,247,0.4);' : ''}">
         ${stepBadge}
         <div class="order-header">
-          <div class="order-id">#${o.id.toString().slice(-4)}</div>
+          <div class="order-id">#${oId.slice(-4)}</div>
           <div class="order-date">${dateStr}</div>
         </div>
-        <div class="order-client">${o.client}</div>
+        <div class="order-client">${o.client || 'Mijoz'}</div>
         ${(o.phone || (allClientsMap[o.clientId]?.phone)) ? `<a href="tel:${o.phone || allClientsMap[o.clientId]?.phone}" class="order-phone">📞 ${o.phone || allClientsMap[o.clientId]?.phone}</a>` : ''}
         <div class="order-address">📍 ${o.address || (allClientsMap[o.clientId]?.address) || 'Manzil kiritilmagan'}</div>
         
         <div class="order-items">
-          ${(o.items || []).map(i => `<div>${i.emoji || '🥗'} ${i.name} — <b>${i.qty}${i.unit||'kg'}</b></div>`).join('')}
+          ${(o.items || []).map(i => `<div>${i.emoji || '🥗'} ${i.nameUz || i.name || 'Mahsulot'} — <b>${i.qty}${i.unit||'kg'}</b></div>`).join('')}
         </div>
         
         ${o.note ? `<div style="font-size:12px; color:var(--text2); margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.2); border-radius:8px;">📝 Izoh: ${o.note}</div>` : ''}
         
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-          <div style="font-size:12px; color:var(--text2)">To'lov usuli: <br><b style="color:white">${o.payment}</b></div>
-          <div class="order-total">${(o.total || 0).toLocaleString('ru-RU')} so'm</div>
+          <div style="font-size:12px; color:var(--text2)">To'lov usuli: <br><b style="color:white">${o.payment || 'Naqd'}</b></div>
+          <div class="order-total">${(Number(o.total) || 0).toLocaleString('ru-RU')} so'm</div>
         </div>
         
         <div style="display:flex; gap:8px;">
           ${mapBtn}
-          <button class="btn btn-success" style="padding:10px; flex:1" onclick="markDelivered(${o.id})">✅ Topshirdim</button>
+          <button class="btn btn-success" style="padding:10px; flex:1" onclick="markDelivered('${oId}')">✅ Topshirdim</button>
         </div>
       </div>
     `;

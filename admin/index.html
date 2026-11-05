@@ -235,8 +235,8 @@
 <div class="page" id="page-orders">
   <div class="search-wrap"><span class="search-icon">🔍</span><input class="form-input" type="text" id="ordersSearch" oninput="filterOrders(this.value)" placeholder="Поиск..."></div>
   <div style="display:flex;gap:8px;margin-bottom:12px;overflow-x:auto;scrollbar-width:none">
-    <div class="pill selected" onclick="filterByDate('all',this)" id="pill-all">Все</div>
-    <div class="pill" onclick="filterByDate('today',this)" id="pill-today">Сегодня</div>
+    <div class="pill" onclick="filterByDate('all',this)" id="pill-all">Все</div>
+    <div class="pill selected" onclick="filterByDate('today',this)" id="pill-today">Сегодня</div>
     <div class="pill" onclick="filterByDate('week',this)" id="pill-week">Неделя</div>
     <input type="date" class="form-input" style="padding:4px 8px; font-size:13px; height:28px; width:auto; border-radius:12px; border:1px solid var(--border); background:var(--card); color:var(--text);" id="customOrderDate" onchange="filterByDate(this.value, this)">
   </div>
@@ -276,21 +276,28 @@
 <div class="page" id="page-clients">
   <!-- CHURN RISK RADAR -->
   <div class="card" id="churnRadarCard" style="background: linear-gradient(135deg, rgba(247,90,90,0.08), rgba(255,152,0,0.05)); border: 1px solid rgba(247,90,90,0.3); margin-bottom: 14px; padding: 14px;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleChurnRadar()">
       <div>
         <div style="font-weight:900;font-size:15px;display:flex;align-items:center;gap:6px;">
           🚨 <span class="t" data-ru="Радар риска потери клиентов" data-uz="Xavf ostidagi mijozlar radari">Xavf ostidagi mijozlar radari</span>
         </div>
         <div style="font-size:11px;color:var(--text2);margin-top:2px;" class="t" data-ru="Клиенты, которые перестали заказывать или задерживают заказ" data-uz="Odatdagi vaqtdan kechikayotgan yoki buyurtma bermayotgan mijozlar">Odatdagi vaqtdan kechikayotgan yoki buyurtma bermayotgan mijozlar</div>
       </div>
-      <div id="radarTotalRiskCount" style="font-weight:900;font-size:13px;color:var(--danger);background:rgba(247,90,90,0.15);padding:3px 8px;border-radius:8px;"></div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div id="radarTotalRiskCount" style="font-weight:900;font-size:13px;color:var(--danger);background:rgba(247,90,90,0.15);padding:3px 8px;border-radius:8px;"></div>
+        <button type="button" class="btn btn-outline btn-sm" id="radarToggleBtn" style="padding:4px 8px;font-size:11px;border-radius:8px;" onclick="event.stopPropagation(); toggleChurnRadar();">
+          <span id="radarToggleText">▾ Ko'rish</span>
+        </button>
+      </div>
     </div>
-    <div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;">
-      <button class="pill selected" id="radarPill-all" onclick="filterRadarLevel('all', this)"><span class="t" data-ru="Все в риске" data-uz="Barcha xavfdagilar">Barcha xavfdagilar</span> (<span id="radarCountAll">0</span>)</button>
-      <button class="pill" id="radarPill-critical" onclick="filterRadarLevel('critical', this)">🔴 <span class="t" data-ru="Критический" data-uz="Kritik">Kritik</span> (<span id="radarCountCrit">0</span>)</button>
-      <button class="pill" id="radarPill-warning" onclick="filterRadarLevel('warning', this)">🟡 <span class="t" data-ru="Внимание" data-uz="Ogohlantirish">Ogohlantirish</span> (<span id="radarCountWarn">0</span>)</button>
+    <div id="radarBody" style="display:none;margin-top:12px;padding-top:10px;border-top:1px dashed rgba(247,90,90,0.25);">
+      <div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;">
+        <button class="pill selected" id="radarPill-all" onclick="filterRadarLevel('all', this)"><span class="t" data-ru="Все в риске" data-uz="Barcha xavfdagilar">Barcha xavfdagilar</span> (<span id="radarCountAll">0</span>)</button>
+        <button class="pill" id="radarPill-critical" onclick="filterRadarLevel('critical', this)">🔴 <span class="t" data-ru="Критический" data-uz="Kritik">Kritik</span> (<span id="radarCountCrit">0</span>)</button>
+        <button class="pill" id="radarPill-warning" onclick="filterRadarLevel('warning', this)">🟡 <span class="t" data-ru="Внимание" data-uz="Ogohlantirish">Ogohlantirish</span> (<span id="radarCountWarn">0</span>)</button>
+      </div>
+      <div id="radarClientsList" style="max-height:360px;overflow-y:auto;padding-right:2px;"></div>
     </div>
-    <div id="radarClientsList"></div>
   </div>
   <div class="search-wrap"><span class="search-icon">🔍</span><input class="form-input" type="text" oninput="filterClients(this.value)" placeholder="Поиск..."></div>
   <div style="display:flex;gap:8px;margin-bottom:14px;">
@@ -866,6 +873,6 @@
   </div>
 </div>
 
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>

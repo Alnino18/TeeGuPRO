@@ -95,16 +95,33 @@ db.collection('products').onSnapshot(snap => {
 });
 
 db.collection('clients').onSnapshot(snap => {
-  state.clients = snap.docs.map(d => d.data());
-  populateClientSelect(); renderClientsList(); renderDashboard();
+  state.clients = snap.docs.map(d => {
+    const data = d.data();
+    if (!data.id) data.id = d.id;
+    return data;
+  });
+  try { populateClientSelect(); } catch(e) { console.error("populateClientSelect error:", e); }
+  try { renderClientsList(); } catch(e) { console.error("renderClientsList error:", e); }
+  try { renderDashboard(); } catch(e) { console.error("renderDashboard error:", e); }
 });
 
 let isOrdersLoaded = false;
 db.collection('orders').onSnapshot(snap => {
   isOrdersLoaded = true;
-  state.orders = snap.docs.map(d => d.data()).sort((a, b) => new Date(b.date) - new Date(a.date));
-  renderOrdersList(); renderStats(); renderDebts(); renderDelivery(); renderFavorites(); renderDashboard(); updateBadges();
-  if (typeof checkAutoDailySummary === 'function') checkAutoDailySummary();
+  state.orders = snap.docs.map(d => {
+    const data = d.data();
+    if (!data.id) data.id = d.id;
+    return data;
+  }).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+  try { renderOrdersList(); } catch(e) { console.error("renderOrdersList error:", e); }
+  try { renderClientsList(); } catch(e) { console.error("renderClientsList error:", e); }
+  try { renderStats(); } catch(e) { console.error("renderStats error:", e); }
+  try { renderDebts(); } catch(e) { console.error("renderDebts error:", e); }
+  try { renderDelivery(); } catch(e) { console.error("renderDelivery error:", e); }
+  try { renderFavorites(); } catch(e) { console.error("renderFavorites error:", e); }
+  try { renderDashboard(); } catch(e) { console.error("renderDashboard error:", e); }
+  try { updateBadges(); } catch(e) { console.error("updateBadges error:", e); }
+  try { if (typeof checkAutoDailySummary === 'function') checkAutoDailySummary(); } catch(e) {}
 });
 
 db.collection('settings').doc('main').onSnapshot(snap => {
@@ -502,39 +519,67 @@ setInterval(checkAutoDailySummary, 30000);
 function renderOrdersList(filterText='',dateFilter=state.dateFilter){
   state.dateFilter=dateFilter;
   let orders=[...state.orders];
-  if(filterText)orders=orders.filter(o=>o.client.toLowerCase().includes(filterText.toLowerCase()));
+  if(filterText) {
+    const q = filterText.toLowerCase();
+    orders = orders.filter(o => 
+      (o.client || '').toLowerCase().includes(q) || 
+      (o.phone || '').includes(q) || 
+      (o.agent || '').toLowerCase().includes(q) ||
+      (o.address || '').toLowerCase().includes(q)
+    );
+  }
   const now=new Date();
-  if(dateFilter==='today')orders=orders.filter(o=>new Date(o.date).toDateString()===now.toDateString());
-  else if(dateFilter==='week'){const w=new Date(now-7*86400000);orders=orders.filter(o=>new Date(o.date)>w);}
-  else if(dateFilter && dateFilter.match(/^\d{4}-\d{2}-\d{2}$/)){
+  if(dateFilter==='today'){
+    orders=orders.filter(o=>o.date && new Date(o.date).toDateString()===now.toDateString());
+  } else if(dateFilter==='week'){
+    const w=new Date(now.getTime() - 7*86400000);
+    orders=orders.filter(o=>o.date && new Date(o.date) >= w);
+  } else if(dateFilter && dateFilter.match(/^\d{4}-\d{2}-\d{2}$/)){
     orders = orders.filter(o => {
+      if(!o.date) return false;
       const d = new Date(o.date);
       const iso = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
       return iso === dateFilter;
     });
   }
   const list=document.getElementById('ordersList');
-  if(!orders.length){list.innerHTML=`<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">${T[lang].noOrders}</div></div>`;return;}
-  const pi={'наличные':'💵','клик':'📱','консигнация':'📝'};
-  const pc={'наличные':'','клик':'click','консигнация':'consign','Naqd':'','Karta':'click','Qarz':'consign'};
+  if(!list) return;
+  if(!orders.length){
+    list.innerHTML=`<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">${T[lang]?.noOrders || 'Buyurtmalar yo\'q'}</div></div>`;
+    return;
+  }
+  const pi={'наличные':'💵','клик':'📱','консигнация':'📝','Naqd':'💵','Karta':'💳','Qarz':'📝','карта':'💳'};
+  const pc={'наличные':'','клик':'click','консигнация':'consign','Naqd':'','Karta':'click','Qarz':'consign','карта':'click'};
   list.innerHTML=orders.map(o=>{
-    const d=new Date(o.date);
+    if(!o) return '';
+    const d=new Date(o.date || 0);
     const ds=d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
-    const orderProfit = calculateOrderProfit(o);
-    const orderMarginPct = o.total > 0 ? Math.round((orderProfit / o.total) * 100) : 0;
-    return`<div class="order-item payment-${pc[o.payment]}">
+    let orderProfit = 0;
+    try { orderProfit = calculateOrderProfit(o); } catch(e) { orderProfit = 0; }
+    const orderTotal = Number(o.total) || 0;
+    const orderMarginPct = orderTotal > 0 ? Math.round((orderProfit / orderTotal) * 100) : 0;
+    const oId = String(o.id || '');
+    const isDebt = (o.payment === 'консигнация' || o.payment === 'Qarz') && !o.debtPaid;
+    const itemsListHtml = (o.items || []).map(i => {
+      const iName = lang === 'uz' ? (i.nameUz || i.name || 'Mahsulot') : (i.name || i.nameUz || 'Продукт');
+      const iQty = i.qty !== undefined ? i.qty : 0;
+      const iUnit = i.unit || 'кг';
+      return `${i.emoji || '🥗'} ${iName}: <b>${iQty}${iUnit}</b>`;
+    }).join(' · ');
+
+    return`<div class="order-item payment-${pc[o.payment] || ''}">
       <div class="order-top">
         <div>
           <div class="order-client" style="display:flex;align-items:center;gap:6px;">
-            ${o.client}
+            ${o.client || 'Noma\'lum mijoz'}
             ${o.agent ? `<span style="font-size:10px;background:rgba(255,152,0,0.15);color:#ff9800;padding:2px 6px;border-radius:6px;border:1px solid rgba(255,152,0,0.3);font-weight:800;">👨‍💼 ${o.agent}</span>` : ''}
           </div>
-          <div class="order-meta">${ds} · ${o.type}</div>
+          <div class="order-meta">${ds} · ${o.type || 'Dostavka'}</div>
         </div>
         <div style="text-align:right;">
-          <div class="order-badge ${pc[o.payment]}">${pi[o.payment]||'💳'} ${o.payment}</div>
+          <div class="order-badge ${pc[o.payment] || ''}">${pi[o.payment]||'💳'} ${o.payment}</div>
           <div style="margin-top:4px; margin-bottom:4px;">${o.sent?'<span class="sent-badge">✅ TG</span>':'<span class="unsent-badge">❌ TG</span>'}</div>
-          <select onchange="updateOrderStatus(${o.id}, this.value)" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:2px 4px; border-radius:4px; font-size:11px; width:100%;">
+          <select onchange="updateOrderStatus('${oId}', this.value)" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:2px 4px; border-radius:4px; font-size:11px; width:100%;">
             <option value="new" ${!o.status || o.status==='new' ? 'selected' : ''}>🆕 Yangi</option>
             <option value="preparing" ${o.status==='preparing' ? 'selected' : ''}>👨‍🍳 Tayyorlanmoqda</option>
             <option value="delivering" ${o.status==='delivering' ? 'selected' : ''}>🛵 Yo'lda</option>
@@ -543,22 +588,22 @@ function renderOrdersList(filterText='',dateFilter=state.dateFilter){
           </select>
         </div>
       </div>
-      <div class="order-items">${o.items.map(i=>`${i.emoji} ${lang==='uz'?i.nameUz:i.name}: <b>${i.qty}${i.unit||'кг'}</b>`).join(' · ')}</div>
+      <div class="order-items">${itemsListHtml}</div>
       ${o.note?`<div style="font-size:12px;color:var(--text3);margin-top:4px">📝 ${o.note}</div>`:''}
       <div class="order-total" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:8px;">
-        <div>${fmt(o.total)} so'm ${o.payment==='консигнация'&&!o.debtPaid?`<span class="tag orange">${lang==='uz'?'Qarz':'Долг'} ${o.partialPaid?fmt(o.partialPaid)+' to\'landi':''}</span>`:''}</div>
+        <div>${fmt(orderTotal)} so'm ${isDebt?`<span class="tag orange">${lang==='uz'?'Qarz':'Долг'} ${o.partialPaid?fmt(o.partialPaid)+' to\'landi':''}</span>`:''}</div>
         <div style="color:var(--green);font-size:12px;font-weight:700;background:rgba(86,212,160,0.12);border:1px solid rgba(86,212,160,0.25);padding:3px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:4px;">
           📈 ${lang==='uz'?'Foyda':'Прибыль'}: +${fmt(orderProfit)} so'm <span style="font-size:11px;opacity:0.85">(${orderMarginPct}%)</span>
         </div>
       </div>
       <div class="order-actions">
-        <button class="btn btn-primary btn-sm" onclick="showOrderDetail(${o.id})">👁</button>
-        <button class="btn btn-outline btn-sm" onclick="openEditOrderModal(${o.id})">✏️</button>
-        <button class="btn btn-outline btn-sm" onclick="copyOrder(${o.id})" title="${lang==='uz'?'Nusxa':'Копировать'}">📋</button>
-        <button class="btn btn-outline btn-sm" onclick="printInvoice(${o.id})">🖨️</button>
-        <button class="btn btn-outline btn-sm" onclick="openLabelModal(${o.id})" title="${lang==='uz'?'Qadoq yorlig\'i (Etiketka)':'Печать этикеток'}">🏷️</button>
-        <button class="btn btn-outline btn-sm" onclick="resendOrderById(${o.id})">📤</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteOrder(${o.id})">🗑</button>
+        <button class="btn btn-primary btn-sm" onclick="showOrderDetail('${oId}')">👁</button>
+        <button class="btn btn-outline btn-sm" onclick="openEditOrderModal('${oId}')">✏️</button>
+        <button class="btn btn-outline btn-sm" onclick="copyOrder('${oId}')" title="${lang==='uz'?'Nusxa':'Копировать'}">📋</button>
+        <button class="btn btn-outline btn-sm" onclick="printInvoice('${oId}')">🖨️</button>
+        <button class="btn btn-outline btn-sm" onclick="openLabelModal('${oId}')" title="${lang==='uz'?'Qadoq yorlig\'i (Etiketka)':'Печать этикеток'}">🏷️</button>
+        <button class="btn btn-outline btn-sm" onclick="resendOrderById('${oId}')">📤</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteOrder('${oId}')">🗑</button>
       </div>
     </div>`;
   }).join('');
@@ -753,21 +798,26 @@ function printInvoice(id){
 
 // DEBTS
 function renderDebts(){
-  const debtOrders=state.orders.filter(o=>o.payment==='консигнация'&&!o.debtPaid);
+  const debtOrders=(state.orders || []).filter(o=>(o.payment==='консигнация' || o.payment==='Qarz')&&!o.debtPaid);
   const byClient={};
   debtOrders.forEach(o=>{
-    if(!byClient[o.clientId])byClient[o.clientId]={name:o.client,total:0,paid:0,orders:[]};
-    byClient[o.clientId].total+=o.total;
-    byClient[o.clientId].paid+=(o.partialPaid||0);
-    byClient[o.clientId].orders.push(o);
+    const cKey = String(o.clientId || '');
+    if(!byClient[cKey])byClient[cKey]={name:o.client || 'Mijoz',total:0,paid:0,orders:[]};
+    byClient[cKey].total+=(Number(o.total)||0);
+    byClient[cKey].paid+=(Number(o.partialPaid)||0);
+    byClient[cKey].orders.push(o);
   });
   const totalDebt=Object.values(byClient).reduce((s,c)=>s+(c.total-c.paid),0);
-  document.getElementById('totalDebtAmount').textContent=fmt(totalDebt)+' so\'m';
-  document.getElementById('debtsCount').textContent=Object.keys(byClient).length;
+  const totalDebtEl = document.getElementById('totalDebtAmount');
+  if (totalDebtEl) totalDebtEl.textContent=fmt(totalDebt)+' so\'m';
+  const debtsCountEl = document.getElementById('debtsCount');
+  if (debtsCountEl) debtsCountEl.textContent=Object.keys(byClient).length;
   const list=document.getElementById('debtsList');
-  if(!Object.keys(byClient).length){list.innerHTML=`<div class="empty"><div class="empty-icon">✅</div><div class="empty-text">${T[lang].noDebts}</div></div>`;return;}
+  if (!list) return;
+  if(!Object.keys(byClient).length){list.innerHTML=`<div class="empty"><div class="empty-icon">✅</div><div class="empty-text">${T[lang]?.noDebts || 'Qarzlar yo\'q'}</div></div>`;return;}
   list.innerHTML=Object.entries(byClient).map(([cid,data])=>{
     const remaining=data.total-data.paid;
+    const safeName = (data.name || '').replace(/'/g, "\\'");
     return`<div class="debt-item">
       <div class="debt-client">${data.name}</div>
       <div class="debt-amount">${fmt(remaining)} so'm</div>
@@ -775,14 +825,14 @@ function renderDebts(){
       <div class="debt-meta">${lang==='uz'?'Buyurtmalar':'Заказов'}: ${data.orders.length}</div>
       <div class="debt-orders">${data.orders.map(o=>{const d=new Date(o.date);return`• ${d.toLocaleDateString('ru-RU')} — ${fmt(o.total)} so'm${o.partialPaid?` (${lang==='uz'?'qoldi':'осталось'}: ${fmt(o.total-o.partialPaid)})`:''}`}).join('<br>')}</div>
       <button class="debt-paid-btn" onclick="markDebtPaid('${cid}')">✅ ${lang==='uz'?"To'ladi":'Оплатил'}</button>
-      <button class="debt-partial-btn" onclick="openPartialPay('${cid}',${remaining},'${data.name}')">💰 ${lang==='uz'?'Qisman to\'lov':'Частично'}</button>
+      <button class="debt-partial-btn" onclick="openPartialPay('${cid}',${remaining},'${safeName}')">💰 ${lang==='uz'?'Qisman to\'lov':'Частично'}</button>
     </div>`;
   }).join('');
 }
 function markDebtPaid(clientId){
   if(!confirm(lang==='uz'?"To'lashni tasdiqlaysizmi?":'Отметить как оплаченный?'))return;
   const batch = db.batch();
-  state.orders.forEach(o=>{if(o.clientId==clientId&&o.payment==='консигнация'){ batch.update(db.collection('orders').doc(String(o.id)), {debtPaid:true}); }});
+  (state.orders || []).forEach(o=>{if(String(o.clientId)===String(clientId)&&(o.payment==='консигнация' || o.payment==='Qarz')){ batch.update(db.collection('orders').doc(String(o.id)), {debtPaid:true}); }});
   batch.commit(); showToast('✅ '+(lang==='uz'?"To'landi":'Оплачено'),'success');
 }
 function openPartialPay(clientId,remaining,name){
@@ -820,79 +870,97 @@ function applyPartialPayment(){
 // DELIVERY
 function renderDelivery(){
   const today=new Date().toDateString();
-  const todayOrders=state.orders.filter(o=>new Date(o.date).toDateString()===today);
+  const todayOrders=(state.orders || []).filter(o=>o.date && new Date(o.date).toDateString()===today);
   const total=todayOrders.length;
-  const done=todayOrders.filter(o=>o.delivered).length;
-  document.getElementById('deliveryCount').textContent=total-done||'';
-  document.getElementById('deliverySubtitle').textContent=`${lang==='uz'?'Jami':'Всего'}: ${total} · ${lang==='uz'?'Bajarildi':'Доставлено'}: ${done}`;
+  const done=todayOrders.filter(o=>o.delivered || o.status === 'done').length;
+  const countEl = document.getElementById('deliveryCount');
+  if (countEl) countEl.textContent=total-done||'';
+  const subtitleEl = document.getElementById('deliverySubtitle');
+  if (subtitleEl) subtitleEl.textContent=`${lang==='uz'?'Jami':'Всего'}: ${total} · ${lang==='uz'?'Bajarildi':'Доставлено'}: ${done}`;
   const list=document.getElementById('deliveryList');
-  if(!total){list.innerHTML=`<div class="empty"><div class="empty-icon">🚚</div><div class="empty-text">${T[lang].noOrders}</div></div>`;return;}
-  list.innerHTML=todayOrders.map((o,i)=>`
-    <div class="delivery-item ${o.delivered?'done':''}" id="ditem-${o.id}">
-      ${o.delivered?'<div class="delivery-check">✅</div>':`<div class="delivery-num">${o.stepNum || (i+1)}</div>`}
+  if(!list) return;
+  if(!total){list.innerHTML=`<div class="empty"><div class="empty-icon">🚚</div><div class="empty-text">${T[lang]?.noOrders || 'Bugun buyurtma yo\'q'}</div></div>`;return;}
+  list.innerHTML=todayOrders.map((o,i)=>{
+    const isDone = !!(o.delivered || o.status === 'done');
+    const oId = String(o.id || '');
+    const itemsText = (o.items || []).map(i=>`${i.emoji || '🥗'}${i.qty}${i.unit||'кг'}`).join(' ');
+    return `
+    <div class="delivery-item ${isDone?'done':''}" id="ditem-${oId}">
+      ${isDone?'<div class="delivery-check">✅</div>':`<div class="delivery-num">${o.stepNum || (i+1)}</div>`}
       <div class="delivery-info">
-        <div class="delivery-client">${o.client}</div>
-        <div class="delivery-details">${o.items.map(i=>`${i.emoji}${i.qty}${i.unit||'кг'}`).join(' ')} · ${fmt(o.total)} so'm</div>
+        <div class="delivery-client">${o.client || 'Noma\'lum mijoz'}</div>
+        <div class="delivery-details">${itemsText} · ${fmt(o.total || 0)} so'm</div>
         ${o.phone?`<div class="delivery-details">📞 ${o.phone}</div>`:''}
       </div>
-      ${!o.delivered?`<button class="delivery-done-btn" onclick="markDelivered(${o.id})">✅ ${lang==='uz'?'Yetkazildi':'Доставлено'}</button>`:`<span style="font-size:12px;color:var(--green);font-weight:700">${lang==='uz'?'Bajarildi':'Доставлено'}</span>`}
-    </div>`).join('');
+      ${!isDone?`<button class="delivery-done-btn" onclick="markDelivered('${oId}')">✅ ${lang==='uz'?'Yetkazildi':'Доставлено'}</button>`:`<span style="font-size:12px;color:var(--green);font-weight:700">${lang==='uz'?'Bajarildi':'Доставлено'}</span>`}
+    </div>`;
+  }).join('');
 }
 function markDelivered(id){
-  const o=state.orders.find(x=>x.id==id);if(!o)return;
-  db.collection('orders').doc(String(id)).update({delivered:true}); showToast('✅ '+(lang==='uz'?'Yetkazildi':'Доставлено'),'success');
+  const o=(state.orders || []).find(x=>String(x.id)===String(id));if(!o)return;
+  db.collection('orders').doc(String(id)).update({delivered:true, status:'done'}); showToast('✅ '+(lang==='uz'?'Yetkazildi':'Доставлено'),'success');
 }
 function resetDelivery(){
   const today=new Date().toDateString();
   const batch = db.batch();
-  state.orders.filter(o=>new Date(o.date).toDateString()===today).forEach(o=>batch.update(db.collection('orders').doc(String(o.id)), {delivered:false}));
+  (state.orders || []).filter(o=>o.date && new Date(o.date).toDateString()===today).forEach(o=>batch.update(db.collection('orders').doc(String(o.id)), {delivered:false, status:'new'}));
   batch.commit();
 }
 
 // CLIENTS
 function populateClientSelect(){
-  document.getElementById('clientSelect').onchange = renderProductsGrid;
-  const sel=document.getElementById('clientSelect');const cur=sel.value;
+  const sel=document.getElementById('clientSelect');if(!sel)return;
+  sel.onchange = renderProductsGrid;
+  const cur=sel.value;
   sel.innerHTML=`<option value="">${lang==='uz'?'— Mijozni tanlang —':'— Выберите клиента —'}</option>`+
-    state.clients.map(c=>`<option value="${c.id}">${c.name} (${c.type})</option>`).join('');
+    (state.clients || []).map(c=>`<option value="${c.id}">${c.name || 'Mijoz'} (${c.type || 'кафе'})</option>`).join('');
   if(cur)sel.value=cur;
 }
 function renderClientsList(filterText=''){
-  if (typeof renderChurnRadar === 'function') renderChurnRadar();
+  try {
+    if (typeof renderChurnRadar === 'function') renderChurnRadar();
+  } catch (err) {
+    console.warn("Churn radar error:", err);
+  }
   const list=document.getElementById('clientsList');
-  let clients=state.clients;
-  if(filterText)clients=clients.filter(c=>c.name.toLowerCase().includes(filterText.toLowerCase()));
-  if(!clients.length){list.innerHTML=`<div class="empty"><div class="empty-icon">👥</div><div class="empty-text">${T[lang].noClients}</div></div>`;return;}
-  const ti={'кафе':'☕','фаст-фуд':'🍔','ресторан':'🍽️','другое':'📍'};
+  if(!list) return;
+  let clients=state.clients || [];
+  if(filterText) clients=clients.filter(c=>(c.name || '').toLowerCase().includes(filterText.toLowerCase()) || (c.phone || '').includes(filterText));
+  if(!clients.length){list.innerHTML=`<div class="empty"><div class="empty-icon">👥</div><div class="empty-text">${T[lang]?.noClients || 'Mijozlar topilmadi'}</div></div>`;return;}
+  const ti={'кафе':'☕','фаст-фуд':'🍔','ресторан':'🍽️','другое':'📍','Oddiy':'📍'};
   list.innerHTML=clients.map(c=>{
-    const orders=state.orders.filter(o=>o.clientId==c.id);
-    const debt=state.orders.filter(o=>o.clientId==c.id&&o.payment==='консигнация'&&!o.debtPaid).reduce((s,o)=>s+(o.total-(o.partialPaid||0)),0);
-    return`<div class="client-item" id="citem-${c.id}">
-      <div class="client-avatar" onclick="showClientHistory('${c.id}')" style="cursor:pointer">${c.name.charAt(0).toUpperCase()}</div>
-      <div style="flex:1;min-width:0;cursor:pointer" onclick="showClientHistory('${c.id}')">
-        <div class="client-name">${c.name} ${debt>0?`<span class="tag orange">💰${fmt(debt)}</span>`:''}</div>
-        <div class="client-info">${ti[c.type]||'📍'} ${c.type}${c.phone?' · '+c.phone:''}</div>
-        <div class="client-info">${lang==='uz'?'Buyurtmalar':'Заказов'}: <b>${orders.length}</b> · ${fmt(orders.reduce((s,o)=>s+o.total,0))} so'm</div>
+    if(!c) return '';
+    const cId = c.id !== undefined && c.id !== null ? String(c.id) : '';
+    const cName = c.name || 'Noma\'lum mijoz';
+    const firstLetter = (cName.trim() || '?').charAt(0).toUpperCase();
+    const orders=(state.orders || []).filter(o=>String(o.clientId)===cId);
+    const debt=(state.orders || []).filter(o=>String(o.clientId)===cId && (o.payment==='консигнация' || o.payment==='Qarz') && !o.debtPaid).reduce((s,o)=>s+((Number(o.total)||0)-(Number(o.partialPaid)||0)),0);
+    return`<div class="client-item" id="citem-${cId}">
+      <div class="client-avatar" onclick="showClientHistory('${cId}')" style="cursor:pointer">${firstLetter}</div>
+      <div style="flex:1;min-width:0;cursor:pointer" onclick="showClientHistory('${cId}')">
+        <div class="client-name">${cName} ${debt>0?`<span class="tag orange">💰${fmt(debt)}</span>`:''}</div>
+        <div class="client-info">${ti[c.type]||'📍'} ${c.type||'кафе'}${c.phone?' · '+c.phone:''}</div>
+        <div class="client-info">${lang==='uz'?'Buyurtmalar':'Заказов'}: <b>${orders.length}</b> · ${fmt(orders.reduce((s,o)=>s+(Number(o.total)||0),0))} so'm</div>
       </div>
       <div style="display:flex;gap:5px;flex-shrink:0">
-        <button onclick="openCoordModal(${c.id})" style="background:rgba(90,180,247,.12);border:1px solid rgba(90,180,247,.3);color:var(--blue);border-radius:10px;padding:8px 9px;cursor:pointer;font-size:14px;transition:all .2s" title="Координаты">${c.lat?'📍':'🗺️'}</button>
-        <button onclick="openEditClientModal(${c.id})" style="background:rgba(124,106,247,.12);border:1px solid rgba(124,106,247,.3);color:var(--accent);border-radius:10px;padding:8px 9px;cursor:pointer;font-size:14px;transition:all .2s">✏️</button>
-        <button onclick="deleteClient(${c.id})" style="background:rgba(247,90,90,.12);border:1px solid rgba(247,90,90,.3);color:var(--danger);border-radius:10px;padding:8px 9px;cursor:pointer;font-size:14px;transition:all .2s">🗑</button>
+        <button onclick="openCoordModal('${cId}')" style="background:rgba(90,180,247,.12);border:1px solid rgba(90,180,247,.3);color:var(--blue);border-radius:10px;padding:8px 9px;cursor:pointer;font-size:14px;transition:all .2s" title="Координаты">${c.lat?'📍':'🗺️'}</button>
+        <button onclick="openEditClientModal('${cId}')" style="background:rgba(124,106,247,.12);border:1px solid rgba(124,106,247,.3);color:var(--accent);border-radius:10px;padding:8px 9px;cursor:pointer;font-size:14px;transition:all .2s">✏️</button>
+        <button onclick="deleteClient('${cId}')" style="background:rgba(247,90,90,.12);border:1px solid rgba(247,90,90,.3);color:var(--danger);border-radius:10px;padding:8px 9px;cursor:pointer;font-size:14px;transition:all .2s">🗑</button>
       </div>
     </div>`;
   }).join('');
 }
 function filterClients(v){renderClientsList(v);}
 function deleteClient(id){
-  const c=state.clients.find(x=>x.id==id);if(!c)return;
-  const orderCount=state.orders.filter(o=>o.clientId==id).length;
+  const c=(state.clients || []).find(x=>String(x.id)===String(id));if(!c)return;
+  const orderCount=(state.orders || []).filter(o=>String(o.clientId)===String(id)).length;
   const msg=lang==='uz'
     ?`"${c.name}"ni o'chirishni tasdiqlaysizmi?${orderCount?' ('+orderCount+' ta buyurtma ham o\'chadi)':''}`
     :`Удалить клиента "${c.name}"?${orderCount?' ('+orderCount+' заказов тоже будут удалены)':''}`;
   if(!confirm(msg))return;
   const batch = db.batch();
   batch.delete(db.collection('clients').doc(String(id)));
-  state.orders.filter(o=>o.clientId==id).forEach(o => batch.delete(db.collection('orders').doc(String(o.id))));
+  (state.orders || []).filter(o=>String(o.clientId)===String(id)).forEach(o => batch.delete(db.collection('orders').doc(String(o.id))));
   batch.commit();
   showToast('🗑 '+(lang==='uz'?"O'chirildi":'Удалён'),'info');
   syncClientsToSheets(true);
@@ -900,16 +968,16 @@ function deleteClient(id){
 function syncClientsToSheets() {}
 
 function openEditClientModal(id){
-  const c=state.clients.find(x=>x.id==id);if(!c)return;
-  editingClientId=id;
+  const c=(state.clients || []).find(x=>String(x.id)===String(id));if(!c)return;
+  editingClientId=String(id);
   document.getElementById('editClientName').value=c.name||'';
   document.getElementById('editClientPhone').value=c.phone||'';
   document.getElementById('editClientType').value=c.type||'кафе';
   document.getElementById('editClientAddress').value=c.address||'';
-  const customPricesHTML = PRODUCTS.map(p => {
+  const customPricesHTML = (PRODUCTS || []).map(p => {
     const currentPrice = (c.customPrices && c.customPrices[p.id]) ? c.customPrices[p.id] : '';
     return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-      <div style="flex:1;font-size:14px">${p.emoji} ${p.name}</div>
+      <div style="flex:1;font-size:14px">${p.emoji || '🥗'} ${p.name}</div>
       <input type="number" id="cp_edit_${p.id}" class="form-input" style="width:120px;padding:8px" placeholder="${p.price}" value="${currentPrice}">
     </div>`;
   }).join('');
@@ -1460,11 +1528,17 @@ function calculateItemProfit(item, prodFallback = null) {
 }
 
 function calculateOrderProfit(order) {
+  if (!order) return 0;
   let profit = 0;
-  (order.items || []).forEach(i => {
-    const p = (PRODUCTS || []).find(x => x.id === i.id);
-    profit += calculateItemProfit(i, p);
-  });
+  try {
+    (order.items || []).forEach(i => {
+      if (!i) return;
+      const p = (PRODUCTS || []).find(x => x && x.id === i.id);
+      profit += calculateItemProfit(i, p);
+    });
+  } catch(e) {
+    return 0;
+  }
   return profit;
 }
 
@@ -2463,9 +2537,27 @@ function printGeneratedLabels() {
 // ==================== 2. CHURN RISK RADAR ====================
 let currentRadarFilter = 'all';
 
+function toggleChurnRadar() {
+  const body = document.getElementById('radarBody');
+  const btnText = document.getElementById('radarToggleText');
+  if (!body) return;
+  const isHidden = body.style.display === 'none';
+  body.style.display = isHidden ? 'block' : 'none';
+  if (btnText) {
+    btnText.textContent = isHidden 
+      ? (lang === 'uz' ? "▴ Yashirish" : "▴ Скрыть")
+      : (lang === 'uz' ? "▾ Ko'rish" : "▾ Показать");
+  }
+}
+
 function getClientRiskStatus(client) {
-  const orders = (state.orders || []).filter(o => o.clientId == client.id);
-  if (!orders.length) {
+  if (!client || client.id === undefined || client.id === null) {
+    return { level: 'none', badge: '', desc: '', daysSince: null, avgInterval: null, ordersCount: 0, monthlyRisk: 0 };
+  }
+  const cId = String(client.id);
+  const orders = (state.orders || []).filter(o => String(o.clientId) === cId);
+  const validOrders = orders.filter(o => o.date && !isNaN(new Date(o.date).getTime()));
+  if (!validOrders.length) {
     return {
       level: 'none',
       badge: lang === 'uz' ? 'Yangi mijoz' : 'Новый клиент',
@@ -2477,7 +2569,7 @@ function getClientRiskStatus(client) {
     };
   }
 
-  const sorted = [...orders].sort((a,b) => new Date(b.date) - new Date(a.date));
+  const sorted = [...validOrders].sort((a,b) => new Date(b.date) - new Date(a.date));
   const now = new Date();
   const lastOrderDate = new Date(sorted[0].date);
   const daysSince = Math.max(0, Math.floor((now - lastOrderDate) / (1000 * 60 * 60 * 24)));
@@ -2489,8 +2581,8 @@ function getClientRiskStatus(client) {
     avgInterval = Math.max(1, Math.round(spanDays / (sorted.length - 1)));
   }
 
-  const avgOrderTotal = Math.round(orders.reduce((s,o)=>s+(o.total||0),0) / orders.length);
-  const monthlyRisk = Math.round(avgOrderTotal * (30 / avgInterval));
+  const avgOrderTotal = Math.round(validOrders.reduce((s,o)=>s+(Number(o.total)||0),0) / validOrders.length);
+  const monthlyRisk = Math.round(avgOrderTotal * (30 / Math.max(1, avgInterval))) || 0;
 
   if (daysSince >= 14 || (sorted.length >= 2 && daysSince >= avgInterval * 2.8)) {
     return {
@@ -2499,7 +2591,7 @@ function getClientRiskStatus(client) {
       desc: lang === 'uz' ? `Odatda har ${avgInterval} kunda · ${daysSince} kundan beri buyurtma yo'q!` : `Обычно каждые ${avgInterval} дн. · Нет заказов ${daysSince} дн.!`,
       daysSince,
       avgInterval,
-      ordersCount: orders.length,
+      ordersCount: validOrders.length,
       monthlyRisk
     };
   } else if (daysSince >= 6 || (sorted.length >= 2 && daysSince >= avgInterval * 1.6)) {
@@ -2509,7 +2601,7 @@ function getClientRiskStatus(client) {
       desc: lang === 'uz' ? `Odatda har ${avgInterval} kunda · ${daysSince} kundan beri buyurtma yo'q` : `Обычно каждые ${avgInterval} дн. · Задержка ${daysSince} дн.`,
       daysSince,
       avgInterval,
-      ordersCount: orders.length,
+      ordersCount: validOrders.length,
       monthlyRisk
     };
   } else {
@@ -2519,7 +2611,7 @@ function getClientRiskStatus(client) {
       desc: '',
       daysSince,
       avgInterval,
-      ordersCount: orders.length,
+      ordersCount: validOrders.length,
       monthlyRisk: 0
     };
   }
@@ -2544,7 +2636,7 @@ function renderChurnRadar(levelFilter = currentRadarFilter) {
   clientsWithRisk.sort((a,b) => {
     if (a.risk.level === 'critical' && b.risk.level !== 'critical') return -1;
     if (b.risk.level === 'critical' && a.risk.level !== 'critical') return 1;
-    return b.risk.monthlyRisk - a.risk.monthlyRisk;
+    return (b.risk.monthlyRisk || 0) - (a.risk.monthlyRisk || 0);
   });
 
   const critCount = clientsWithRisk.filter(x => x.risk.level === 'critical').length;
@@ -2573,27 +2665,30 @@ function renderChurnRadar(levelFilter = currentRadarFilter) {
   }
 
   container.innerHTML = filtered.slice(0, 10).map(({ client: c, risk: r }) => {
+    if (!c) return '';
     const isCrit = r.level === 'critical';
     const borderClr = isCrit ? 'rgba(247,90,90,0.3)' : 'rgba(255,152,0,0.3)';
     const bgClr = isCrit ? 'rgba(247,90,90,0.06)' : 'rgba(255,152,0,0.06)';
-    const tgLink = c.phone ? `https://t.me/+${c.phone.replace(/\D/g, '')}` : '';
+    const phoneClean = typeof c.phone === 'string' ? c.phone.replace(/\D/g, '') : '';
+    const tgLink = phoneClean ? 'https://t.me/+' + phoneClean : '';
+    const cId = String(c.id || '');
 
     return `
       <div class="radar-item" style="border-color:${borderClr};background:${bgClr};flex-wrap:wrap;">
         <div style="flex:1;min-width:180px;">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
-            <span style="font-weight:800;font-size:14px;">${c.name}</span>
+            <span style="font-weight:800;font-size:14px;">${c.name || 'Mijoz'}</span>
             <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px;background:${isCrit?'rgba(247,90,90,0.2)':'rgba(255,152,0,0.2)'};color:${isCrit?'var(--danger)':'var(--orange)'};">${r.badge}</span>
           </div>
           <div style="font-size:11px;color:var(--text2);margin-bottom:2px;">${r.desc}</div>
           <div style="font-size:11px;color:var(--text3);">
-            ${lang === 'uz' ? 'Xavf ostidagi oylik aylanma:' : 'Риск оборота:'} <b style="color:${isCrit?'var(--danger)':'var(--orange)'}">~${fmt(r.monthlyRisk)} so'm/oy</b>
+            ${lang === 'uz' ? 'Xavf ostidagi oylik aylanma:' : 'Риск оборота:'} <b style="color:${isCrit?'var(--danger)':'var(--orange)'}">~${fmt(r.monthlyRisk || 0)} so'm/oy</b>
           </div>
         </div>
         <div style="display:flex;gap:6px;align-items:center;">
           ${c.phone ? `<a href="tel:${c.phone}" class="btn btn-outline btn-sm" style="padding:6px 10px;font-size:12px;" title="${lang==='uz'?'Qo\'ng\'iroq qilish':'Позвонить'}">📞</a>` : ''}
           ${tgLink ? `<a href="${tgLink}" target="_blank" class="btn btn-outline btn-sm" style="padding:6px 10px;font-size:12px;" title="Telegram">💬</a>` : ''}
-          <button class="btn btn-primary btn-sm" style="padding:6px 12px;font-size:12px;" onclick="quickOrderForClient('${c.id}')">
+          <button class="btn btn-primary btn-sm" style="padding:6px 12px;font-size:12px;" onclick="quickOrderForClient('${cId}')">
             📝 ${lang === 'uz' ? 'Buyurtma' : 'Заказ'}
           </button>
         </div>
@@ -2604,7 +2699,7 @@ function renderChurnRadar(levelFilter = currentRadarFilter) {
 function quickOrderForClient(clientId) {
   const sel = document.getElementById('clientSelect');
   if (sel) sel.value = clientId;
-  switchTab('new-order');
+  showPage('new-order');
   renderProductsGrid();
   showToast(lang === 'uz' ? 'Mijoz tanlandi, buyurtma qabul qiling' : 'Клиент выбран для нового заказа', 'info');
 }

@@ -177,15 +177,17 @@ function renderProducts() {
   
   container.innerHTML = PRODUCTS.map(p => {
     const qty = cart[p.id] || 0;
+    const price = getProductPrice(p);
+    const pName = p.nameUz || p.name || 'Mahsulot';
     return `
       <div class="product-row">
         <div style="flex:1">
-          <div style="font-weight:700; font-size:15px;">${p.emoji} ${p.name}</div>
-          <div style="font-size:12px; color:var(--text2)">${p.price.toLocaleString('ru-RU')} so'm / ${p.unit||'kg'}</div>
+          <div style="font-weight:700; font-size:15px;">${p.emoji || '🥗'} ${pName}</div>
+          <div style="font-size:12px; color:var(--text2)">${Number(price).toLocaleString('ru-RU')} so'm / ${p.unit||'kg'}</div>
         </div>
         <div style="display:flex; align-items:center; gap:12px;">
           <button class="qty-btn" onclick="updateQty('${p.id}', -1)">-</button>
-          <div style="font-weight:900; font-size:16px; width:20px; text-align:center;">${qty}</div>
+          <div style="font-weight:900; font-size:16px; width:24px; text-align:center;">${qty}</div>
           <button class="qty-btn" onclick="updateQty('${p.id}', 1)">+</button>
         </div>
       </div>
@@ -216,9 +218,9 @@ function updateQty(id, sign) {
 function calcTotal() {
   let total = 0;
   PRODUCTS.forEach(p => {
-    if(cart[p.id]) total += cart[p.id] * p.price;
+    if(cart[p.id]) total += cart[p.id] * getProductPrice(p);
   });
-  document.getElementById('orderTotalSum').innerText = total.toLocaleString('ru-RU');
+  document.getElementById('orderTotalSum').innerText = Math.round(total).toLocaleString('ru-RU');
 }
 
 function submitOrder() {
@@ -236,15 +238,17 @@ function submitOrder() {
   let total = 0;
   PRODUCTS.forEach(p => {
     if(cart[p.id] > 0) {
+      const price = getProductPrice(p);
       items.push({
         id: p.id,
         name: p.name || '',
-        emoji: p.emoji || '',
-        qty: cart[p.id],
-        price: p.price || 0,
-        unit: p.unit || ''
+        nameUz: p.nameUz || p.name || '',
+        emoji: p.emoji || '🥗',
+        qty: Number(cart[p.id]),
+        price: Number(price) || 0,
+        unit: p.unit || 'kg'
       });
-      total += cart[p.id] * (p.price || 0);
+      total += Number(cart[p.id]) * (Number(price) || 0);
     }
   });
   
@@ -274,14 +278,15 @@ function submitOrder() {
   let finalClientId = Date.now();
   const existingClient = CLIENTS.find(c => {
     const displayStr = c.name + (c.phone ? ' — ' + c.phone : '');
-    return displayStr === clientInput || (c.name === cName && c.phone === cPhone);
+    return displayStr === clientInput || (c.name === cName && c.phone === cPhone) || c.name === cName;
   });
   
-  if (existingClient) {
+  if (existingClient && existingClient.id) {
     finalClientId = existingClient.id;
   }
   
   const orderId = Date.now();
+  const isDebt = payment === 'Qarz' || payment === 'консигнация';
   const orderData = {
     id: orderId,
     date: new Date().toISOString(),
@@ -296,7 +301,12 @@ function submitOrder() {
     status: 'new',
     type: 'Dostavka',
     agent: loggedAgentName,
-    sent: false
+    sent: false,
+    delivered: false,
+    sentSheets: false,
+    courier: '',
+    partialPaid: 0,
+    debtPaid: !isDebt
   };
   
   db.collection('orders').doc(String(orderId)).set(orderData)
@@ -309,7 +319,7 @@ function submitOrder() {
         name: cName,
         phone: cPhone,
         address: address,
-        type: existingClient ? (existingClient.type || 'Oddiy') : 'Oddiy'
+        type: existingClient ? (existingClient.type || 'кафе') : 'кафе'
       };
       
       if(currentLat && currentLng) {
