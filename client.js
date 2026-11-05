@@ -141,7 +141,7 @@ function renderProducts() {
       <div style="display:flex; align-items:center; gap:12px;">
         <div style="font-size:32px; background:var(--bg3); width:50px; height:50px; display:flex; align-items:center; justify-content:center; border-radius:14px; border:1px solid var(--border);">${p.emoji || '🍔'}</div>
         <div>
-          <div style="font-weight:700; font-size:15px; margin-bottom:4px; line-height:1.2;">${p.name} ${hasCustomPrice}</div>
+          <div style="font-weight:700; font-size:15px; margin-bottom:4px; line-height:1.2;">${(clientLang === 'uz' && p.nameUz) ? p.nameUz : (p.name || '')} ${hasCustomPrice}</div>
           <div style="color:var(--accent2); font-weight:900; font-size:14px;">${fmt(price)} <span style="font-size:11px; color:var(--text3); font-weight:600;">/ ${p.unit || 'кг'}</span></div>
         </div>
       </div>
@@ -266,7 +266,7 @@ async function submitOrder() {
     const p = products.find(x => x.id === id);
     if(p) {
       const price = getPrice(p);
-      items.push({ id: p.id, name: p.name || '', emoji: p.emoji || '', qty: cart[id], price: price, unit: p.unit || 'кг' });
+      items.push({ id: p.id, name: p.name || '', nameUz: p.nameUz || p.name || '', emoji: p.emoji || '', qty: cart[id], price: price, unit: p.unit || 'кг' });
       total += cart[id] * price;
     }
   }
@@ -282,7 +282,12 @@ async function submitOrder() {
     note: note || '', 
     items: items, 
     total: total || 0,
-    type: 'доставка',
+    type: 'Dostavka',
+    delivered: false,
+    sentSheets: false,
+    courier: '',
+    partialPaid: 0,
+    debtPaid: paymentMethod !== 'консигнация' && paymentMethod !== 'Qarz',
     payment: paymentMethod,
     status: 'new',
     date: new Date().toISOString()
@@ -363,7 +368,7 @@ async function submitOrder() {
     alert("Ошибка: " + e.message);
   } finally {
     document.getElementById('submitBtn').disabled = false;
-    document.getElementById('submitBtn').innerText = 'Подтвердить заказ';
+    document.getElementById('submitBtn').innerText = t.orderBtn;
   }
 }
 
@@ -380,7 +385,7 @@ function escapeHTML(str) {
 }
 
 function buildTgMsg(order){
-  const pi={'наличные':'💵','клик':'📱','консигнация':'📝'};
+  const pi={'наличные':'💵','клик':'📱','консигнация':'📝','Naqd':'💵','Karta':'💳','Qarz':'📝','карта':'💳'};
   const d=new Date(order.date);
   const ds=d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
   let l=[`🥗 <b>НОВЫЙ ЗАКАЗ ИЗ WEB APP</b>`,``,`👤 <b>${escapeHTML(order.client)}</b>`];
@@ -390,7 +395,7 @@ function buildTgMsg(order){
   l.push(``,`📦 <b>Заказ:</b>`);
   order.items.forEach((i,idx)=>l.push(`${idx+1}. ${i.emoji||''} ${escapeHTML(i.name)} — ${i.qty}${escapeHTML(i.unit||'кг')}`));
   l.push(``,`💰 <b>Итого: ${fmt(order.total)} сум</b>`,`💳 ${pi[order.payment]||''} ${escapeHTML(order.payment)}`);
-  if(order.type==='доставка')l.push(`🛵 Доставка`);
+  if(order.type==='доставка'||order.type==='Dostavka')l.push(`🛵 Доставка`);
   l.push(``,`⏱ ${ds}`);
   return l.join('\n');
 }
@@ -560,15 +565,19 @@ window.confirmClientMap = function() {
     const center = clientMapInstance.getCenter();
     clientLat = center[0];
     clientLng = center[1];
-    document.getElementById('locationStatus').style.display = 'block';
+    const locStatus = document.getElementById('locationStatus');
+    if (locStatus) locStatus.style.display = 'block';
     
     // Reverse geocode to get address text (optional, but nice)
-    ymaps.geocode(center).then(function (res) {
-      const firstGeoObject = res.geoObjects.get(0);
-      if(firstGeoObject) {
-        document.getElementById('orderAddress').value = firstGeoObject.getAddressLine();
-      }
-    });
+    if (window.ymaps && ymaps.geocode) {
+      ymaps.geocode(center).then(function (res) {
+        const firstGeoObject = res && res.geoObjects && res.geoObjects.get(0);
+        if(firstGeoObject) {
+          const addr = document.getElementById('orderAddress');
+          if (addr) addr.value = firstGeoObject.getAddressLine();
+        }
+      }).catch(function() {});
+    }
   }
   closeClientMap();
 }

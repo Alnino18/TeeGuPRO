@@ -447,7 +447,7 @@ async function sendDaySummary(){
   const today=new Date().toDateString();
   const todayOrders=(state.orders || []).filter(o=>new Date(o.date).toDateString()===today);
   const totalRev=todayOrders.reduce((s,o)=>s+(o.total||0),0);
-  const debts=(state.orders || []).filter(o=>o.payment==='консигнация'&&!o.debtPaid);
+  const debts=(state.orders || []).filter(isDebtOrder);
   const totalDebt=debts.reduce((s,o)=>s+(o.total||0)-(o.partialPaid||0),0);
   const prodTotals={};(PRODUCTS || []).forEach(p=>{prodTotals[p.id]=0;});
   todayOrders.forEach(o=>(o.items || []).forEach(i=>{if(prodTotals[i.id]!==undefined)prodTotals[i.id]+=i.qty;}));
@@ -685,7 +685,7 @@ function saveEditOrder(){
   } else {
     o.courier = '';
   }
-  o.debtPaid=o.payment!=='консигнация';
+  o.debtPaid = o.payment !== 'консигнация' && o.payment !== 'Qarz';
   const newItems=PRODUCTS.map(p=>{
     const qty=parseFloat(document.getElementById('eqty-'+p.id).textContent)||0;
     return qty>0?{...p,qty}:null;
@@ -697,14 +697,14 @@ function saveEditOrder(){
 function showOrderDetail(id){
   const o=state.orders.find(x=>x.id==id);if(!o)return;
   state.currentOrderId=id;
-  document.getElementById('detailTitle').textContent='📋 '+o.client;
-  const pi={'наличные':'💵','клик':'📱','консигнация':'📝'};
+  document.getElementById('detailTitle').textContent='📋 '+(o.client || 'Mijoz');
+  const pi={'наличные':'💵','клик':'📱','консигнация':'📝','Naqd':'💵','Karta':'💳','Qarz':'📝','карта':'💳'};
   const d=new Date(o.date);
   const orderProfit = calculateOrderProfit(o);
   const orderMarginPct = o.total > 0 ? Math.round((orderProfit / o.total) * 100) : 0;
   document.getElementById('detailContent').innerHTML=`
     <div class="order-summary">
-      ${o.items.map(i=>`<div class="summary-row"><span class="summary-name">${i.emoji} ${lang==='uz'?i.nameUz:i.name}</span><span class="summary-qty">${i.qty}${i.unit||'кг'} · ${fmt(i.qty*i.price)} so'm</span></div>`).join('')}
+      ${(o.items || []).map(i=>`<div class="summary-row"><span class="summary-name">${i.emoji||'🥗'} ${(lang==='uz'?(i.nameUz||i.name):i.name)||''}</span><span class="summary-qty">${i.qty}${i.unit||'кг'} · ${fmt(i.qty*i.price)} so'm</span></div>`).join('')}
       <div class="total-row"><span class="total-label">${lang==='uz'?'Jami:':'Итого:'}</span><span class="total-amount">${fmt(o.total)} so'm</span></div>
       <div class="summary-row" style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--border);color:var(--green);font-weight:700">
         <span>📈 ${lang==='uz'?'Kutilayotgan sof foyda:':'Чистая прибыль:'}</span>
@@ -844,7 +844,7 @@ function openPartialPay(clientId,remaining,name){
 }
 function updatePartialRemaining(){
   if(!partialClientId)return;
-  const debtOrders=state.orders.filter(o=>o.clientId==partialClientId&&o.payment==='консигнация'&&!o.debtPaid);
+  const debtOrders=(state.orders || []).filter(o=>String(o.clientId)==String(partialClientId) && isDebtOrder(o));
   const total=debtOrders.reduce((s,o)=>s+o.total-(o.partialPaid||0),0);
   const paid=parseFloat(document.getElementById('partialAmount').value)||0;
   const rem=Math.max(0,total-paid);
@@ -855,7 +855,7 @@ function applyPartialPayment(){
   const paid=parseFloat(document.getElementById('partialAmount').value)||0;
   if(paid<=0){showToast('⚠️ Введите сумму','error');return;}
   let rem=paid;
-  const debtOrders=state.orders.filter(o=>o.clientId==partialClientId&&o.payment==='консигнация'&&!o.debtPaid);
+  const debtOrders=(state.orders || []).filter(o=>String(o.clientId)==String(partialClientId) && isDebtOrder(o));
   debtOrders.forEach(o=>{
     const owed=o.total-(o.partialPaid||0);
     if(rem>=owed){o.debtPaid=true;rem-=owed;}
@@ -1016,12 +1016,12 @@ function showClientHistory(clientId){
   document.getElementById('historyContent').innerHTML=!orders.length
     ?`<div class="empty" style="padding:20px"><div class="empty-text">${T[lang].noOrders}</div></div>`
     :orders.map(o=>{
-      const d=new Date(o.date);const pi={'наличные':'💵','клик':'📱','консигнация':'📝'};
+      const d=new Date(o.date);const pi={'наличные':'💵','клик':'📱','консигнация':'📝','Naqd':'💵','Karta':'💳','Qarz':'📝','карта':'💳'};
       return`<div class="history-order">
-        <div class="history-date">${d.toLocaleDateString('ru-RU')} ${d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})} · ${pi[o.payment]||''} ${o.payment}</div>
-        <div class="history-items">${o.items.map(i=>`${i.emoji} ${lang==='uz'?i.nameUz:i.name}: ${i.qty}${i.unit||'кг'}`).join(' · ')}</div>
+        <div class="history-date">${d.toLocaleDateString('ru-RU')} ${d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})} · ${pi[o.payment]||'💵'} ${o.payment||'Naqd'}</div>
+        <div class="history-items">${(o.items || []).map(i=>`${i.emoji||'🥗'} ${(lang==='uz'?(i.nameUz||i.name):i.name)||''}: ${i.qty}${i.unit||'кг'}`).join(' · ')}</div>
         ${o.note?`<div style="font-size:11px;color:var(--text3);margin-top:3px">📝 ${o.note}</div>`:''}
-        <div class="history-total">${fmt(o.total)} so'm ${o.payment==='консигнация'&&!o.debtPaid?`<span class="tag orange">${lang==='uz'?'Qarz':'Долг'}</span>`:''}</div>
+        <div class="history-total">${fmt(o.total)} so'm ${isDebtOrder(o)?`<span class="tag orange">${lang==='uz'?'Qarz':'Долг'}</span>`:''}</div>
       </div>`;
     }).join('');
   openModal('clientHistoryModal');
@@ -1285,7 +1285,7 @@ function renderMonthlyReport(){
     months[key].rev+=(o.total||0);
     months[key].profit+=calculateOrderProfit(o);
     months[key].count++;
-    if(o.payment==='консигнация'&&!o.debtPaid)months[key].debt+=(o.total-(o.partialPaid||0));
+    if(isDebtOrder(o))months[key].debt+=(o.total-(o.partialPaid||0));
   });
   const entries=Object.entries(months).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,12);
   if(!entries.length){el.innerHTML=`<div style="color:var(--text3);font-size:13px">${T[lang].noOrders}</div>`;return;}
@@ -1392,7 +1392,7 @@ function saveNewProduct(){
 }
 function exportToExcel(){
   const rows=[['Дата','Клиент','Телефон','Тип','Оплата','Фунчоза','Морковча','Сол огурцы','Капуста','Куксу','Итого','Примечание']];
-  state.orders.forEach(o=>{const d=new Date(o.date);rows.push([d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}),o.client,o.phone,o.type,o.payment,o.items.find(i=>i.id==='funchoza')?.qty||0,o.items.find(i=>i.id==='morkovcha')?.qty||0,o.items.find(i=>i.id==='sologurc')?.qty||0,o.items.find(i=>i.id==='kapusta')?.qty||0,o.items.find(i=>i.id==='kuksi')?.qty||0,o.total,o.note||'']);});
+  state.orders.forEach(o=>{const d=new Date(o.date);const its=o.items||[];rows.push([d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}),o.client,o.phone,o.type,o.payment,its.find(i=>i.id==='funchoza')?.qty||0,its.find(i=>i.id==='morkovcha')?.qty||0,its.find(i=>i.id==='sologurc')?.qty||0,its.find(i=>i.id==='kapusta')?.qty||0,its.find(i=>i.id==='kuksi')?.qty||0,o.total,o.note||'']);});
   const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'}));
   a.download='СалатПро_'+new Date().toLocaleDateString('ru-RU').replace(/\./g,'-')+'.csv';a.click();
@@ -1558,7 +1558,7 @@ function renderDashboard(){
   const todayMarginPct = todayRev > 0 ? Math.round((todayProfit / todayRev) * 100) : 0;
 
   const todayDelivered=todayOrders.filter(o=>o.delivered).length;
-  const allDebts=state.orders.filter(o=>o.payment==='консигнация'&&!o.debtPaid);
+  const allDebts=(state.orders || []).filter(isDebtOrder);
   const totalDebt=allDebts.reduce((s,o)=>s+(o.total-(o.partialPaid||0)),0);
   const debtClients=new Set(allDebts.map(o=>o.clientId)).size;
   const unsent=state.orders.filter(o=>!o.sent).length;
@@ -1731,9 +1731,9 @@ function updateYandexMarkers(all,route){
   const rIds=new Set(route.map(c=>c.id));
   all.forEach((c,idx)=>{
     const isR=rIds.has(c.id);
-    const num=isR?route.findIndex(x=>x.id===c.id)+1:c.name.charAt(0);
+    const num=isR?route.findIndex(x=>x.id===c.id)+1:(c.name ? c.name.charAt(0).toUpperCase() : 'M');
     const clr=isR?'#7c6af7':'#56d4a0';
-    const debt=state.orders.filter(o=>o.clientId==c.id&&o.payment==='консигнация'&&!o.debtPaid).reduce((s,o)=>s+(o.total-(o.partialPaid||0)),0);
+    const debt=(state.orders || []).filter(o=>String(o.clientId)==String(c.id) && isDebtOrder(o)).reduce((s,o)=>s+((Number(o.total)||0)-(Number(o.partialPaid)||0)),0);
     
     const iconLayout = ymaps.templateLayoutFactory.createClass(
         `<div style="background:${clr};color:white;border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,.3); transform: translate(-16px, -16px)">${num}</div>`
@@ -1816,14 +1816,14 @@ function updateBadges(){
   const unsent=state.orders.filter(o=>!o.sent).length;
   const badge=document.getElementById('pendingBadge');badge.style.display=unsent?'flex':'none';badge.textContent=unsent;
   document.getElementById('ordersCount').textContent=state.orders.length;
-  const debtClients=new Set(state.orders.filter(o=>o.payment==='консигнация'&&!o.debtPaid).map(o=>o.clientId)).size;
+  const debtClients=new Set((state.orders || []).filter(isDebtOrder).map(o=>o.clientId)).size;
   document.getElementById('debtsCount').textContent=debtClients||'';
   const today=new Date().toDateString();
   const pendingDelivery=state.orders.filter(o=>new Date(o.date).toDateString()===today&&!o.delivered).length;
   document.getElementById('deliveryCount').textContent=pendingDelivery||'';
 }
 function resetOrder(){
-  const oc=document.getElementById('orderCourier');if(oc)oc.value='';document.getElementById('orderCourier').value='';state.quantities={};state.selectedPayment='наличные';document.getElementById('clientSelect').value='';document.getElementById('clientPhone').value='';document.getElementById('orderNote').value='';document.getElementById('summaryBlock').style.display='none';renderProductsGrid();document.querySelectorAll('.payment-pills .pill').forEach((p,i)=>p.classList.toggle('selected',i===0));}
+  const oc=document.getElementById('orderCourier');if(oc)oc.value='';state.quantities={};state.selectedPayment='наличные';document.getElementById('clientSelect').value='';document.getElementById('clientPhone').value='';document.getElementById('orderNote').value='';document.getElementById('summaryBlock').style.display='none';renderProductsGrid();document.querySelectorAll('.payment-pills .pill').forEach((p,i)=>p.classList.toggle('selected',i===0));}
 function showToast(msg,type='info'){const t=document.getElementById('toast');t.textContent=msg;t.className='toast '+type+' show';setTimeout(()=>t.className='toast '+type,3000);}
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
@@ -2027,7 +2027,7 @@ function buildBusinessContext() {
   });
   
   // 2. Qarzlar (Konsignatsiya)
-  const debts = (state.orders || []).filter(o => o.payment === 'консигнация' && !o.debtPaid);
+  const debts = (state.orders || []).filter(isDebtOrder);
   const totalDebt = debts.reduce((s, o) => s + (o.total || 0) - (o.partialPaid || 0), 0);
   
   const clientDebts = {};
