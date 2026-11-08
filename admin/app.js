@@ -476,6 +476,11 @@ async function sendDaySummary(){
     const res = await r.json();
     if(res.ok){
       showToast('✅ ' + (isUz ? 'Hisobot yuborildi!' : 'Сводка отправлена!'),'success');
+      try {
+        const todayStr = new Date().toLocaleDateString('en-CA');
+        db.collection('settings').doc('main').set({ lastAutoSummaryDate: todayStr }, { merge: true });
+        localStorage.setItem('lastAutoSummary', todayStr);
+      } catch(e) {}
       return true;
     } else {
       showToast('❌ Ошибка Telegram','error');
@@ -501,8 +506,9 @@ async function checkAutoDailySummary() {
   
   // Agar belgilangan vaqtdan (masalan 22:00) o'tgan bo'lsa va bugun yuborilmagan bo'lsa
   if (currentMinutes >= targetMinutes) {
-    const todayStr = d.toDateString();
-    if (localStorage.getItem('lastAutoSummary') !== todayStr) {
+    const todayStr = d.toLocaleDateString('en-CA');
+    const lastSent = (state.settings && state.settings.lastAutoSummaryDate) || localStorage.getItem('lastAutoSummary');
+    if (lastSent !== todayStr) {
       localStorage.setItem('lastAutoSummary', todayStr);
       const ok = await sendDaySummary();
       if (!ok) {

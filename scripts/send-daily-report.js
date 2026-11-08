@@ -56,12 +56,28 @@ function escapeHTML(str) {
     .replace(/>/g, '&gt;');
 }
 
-function getTashkentDateString(d = new Date()) {
-  return new Date(d).toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
+function getTashkentReportDate(d = new Date()) {
+  const dateObj = new Date(d);
+  const tashkentHourStr = dateObj.toLocaleTimeString('en-US', { timeZone: 'Asia/Tashkent', hour12: false, hour: '2-digit' });
+  const tashkentHour = parseInt(tashkentHourStr, 10);
+  const tDate = new Date(dateObj.toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
+  if (tashkentHour < 6) {
+    tDate.setDate(tDate.getDate() - 1);
+  }
+  const y = tDate.getFullYear();
+  const m = String(tDate.getMonth() + 1).padStart(2, '0');
+  const day = String(tDate.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
 }
 
-function getTashkentDisplayDate(d = new Date()) {
-  return new Date(d).toLocaleDateString('ru-RU', { timeZone: 'Asia/Tashkent' });
+function getTashkentReportDisplayDate(d = new Date()) {
+  const dateStr = getTashkentReportDate(d);
+  const parts = dateStr.split('-');
+  return parts[2] + '.' + parts[1] + '.' + parts[0];
+}
+
+function getTashkentDateString(d = new Date()) {
+  return new Date(d).toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
 }
 
 async function fetchJson(url) {
@@ -112,7 +128,17 @@ async function main() {
   console.log(`Jami buyurtmalar: ${orders.length}, mahsulotlar: ${products.length}`);
 
   // 4. Bugungi hisobotni hisoblash (Toshkent vaqti bo'yicha)
-  const todayStr = getTashkentDateString();
+  const todayStr = getTashkentReportDate();
+  const isForce = process.argv.includes('--force');
+  let settings = {};
+  try {
+    const sDoc = await fetchJson(BASE_FIRESTORE_URL + "/settings/main");
+    settings = parseFirestoreDoc(sDoc);
+  } catch(e) {}
+  if (!isDryRun && !isForce && settings.lastAutoSummaryDate === todayStr) {
+    console.log("ℹ️ [" + todayStr + "] sanasi uchun kunlik hisobot allaqachon yuborilgan. Takroriy yuborish bekor qilindi.");
+    return;
+  }
   const todayOrders = orders.filter(o => getTashkentDateString(o.date) === todayStr);
   const totalRev = todayOrders.reduce((sum, o) => sum + (o.total || 0), 0);
 
@@ -174,7 +200,7 @@ async function main() {
     ? deliveredOrders.map(o => `  👤 ${escapeHTML(o.client)}`).join('\n')
     : '  Нет доставленных';
 
-  const displayDate = getTashkentDisplayDate();
+  const displayDate = getTashkentReportDisplayDate();
   const lines = [
     `📊 <b>СВОДКА ЗА ДЕНЬ — ${displayDate}</b>`,
     ``,
@@ -240,6 +266,20 @@ async function main() {
   const tgResult = await tgRes.json();
   if (tgResult.ok) {
     console.log('✅ Kunlik hisobot Telegramga muvaffaqiyatli yuborildi!');
+    try {
+      await fetch(BASE_FIRESTORE_URL + "/settings/main?updateMask.fieldPaths=lastAutoSummaryDate", {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fields: {
+            lastAutoSummaryDate: { stringValue: todayStr }
+          }
+        })
+      });
+      console.log("📌 Firestore sozlamalariga yozildi: lastAutoSummaryDate = " + todayStr);
+    } catch(saveErr) {
+      console.warn('lastAutoSummaryDate ni saqlashda xatolik:', saveErr.message);
+    }
   } else {
     console.error('❌ Telegram xatosi:', tgResult);
     process.exit(1);
