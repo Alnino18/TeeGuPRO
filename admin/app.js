@@ -69,6 +69,11 @@ let chartPeriod='week';
 let partialClientId=null;
 let editingClientId=null;
 let editingOrderId=null;
+let warehouseFilterStatus='all';
+
+function roundQty(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
 
 let state={
   clients: [],
@@ -92,6 +97,9 @@ db.collection('products').onSnapshot(snap => {
     PRODUCTS = snap.docs.map(d => d.data());
   }
   renderProductsGrid(); renderProductsSettings();
+  try { renderWarehouse(); } catch(e) {}
+  try { updateWarehouseBadge(); } catch(e) {}
+  try { renderDashboard(); } catch(e) {}
 });
 
 db.collection('clients').onSnapshot(snap => {
@@ -118,6 +126,7 @@ db.collection('orders').onSnapshot(snap => {
   try { renderStats(); } catch(e) { console.error("renderStats error:", e); }
   try { renderDebts(); } catch(e) { console.error("renderDebts error:", e); }
   try { renderDelivery(); } catch(e) { console.error("renderDelivery error:", e); }
+  try { renderWarehouse(); } catch(e) {}
   try { renderFavorites(); } catch(e) { console.error("renderFavorites error:", e); }
   try { renderDashboard(); } catch(e) { console.error("renderDashboard error:", e); }
   try { updateBadges(); } catch(e) { console.error("updateBadges error:", e); }
@@ -125,7 +134,16 @@ db.collection('orders').onSnapshot(snap => {
 });
 
 db.collection('settings').doc('main').onSnapshot(snap => {
-  if (snap.exists) { state.settings = snap.data(); loadSettings(); }
+  if (snap.exists) {
+    state.settings = snap.data();
+    loadSettings();
+    try {
+      if (state.settings.uiConfig && typeof syncUiConfigFromRemote === 'function') {
+        syncUiConfigFromRemote(state.settings.uiConfig);
+      }
+      if (typeof renderWarehouseLogs === 'function') renderWarehouseLogs();
+    } catch(e) { console.warn("Remote settings sync warning:", e); }
+  }
 });
 
 db.collection('couriers').onSnapshot(snap => {
@@ -168,9 +186,10 @@ function applyLang(){
   document.getElementById('langBtn').textContent=lang==='ru'?'UZ':'RU';
   document.getElementById('headerSub').textContent=T[lang].headerSub;
   document.querySelectorAll('.t').forEach(el=>{const v=el.dataset[lang];if(v)el.textContent=v;});
+  try { if (typeof applySavedUiRenames === 'function') applySavedUiRenames(); } catch(e) {}
 }
 function toggleLang(){lang=lang==='ru'?'uz':'ru';localStorage.setItem('lang',lang);applyLang();renderAll();}
-function renderAll(){renderProductsGrid();renderOrdersList();renderClientsList();renderStats();renderDebts();renderDelivery();renderFavorites();}
+function renderAll(){renderProductsGrid();renderOrdersList();renderClientsList();renderStats();renderDebts();renderDelivery();renderWarehouse();renderFavorites();renderDashboard();try{renderCustomUiButtons();}catch(e){}}
 
 function printOrder(id) {
   const o = state.orders.find(x => x.id == id);
@@ -210,12 +229,14 @@ function printOrder(id) {
 
 // INIT
 function startApp(){
+  try { initAiUiController(); } catch(e) { console.warn("AI UI init warn:", e); }
   applyTheme();applyLang();
   renderProductsGrid();populateClientSelect();renderClientsList();
-  renderOrdersList();renderStats();renderDebts();renderDelivery();renderFavorites();
+  renderOrdersList();renderStats();renderDebts();renderDelivery();renderWarehouse();renderFavorites();
   loadSettings();updateBadges();renderProductsSettings(); renderCouriersSettings(); populateCourierSelects();
   document.getElementById('partialAmount').addEventListener('input',updatePartialRemaining);
   renderDashboard();
+  try { updateWarehouseBadge(); renderCustomUiButtons(); } catch(e) {}
   setupOfflineSync();
   // Telegram Mini App init
   if(window.Telegram?.WebApp){window.Telegram.WebApp.ready();window.Telegram.WebApp.expand();}
@@ -282,17 +303,21 @@ function openTemplatesModal(){renderTemplates();openModal('templatesModal');}
 function showPage(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-  document.getElementById('page-'+id).classList.add('active');
+  const pageEl = document.getElementById('page-'+id);
+  if(pageEl) pageEl.classList.add('active');
   const tab=document.querySelector(`.tab[data-page="${id}"]`);if(tab)tab.classList.add('active');
   if(id==='orders')renderOrdersList();
   if(id==='clients')renderClientsList();
   if(id==='stats')renderStats();
   if(id==='debts')renderDebts();
   if(id==='delivery')renderDelivery();
+  if(id==='warehouse')renderWarehouse();
+  if(id==='products')renderProductsSettings();
   if(id==='new-order')renderFavorites();
   if(id==='dashboard')renderDashboard();
   if(id==='map')renderMap();
   if(id==='ai')renderAiPage();
+  try { renderCustomUiButtons(); } catch(e) {}
 }
 
 // FAVORITES
@@ -315,10 +340,19 @@ function renderProductsGrid(){
   
   document.getElementById('productsGrid').innerHTML=PRODUCTS.map(p=>{
     const price = (client && client.customPrices && client.customPrices[p.id]) ? client.customPrices[p.id] : p.price;
+    const isTracked = typeof isProductTracked === 'function' && isProductTracked(p);
+    let stockBadge = '';
+    if (isTracked) {
+      const stk = roundQty(p.stock);
+      const st = getProductStockStatus(p);
+      const lbl = st === 'out' ? (lang==='uz'?'Tugadi':'Нет') : `${stk} ${p.unit||'кг'}`;
+      stockBadge = `<div class="stock-badge-mini ${st}">🏭 ${lbl}</div>`;
+    }
     return `
     <div class="product-card" id="pc-${p.id}">
       <div class="product-name">${p.emoji} ${lang==='uz'?p.nameUz:p.name}</div>
       <div class="product-price">${fmt(price)} / ${p.unit||'кг'} ${client && client.customPrices && client.customPrices[p.id] ? '<span style="color:var(--orange)">★</span>' : ''}</div>
+      ${stockBadge}
       <div class="product-qty">
         <div class="qty-btn" onclick="changeQty('${p.id}',${-(p.step||0.5)})">−</div>
         <div><span class="qty-val" id="qty-${p.id}">0</span> <span class="qty-unit">${p.unit||'кг'}</span></div>
@@ -363,6 +397,7 @@ async function submitOrder(){
   const items=getOrderItems();
   if(!items.length){showToast('⚠️ '+(lang==='uz'?'Mahsulot qo\'shing':'Добавьте продукт'),'error');return;}
   const client=state.clients.find(c=>c.id==clientId);
+  const selectedCourier = document.getElementById('orderCourier')?.value || '';
   const order={
     id:Date.now(),date:new Date().toISOString(),
     client:client.name,clientId:client.id,
@@ -374,34 +409,54 @@ async function submitOrder(){
     debtPaid:state.selectedPayment!=='консигнация',
     partialPaid:0,
     delivered:false,
-    courier:''
+    courier:selectedCourier,
+    status:selectedCourier?'delivering':'new',
+    stockDeducted:true
   };
   
   // Decrement stock if defined
   const batch = db.batch();
+  const whLogEntries = [];
+  const tgToken = state.settings.tgToken || atob('ODc5NjU4ODA3MTpBQUc4Wl9SOGhQOUVTWlpfM0x4VWFrRDhQQ1hqNUM1WlA2WQ==');
+  const tgChatId = state.settings.tgChatId || '483325961';
   order.items.forEach(i => {
     const p = PRODUCTS.find(x => x.id === i.id);
-    if(p && p.stock !== undefined && p.stock !== '') {
+    if(p && isProductTracked(p)) {
       const prodRef = db.collection('products').doc(String(p.id));
-      batch.update(prodRef, { stock: firebase.firestore.FieldValue.increment(-i.qty) });
-      if (p.stock - i.qty < 5) {
-        // Warning if stock drops below 5
-        const warning = `⚠️ Diqqat! ${p.name} zaxirasi tugayapti. Qoldiq: ${p.stock - i.qty} ${p.unit||'kg'}`;
-        if (state.settings.tgToken && state.settings.tgChatId) {
-          fetch(`https://api.telegram.org/bot${state.settings.tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:state.settings.tgChatId,text:warning})}).catch(()=>{});
+      const newVal = roundQty(Number(p.stock) - Number(i.qty));
+      p.stock = newVal;
+      const incVal = (firebase?.firestore?.FieldValue?.increment)
+        ? firebase.firestore.FieldValue.increment(-i.qty)
+        : newVal;
+      batch.update(prodRef, { stock: incVal });
+      whLogEntries.push({
+        productId: p.id, name: p.nameUz || p.name, emoji: p.emoji || '🥗',
+        delta: -roundQty(i.qty), newStock: newVal, unit: p.unit || 'кг',
+        reason: 'Buyurtma: ' + client.name
+      });
+      const minTh = getProductMinStock(p);
+      if (newVal <= minTh) {
+        const warning = `⚠️ Diqqat! ${p.name} zaxirasi kam qoldi! Qoldiq: ${newVal} ${p.unit||'kg'}`;
+        if (tgToken && tgChatId) {
+          fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:warning})}).catch(()=>{});
         }
       }
     }
   });
   batch.set(db.collection('orders').doc(String(order.id)), order);
   batch.commit();
+  if (whLogEntries.length && typeof logWarehouseMovement === 'function') {
+    logWarehouseMovement(whLogEntries);
+  }
+  try { renderWarehouse(); updateWarehouseBadge(); } catch(e) {}
   
   const btn=document.getElementById('submitBtn');btn.innerHTML='<div class="spinner"></div>';btn.disabled=true;
   let tgOk=false;
   try{tgOk=await sendToTelegram(order);}catch(e){}
   
   if(tgOk) { order.sent=true; db.collection('orders').doc(String(order.id)).update({sent: true}); }
-  btn.innerHTML='✅ '+(lang==='uz'?'Buyurtmani rasmiylashtirish':'Оформить заказ');btn.disabled=false;
+  btn.innerHTML='✅ <span class="t" data-ru="Оформить заказ" data-uz="Buyurtmani rasmiylashtirish">'+(lang==='uz'?'Buyurtmani rasmiylashtirish':'Оформить заказ')+'</span>';btn.disabled=false;
+  try { if (typeof applySavedUiRenames === 'function') applySavedUiRenames(); } catch(e) {}
   showToast(tgOk?'✅ '+(lang==='uz'?'Yuborildi':'Отправлено'):'⚠️ Локально',tgOk?'success':'info');
   resetOrder();updateBadges();renderFavorites();
 }
@@ -471,6 +526,16 @@ async function sendDaySummary(){
     '✅ <b>' + (isUz ? 'Yetkazilgan mijozlar' : 'Доставленные клиенты') + ':</b>',
     deliveredClients
   ];
+  const trackedStock = (PRODUCTS || []).filter(isProductTracked);
+  if (trackedStock.length) {
+    lines.push('', '🏭 <b>' + (isUz ? 'Sklad qoldig\'i' : 'Склад (Остаток)') + ':</b>');
+    trackedStock.forEach(p => {
+      const rem = roundQty(p.stock);
+      const st = getProductStockStatus(p);
+      const icon = st === 'empty' ? '🔴' : (st === 'low' ? '⚠️' : '✅');
+      lines.push('  ' + icon + ' ' + (p.emoji || '') + ' ' + escapeHTML(isUz && p.nameUz ? p.nameUz : p.name) + ': <b>' + rem + escapeHTML(p.unit || 'kg') + '</b>');
+    });
+  }
   try{
     const r=await fetch('https://api.telegram.org/bot' + tgToken + '/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:lines.join('\n'),parse_mode:'HTML'})});
     const res = await r.json();
@@ -618,7 +683,27 @@ function filterOrders(v){renderOrdersList(v);}
 function filterByDate(f,el){document.querySelectorAll('#page-orders .pill, #customOrderDate').forEach(p=>p.classList.remove('selected'));if(el)el.classList.add('selected');renderOrdersList(document.getElementById('ordersSearch').value,f);}
 
 window.updateOrderStatus = function(id, newStatus) {
-  db.collection('orders').doc(String(id)).update({status: newStatus}).then(()=>{
+  const o = state.orders.find(x => x.id == id);
+  const updatePayload = { status: newStatus };
+  if (o && Array.isArray(o.items) && o.items.length) {
+    const wasCancelled = o.status === 'cancelled';
+    const nowCancelled = newStatus === 'cancelled';
+    if (!wasCancelled && nowCancelled && !o.stockRestored) {
+      const deltas = {};
+      o.items.forEach(i => { deltas[i.id] = (deltas[i.id] || 0) + (parseFloat(i.qty) || 0); });
+      applyOrderStockDeltas(deltas, 'order_cancel', o.id, o.client);
+      o.stockRestored = true;
+      updatePayload.stockRestored = true;
+    } else if (wasCancelled && !nowCancelled && o.stockRestored) {
+      const deltas = {};
+      o.items.forEach(i => { deltas[i.id] = (deltas[i.id] || 0) - (parseFloat(i.qty) || 0); });
+      applyOrderStockDeltas(deltas, 'order_restore', o.id, o.client);
+      o.stockRestored = false;
+      updatePayload.stockRestored = false;
+    }
+    o.status = newStatus;
+  }
+  db.collection('orders').doc(String(id)).update(updatePayload).then(()=>{
     showToast('Status o\'zgardi', 'success');
   }).catch(e=>{
     showToast('Xatolik', 'error');
@@ -632,6 +717,12 @@ async function resendOrderById(id){
 }
 function deleteOrder(id){
   if(!confirm(lang==='uz'?'O\'chirishni tasdiqlaysizmi?':'Удалить заказ?'))return;
+  const o = state.orders.find(x => x.id == id);
+  if (o && o.status !== 'cancelled' && !o.stockRestored && Array.isArray(o.items) && o.items.length) {
+    const deltas = {};
+    o.items.forEach(i => { deltas[i.id] = (deltas[i.id] || 0) + (parseFloat(i.qty) || 0); });
+    applyOrderStockDeltas(deltas, 'order_delete', o.id, o.client);
+  }
   db.collection('orders').doc(String(id)).delete();
 }
 function copyOrder(id){
@@ -679,6 +770,7 @@ function editQtyChange(id,delta){
 }
 function saveEditOrder(){
   const o=state.orders.find(x=>x.id==editingOrderId);if(!o)return;
+  const oldItems = (o.items || []).map(i => ({ id: i.id, qty: parseFloat(i.qty) || 0 }));
   const clientId=document.getElementById('editOrderClient').value;
   const client=state.clients.find(c=>c.id==clientId);
   if(clientId&&client){o.clientId=clientId;o.client=client.name;}
@@ -696,6 +788,12 @@ function saveEditOrder(){
     const qty=parseFloat(document.getElementById('eqty-'+p.id).textContent)||0;
     return qty>0?{...p,qty}:null;
   }).filter(Boolean);
+  if (o.status !== 'cancelled' && !o.stockRestored) {
+    const deltas = {};
+    oldItems.forEach(i => { deltas[i.id] = (deltas[i.id] || 0) + i.qty; });
+    newItems.forEach(i => { deltas[i.id] = (deltas[i.id] || 0) - (parseFloat(i.qty) || 0); });
+    applyOrderStockDeltas(deltas, 'order_edit', o.id, o.client);
+  }
   o.items=newItems;o.total=newItems.reduce((s,i)=>s+i.qty*i.price,0);o.sent=false;
   db.collection('orders').doc(String(o.id)).set(o); closeModal('editOrderModal');
   showToast('✅ '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');
@@ -1339,11 +1437,18 @@ function renderSeasonality(){
 // ==================== PRODUCTS SETTINGS ====================
 function renderProductsSettings(){
   const el=document.getElementById('productsSettingsList');if(!el)return;
-  el.innerHTML=PRODUCTS.map((p,i)=>`
+  el.innerHTML=PRODUCTS.map((p,i)=>{
+    const tracked = isProductTracked(p);
+    const st = getProductStockStatus(p);
+    const stockBadge = tracked
+      ? `<span onclick="showPage('warehouse')" style="cursor:pointer;font-size:11px;font-weight:700;padding:3px 8px;border-radius:10px;background:${st==='low'||st==='empty'?'rgba(247,90,90,.15)':'rgba(45,212,160,.14)'};color:${st==='low'||st==='empty'?'var(--danger)':'var(--green)'}">🏭 ${roundQty(p.stock)} ${p.unit||'kg'}</span>`
+      : `<span onclick="openWarehouseEditModal('${p.id}')" style="cursor:pointer;font-size:11px;font-weight:600;padding:3px 8px;border-radius:10px;background:var(--bg3);color:var(--text3)">➕ Sklad kiritish</span>`;
+    return `
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:8px">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
         <span style="font-size:22px">${p.emoji}</span>
         <div style="flex:1;font-weight:700">${p.name} <span style="font-size:11px;font-weight:400;color:var(--text3)">(${p.unit||'кг'})</span></div>
+        ${stockBadge}
         <button onclick="deleteProduct(${i})" style="background:rgba(247,90,90,.12);border:1px solid rgba(247,90,90,.3);color:var(--danger);border-radius:8px;padding:5px 10px;cursor:pointer;font-size:13px">🗑</button>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -1357,7 +1462,8 @@ function renderProductsSettings(){
         </div>
       </div>
       ${p.price&&(p.cost||0)>0?`<div style="margin-top:6px;font-size:12px;color:var(--green)">Маржа: ${fmt(p.price-(p.cost||0))} so'm (${Math.round((p.price-(p.cost||0))/p.price*100)}%)</div>`:''}
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 function updateProductPrice(idx,val){
   const newPrice=parseInt(val)||0;if(!newPrice)return;
@@ -1637,10 +1743,28 @@ function renderDashboard(){
       <div style="font-weight:700;margin-bottom:4px;font-size:14px">📦 ${lang==='uz'?'Bugun sotilgan':'Сегодня продано'}</div>
       ${prodRows}
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <button onclick="showPage('new-order')" class="btn btn-primary" style="border-radius:14px;padding:14px 10px;font-size:13px">➕ ${lang==='uz'?'Buyurtma':'Заказ'}</button>
-      <button onclick="sendDaySummary()" class="btn btn-outline" style="border-radius:14px;padding:14px 10px;font-size:13px">📤 ${lang==='uz'?'Xisobot':'Отчёт'}</button>
+    ${(()=>{
+      const tracked = (PRODUCTS||[]).filter(isProductTracked);
+      if (!tracked.length) return '';
+      const totalKg = roundQty(tracked.reduce((s,p)=>s+Math.max(0, Number(p.stock)||0), 0));
+      const lowItems = tracked.filter(p => getProductStockStatus(p) !== 'ok');
+      return `<div onclick="showPage('warehouse')" style="cursor:pointer;background:var(--card);border:1px solid ${lowItems.length?'rgba(247,90,90,.4)':'var(--border)'};border-radius:16px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <div>
+          <div style="font-weight:700;font-size:13px">🏭 ${lang==='uz'?'Sklad qoldig\'i':'Остаток склада'}: <span style="color:var(--green)">${totalKg} kg</span></div>
+          <div style="font-size:11px;color:${lowItems.length?'var(--danger)':'var(--text3)'};margin-top:2px">
+            ${lowItems.length ? '⚠️ Kam qolgan: ' + lowItems.map(p=>(p.nameUz||p.name)+' ('+roundQty(p.stock)+'kg)').slice(0,3).join(', ') : (lang==='uz'?'Barcha mahsulotlar yetarli':'Все товары в наличии')}
+          </div>
+        </div>
+        <span style="font-size:12px;font-weight:700;color:var(--accent)">Ochish ›</span>
+      </div>`;
+    })()}
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+      <button id="dashQuickOrderBtn" onclick="showPage('new-order')" class="btn btn-primary" style="border-radius:14px;padding:14px 8px;font-size:13px">➕ ${lang==='uz'?'Buyurtma':'Заказ'}</button>
+      <button id="dashQuickWarehouseBtn" onclick="showPage('warehouse')" class="btn btn-outline" style="border-radius:14px;padding:14px 8px;font-size:13px;border-color:rgba(45,212,160,.45);color:var(--green)">🏭 ${lang==='uz'?'Sklad':'Склад'}</button>
+      <button id="dashQuickReportBtn" onclick="sendDaySummary()" class="btn btn-outline" style="border-radius:14px;padding:14px 8px;font-size:13px">📤 ${lang==='uz'?'Xisobot':'Отчёт'}</button>
     </div>`;
+  renderCustomUiButtons();
+  applySavedUiRenames();
   updateOnlineIndicator();
   
   // Initialize Chart
@@ -1827,6 +1951,7 @@ function updateBadges(){
   const today=new Date().toDateString();
   const pendingDelivery=state.orders.filter(o=>new Date(o.date).toDateString()===today&&!o.delivered).length;
   document.getElementById('deliveryCount').textContent=pendingDelivery||'';
+  if (typeof updateWarehouseBadge === 'function') updateWarehouseBadge();
 }
 function resetOrder(){
   const oc=document.getElementById('orderCourier');if(oc)oc.value='';state.quantities={};state.selectedPayment='наличные';document.getElementById('clientSelect').value='';document.getElementById('clientPhone').value='';document.getElementById('orderNote').value='';document.getElementById('summaryBlock').style.display='none';renderProductsGrid();document.querySelectorAll('.payment-pills .pill').forEach((p,i)=>p.classList.toggle('selected',i===0));}
@@ -1840,7 +1965,7 @@ if('serviceWorker' in navigator){navigator.serviceWorker.register('../sw.js').ca
 // ==================== SWIPE NAVIGATION ====================
 const PAGE_ORDER = [
   'dashboard','new-order','orders','debts',
-  'delivery','clients','stats','products','map','ai','settings'
+  'delivery','warehouse','clients','stats','products','map','ai','settings'
 ];
 
 (function initSwipe() {
@@ -2142,6 +2267,14 @@ function buildBusinessContext() {
       narxi: p.price,
       tannarxi: p.cost,
       birlik: p.unit || 'kg'
+    })),
+    omborQoldigi: (PRODUCTS || []).map(p => ({
+      id: p.id,
+      nomi: p.nameUz || p.name,
+      qoldiqKg: isProductTracked(p) ? roundQty(p.stock) : null,
+      birlik: p.unit || 'kg',
+      minChegara: getProductMinStock(p),
+      holati: !isProductTracked(p) ? 'KIRITILMAGAN' : (getProductStockStatus(p) === 'empty' ? 'TUGAGAN' : (getProductStockStatus(p) === 'low' ? 'KAM' : 'YETARLI'))
     }))
   };
 }
@@ -2173,7 +2306,7 @@ async function callGemini(apiKey, systemPrompt, userMessage, chatHistory = []) {
     }
   };
 
-  const models = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
+  const models = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
   let lastError = null;
 
   for (const model of models) {
@@ -2202,6 +2335,7 @@ async function callGemini(apiKey, systemPrompt, userMessage, chatHistory = []) {
 
 function renderAiPage() {
   checkAiKeyStatus();
+  if (typeof updateAiUiAccessButtons === 'function') updateAiUiAccessButtons();
   const box = document.getElementById('aiChatBox');
   if (!box) return;
   
@@ -2212,23 +2346,35 @@ function renderAiPage() {
         <div style="font-size:15px;font-weight:700;">👋 ${isUz ? 'Assalomu alaykum!' : 'Здравствуйте!'}</div>
         <div style="margin-top:6px;line-height:1.5;">
           ${isUz 
-            ? 'Men sizning <b>TeeGu.PRO</b> tizimidagi shaxsiy <b>AI Biznes Maslahatchi</b>ngizman. Savdolar tahlili, qarzdorlar, buyurtmalar, kuryerlar va ertangi kun uchun salat tayyorlash prognozi bo\'yicha istalgan savolingizga javob beraman.'
-            : 'Я ваш персональный <b>AI бизнес-ассистент</b> в системе <b>TeeGu.PRO</b>. Могу ответить на любые вопросы по продажам, должникам, заказам, доставке и дать прогноз приготовления салатов на завтра.'
+            ? 'Men sizning <b>TeeGu.PRO</b> tizimidagi shaxsiy <b>AI Biznes Maslahatchi</b> va <b>Interfeys Dizayner</b>ingizman. Savdolar, sklad qoldig\'i, qarzdorlar va buyurtmalarni tahlil qilaman — hamda ruxsat yoqilgan bo\'lsa ilova tugmalari, ranglari va bo\'limlarini real vaqtda o\'zgartira olaman!'
+            : 'Я ваш персональный <b>AI бизнес-ассистент</b> и <b>дизайнер интерфейса</b> в системе <b>TeeGu.PRO</b>. Анализирую продажи, склад, долги и заказы — а при включенном доступе могу менять кнопки, цвета и вкладки в реальном времени!'
           }
         </div>
         <div style="margin-top:8px; font-size:12px; color:var(--text2);">
-          ${isUz ? '💡 Yuqoridagi tezkor tugmalardan birini bosing yoki pastga savolingizni yozing / ovozli ayting:' : '💡 Нажмите на быструю кнопку сверху или напишите свой вопрос ниже:'}
+          ${isUz ? '💡 Yuqoridagi tezkor tugmalardan birini bosing yoki buyruq yozing (masalan: "Tasdiqlash tugmasini kattalashtirib yashil qil"):' : '💡 Нажмите быструю кнопку сверху или напишите команду (например: "Сделай кнопку оформления зеленой и крупной"):'}
         </div>
         <div class="ai-msg-time">${new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'})}</div>
       </div>
     `;
   } else {
-    box.innerHTML = aiChatHistory.map(m => `
+    box.innerHTML = aiChatHistory.map(m => {
+      const uiBadge = (m.role === 'bot' && Array.isArray(m.uiApplied) && m.uiApplied.length)
+        ? `<div class="ai-ui-applied-box">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+              <span>🎨 ${lang==='uz' ? 'Interfeysga qo\'llandi' : 'Применено к UI'} (${m.uiApplied.length})</span>
+              <button class="chip" style="padding:3px 9px;font-size:11px;margin:0" onclick="undoLastUiChange()">↩️ ${lang==='uz'?'Bekor qilish':'Отменить'}</button>
+            </div>
+            <div style="font-size:11px;font-weight:500;color:var(--text2);margin-top:4px">${m.uiApplied.map(a => '• ' + escapeHTML(a)).join('<br>')}</div>
+          </div>`
+        : '';
+      return `
       <div class="ai-msg ${m.role}">
         <div>${m.role === 'bot' ? renderMarkdown(m.text) : escapeHTML(m.text)}</div>
+        ${uiBadge}
         <div class="ai-msg-time">${m.time || ''}</div>
       </div>
-    `).join('');
+    `;
+    }).join('');
   }
   
   box.scrollTop = box.scrollHeight;
@@ -2273,27 +2419,69 @@ async function sendAiUserMessage(customText = null) {
   
   try {
     const businessContext = buildBusinessContext();
-    const systemPrompt = `Siz "TeeGu.PRO" salat va oziq-ovqat yetkazib berish tizimining rasmiy aqlli AI Biznes Maslahatchisisiz.
-Biznes egasiga buyurtmalar, savdo tahlili, qarzdorlar, kuryerlar va ertangi kun uchun salat tayyorlash rejasini aniq hisoblab berishda yordam berasiz.
+    const uiAccessAllowed = typeof aiUiConfig !== 'undefined' ? aiUiConfig.aiUiAccess !== false : true;
+    const uiContextBlock = uiAccessAllowed && typeof buildUiContext === 'function'
+      ? `\n\nILOVA INTERFEYSINI BOSHQARISH DOSTUPI (FAOL ✅):
+Sizga foydalanuvchi ilova dizayni, tugmalar, ranglar, matnlar, tartib va tezkor tugmalarni o'zgartirish uchun TO'LIQ RUXSAT berilgan!
+Agar foydalanuvchi interfeysni, tugmalarni, ranglarni, nomlarni, bo'limlarni, shrift/o'lchamni o'zgartirishni, yangi tugma qo'shishni yoki asl holiga qaytarishni so'rasa, javobingizning ENG OXIRIDA quyidagi blokni qo'shing (foydalanuvchiga JSON ko'rinmasligi uchun tizim bu blokni avtomatik qirqib olib, darhol DOM + Firestore ga qo'llaydi):
 
-Hozirgi real biznes ma'lumotlari (JSON):
+<<<UI_ACTIONS>>>
+{
+  "actions": [
+    ...
+  ]
+}
+<<<END_UI_ACTIONS>>>
+
+Qo'llab-quvvatlanadigan action turlari:
+1. {"type":"set_theme","vars":{"--accent":"#10b981","--bg":"#091512","--card":"#13241f"},"scope":"all"}
+   - O'zgartirsa bo'ladigan CSS o'zgaruvchilar: --bg, --bg2, --card, --card2, --border, --text, --text2, --text3, --accent, --accent2, --green, --gold, --danger, --r, --r2
+2. {"type":"style_element","selector":"#submitBtn","styles":{"fontSize":"18px","padding":"18px","borderRadius":"20px","background":"#10b981","color":"#fff","fontWeight":"900"},"scope":"admin"}
+   - Keng tarqalgan selektorlar: #submitBtn, #dashQuickOrderBtn, #dashQuickWarehouseBtn, #dashQuickReportBtn, #btnSendDaySummary, #btnAddProduct, #btnWarehouseBatch, #btnWarehouseTg, .tab, .btn-primary, .btn-outline, .product-card, .wh-card, #agentSubmitBtn (scope:"agent"), #courierOptimizeBtn (scope:"courier"), #checkoutSubmitBtn (scope:"client")
+   - Barcha ilovalarga (admin, agent, courier, client) taalluqli bo'lsa "scope":"all" yozing.
+3. {"type":"rename_element","selector":".tab[data-page=\"warehouse\"]","text":"📦 Ombor","scope":"admin"}
+4. {"type":"set_visibility","selector":"#btnTemplates","visible":false,"scope":"admin"}
+5. {"type":"set_layout","target":"productGrid|tabs|global","columns":3,"fontScale":1.08,"radius":"18px","compact":false,"scope":"admin"}
+6. {"type":"reorder_tabs","order":["dashboard","warehouse","new-order","orders","debts","delivery","clients","stats","products","map","ai","settings"]}
+7. {"type":"add_custom_button","page":"dashboard|new-order|orders|warehouse","id":"btn_fast_report","label":"📊 Tezkor hisobot","action":"navigate:stats","color":"#10b981"}
+   - Ruxsat etilgan action lar: "navigate:<pageId>", "openModal:<modalId>", "call:sendDaySummary|sendWarehouseToTelegram|openWarehouseBatchModal|exportToExcel|openBroadcastModal|openPriceBroadcastModal|optimizeDeliveryOrder|undoLastUiChange", "ai:<savol>"
+8. {"type":"remove_custom_button","id":"btn_fast_report"}
+9. {"type":"navigate","page":"warehouse|dashboard|new-order|orders|debts|delivery|clients|stats|products|map|settings"}
+10. {"type":"reset_ui"} — hamma UI o'zgarishlarni zavod holatiga qaytaradi.
+
+Hozirgi Interfeys va Tugmalar Holati (JSON):
+${JSON.stringify(buildUiContext(), null, 2)}`
+      : `\n\nESLATMA: Hozir "UI Dostup" o'chirilgan (aiUiAccess: false). Agar foydalanuvchi tugma yoki interfeysni o'zgartirishni so'rasa, yuqoridagi "🎨 UI Dostup" tugmasini yoqishini muloyimlik bilan ayting va <<<UI_ACTIONS>>> blokini qaytarmang.`;
+
+    const systemPrompt = `Siz "TeeGu.PRO" salat va oziq-ovqat yetkazib berish tizimining rasmiy aqlli AI Biznes Maslahatchisi va UI Boshqaruvchisiz.
+Biznes egasiga buyurtmalar, savdo tahlili, sklad (ombor qoldig'i), qarzdorlar, kuryerlar, ertangi kun uchun salat tayyorlash rejasini hisoblashda va (dostup yoqilganda) ilova interfeysini moslashtirishda yordam berasiz.
+
+Hozirgi real biznes va ombor ma'lumotlari (JSON):
 ${JSON.stringify(businessContext, null, 2)}
 
 QOIDALAR:
 1. Foydalanuvchi qaysi tilda yozsa (o'zbekcha yoki ruscha), o'sha tilda javob bering.
-2. Ma'lumotlardagi aniq raqamlarga, summalar (so'm), tovar nomlari va mijozlarga tayanib gapiring. Hech qanday raqamni to'qimang.
+2. Ma'lumotlardagi aniq raqamlarga, summalar (so'm), sklad qoldig'iga (kg), tovar nomlari va mijozlarga tayanib gapiring. Hech qanday raqamni to'qimang.
 3. Javobni chiroyli va qulay qilib formatlang: emojilar, qalin shriftlar (**bold**), ro'yxatlar ishlating.
-4. Agar "Ertaga nima tayyorlaymiz?" deb so'ralsa, oxirgi kunlar va haftalik sotuv hajmiga qarab, har bir salat bo'yicha tavsiya qilingan kg miqdorini aniq raqamlar bilan yozib bering.
-5. Qarzlar bo'yicha gap ketganda, eng katta qarzdorlarni, ularning telefon raqamini ko'rsating.
-6. Javoblaringiz lo'nda, professional va biznes uchun amaliy foydali bo'lsin.`;
+4. Agar "Ertaga nima tayyorlaymiz?" deb so'ralsa, oxirgi kunlar sotuv hajmi va hozirgi sklad qoldig'ini hisobga olib, har bir salat bo'yicha tavsiya qilingan kg miqdorini aniq raqamlar bilan yozib bering.
+5. Qarzlar bo'yicha gap ketganda, eng katta qarzdorlarni va telefon raqamlarini ko'rsating.
+6. Agar foydalanuvchi UI o'zgartirishini so'ramagan bo'lsa, <<<UI_ACTIONS>>> blokini ISHLATMANG. Faqat UI o'zgarishi so'ralganda aniq va xavfsiz <<<UI_ACTIONS>>> JSON qaytaring va nima o'zgarganini qisqa tushuntiring.${uiContextBlock}`;
 
     const aiResponse = await callGemini(apiKey, systemPrompt, text, aiChatHistory);
     
     const typingEl = document.getElementById(typingId);
     if (typingEl) typingEl.remove();
+
+    let cleanText = aiResponse;
+    let uiApplied = [];
+    if (typeof extractAndApplyUiActions === 'function') {
+      const uiRes = extractAndApplyUiActions(aiResponse);
+      cleanText = uiRes.cleanText || aiResponse;
+      uiApplied = uiRes.applied || [];
+    }
     
     const botTime = new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
-    aiChatHistory.push({ role: 'bot', text: aiResponse, time: botTime });
+    aiChatHistory.push({ role: 'bot', text: cleanText, uiApplied, time: botTime });
     
     if (aiChatHistory.length > 20) aiChatHistory = aiChatHistory.slice(-20);
     localStorage.setItem('aiChatHistory', JSON.stringify(aiChatHistory));
@@ -2317,13 +2505,22 @@ QOIDALAR:
 
 function askAiQuick(type) {
   const isUz = lang === 'uz';
+  if (type === 'ui-reset') {
+    if (typeof resetUiConfig === 'function') resetUiConfig();
+    return;
+  }
   const queries = {
     'today': isUz ? 'Bugungi savdo, umumiy tushum, sotilgan salatlar va yetkazilgan buyurtmalar tahlilini ber.' : 'Дай полный отчет по сегодняшним продажам, выручке и доставленным заказам.',
+    'warehouse': isUz ? 'Sklad (ombor) qoldig\'ini tahlil qil: qaysi salatlar kam qolgan, qaysilari tugagan va bugun nimani ko\'proq tayyorlash kerak?' : 'Проанализируй остатки на складе: каких салатов мало, что закончилось и что нужно приготовить сегодня?',
     'debts': isUz ? 'Eng katta qarzdor mijozlar kimlar? Umumiy qarz qancha va kimga birinchi navbatda qo\'ng\'iroq qilish kerak?' : 'Кто самые крупные должники? Каков общий долг и кому нужно позвонить в первую очередь?',
-    'forecast': isUz ? 'Oxirgi kunlar savdosi va statistikasiga qarab, ertaga qaysi salatlardan necha kg tayyorlashni maslahat berasan?' : 'На основе последних продаж, сколько кг каких салатов ты рекомендуешь приготовить на завтра?',
+    'forecast': isUz ? 'Oxirgi kunlar savdosi va hozirgi sklad qoldig\'iga qarab, ertaga qaysi salatlardan necha kg tayyorlashni maslahat berasan?' : 'На основе последних продаж и остатков на складе, сколько кг каких салатов ты рекомендуешь приготовить на завтра?',
     'top-products': isUz ? 'Oxirgi 7 kunda eng ko\'p sotilgan salatlar va mahsulotlar reytingini ko\'rsat.' : 'Покажи рейтинг самых продаваемых продуктов за последние 7 дней.',
     'inactive-clients': isUz ? 'Oxirgi 4-5 kunda buyurtma bermagan, aloqaga chiqish tavsiya etiladigan mijozlar ro\'yxatini chiqar.' : 'Выведи список постоянных клиентов, которые не заказывали последние 4-5 дней.',
-    'delivery': isUz ? 'Bugungi yetkazib berish holati qanday? Qancha buyurtma topshirildi va kuryerlar nima qilmoqda?' : 'Каков статус доставки на сегодня? Сколько заказов доставлено и сколько в пути?'
+    'delivery': isUz ? 'Bugungi yetkazib berish holati qanday? Qancha buyurtma topshirildi va kuryerlar nima qilmoqda?' : 'Каков статус доставки на сегодня? Сколько заказов доставлено и сколько в пути?',
+    'ui-big-btns': isUz ? 'Ilovadagi asosiy tasdiqlash (#submitBtn) va tezkor buyurtma (#dashQuickOrderBtn) hamda agent/kuryer tugmalarini kattaroq, qalinroq va barmoq bilan bosishga qulay qilib o\'zgartir.' : 'Сделай основные кнопки оформления (#submitBtn, #dashQuickOrderBtn) более крупными, жирными и удобными для нажатия.',
+    'ui-emerald': isUz ? 'Ilova rang temasini zamonaviy zumrad-yashil (Emerald) qilib o\'zgartir (--accent va --green yashil ohangda, hamma ilovalarga qo\'llansin).' : 'Измени цветовую тему приложения на современный изумрудно-зелёный стиль (для всех приложений).',
+    'ui-warehouse-first': isUz ? 'Tepadagi menyuda Sklad bo\'limini dashboarddan keyingi 2-o\'ringa qo\'y va nomini "🏭 Ombor" deb yoz.' : 'Перемести вкладку Склада на 2-е место сразу после Главной и назови её "🏭 Ombor".',
+    'ui-custom-btn': isUz ? 'Bosh sahifaga (dashboard) bitta qulay tezkor tugma qo\'sh: "🏭 Skladga kirish" tugmasi, bosilganda Sklad sahifasini ochsin.' : 'Добавь на главную страницу (dashboard) быструю кнопку "🏭 Skladga kirish", которая открывает вкладку Склада.'
   };
   
   const text = queries[type] || type;
@@ -2974,4 +3171,1056 @@ async function sendTelegramBroadcast() {
   } else {
     showToast(lang === 'uz' ? "Xatolik: Xabar yuborilmadi" : "Ошибка отправки", 'error');
   }
+}
+
+// ==================== WAREHOUSE (SKLAD) SYSTEM ====================
+let warehouseLogs = (() => {
+  try {
+    const raw = JSON.parse(localStorage.getItem('teegu_wh_logs') || '[]');
+    return Array.isArray(raw) ? raw : [];
+  } catch (e) {
+    return [];
+  }
+})();
+
+function isProductTracked(p) {
+  return Boolean(p && p.stock !== undefined && p.stock !== null && p.stock !== '' && !isNaN(Number(p.stock)));
+}
+
+function getProductMinStock(p) {
+  if (p && p.minStock !== undefined && p.minStock !== null && p.minStock !== '' && !isNaN(Number(p.minStock))) {
+    return Math.max(0, Number(p.minStock));
+  }
+  return 5;
+}
+
+function getProductStockStatus(p) {
+  if (!isProductTracked(p)) return 'untracked';
+  const q = Number(p.stock);
+  const min = getProductMinStock(p);
+  if (q <= 0) return 'empty';
+  if (q <= min) return 'low';
+  return 'ok';
+}
+
+function updateWarehouseBadge() {
+  const badge = document.getElementById('warehouseBadge');
+  if (!badge) return;
+  const lowCount = (PRODUCTS || []).filter(p => {
+    const st = getProductStockStatus(p);
+    return st === 'low' || st === 'empty';
+  }).length;
+  badge.textContent = lowCount > 0 ? String(lowCount) : '';
+  if (badge.style) {
+    badge.style.display = lowCount > 0 ? '' : 'none';
+  }
+}
+
+function setWarehouseFilter(status) {
+  warehouseFilterStatus = status || 'all';
+  ['all', 'low', 'ok'].forEach(s => {
+    const btn = document.getElementById('whPill-' + s);
+    if (btn && btn.classList) btn.classList.toggle('selected', s === warehouseFilterStatus);
+  });
+  renderWarehouse();
+}
+
+function applyOrderStockDeltas(deltas, reasonPrefix, orderId, clientName) {
+  if (!deltas || typeof deltas !== 'object') return;
+  const entries = Object.entries(deltas).filter(([, d]) => Math.abs(Number(d) || 0) > 0.0001);
+  if (!entries.length) return;
+
+  const logItems = [];
+  const labelMap = {
+    order_cancel: 'Buyurtma bekor qilindi',
+    order_restore: 'Buyurtma tiklandi',
+    order_delete: 'Buyurtma o\'chirildi',
+    order_edit: 'Buyurtma tahrirlandi'
+  };
+  const reasonLabel = (labelMap[reasonPrefix] || reasonPrefix || 'Buyurtma') + (clientName ? ': ' + clientName : '');
+
+  entries.forEach(([pid, rawDelta]) => {
+    const delta = roundQty(rawDelta);
+    const p = (PRODUCTS || []).find(x => String(x.id) === String(pid));
+    if (!p || !isProductTracked(p)) return;
+    const newVal = roundQty(Number(p.stock) + delta);
+    p.stock = newVal;
+    const incVal = (typeof firebase !== 'undefined' && firebase.firestore && firebase.firestore.FieldValue && firebase.firestore.FieldValue.increment)
+      ? firebase.firestore.FieldValue.increment(delta)
+      : newVal;
+    try {
+      db.collection('products').doc(String(p.id)).update({ stock: incVal });
+    } catch (e) {}
+    logItems.push({
+      productId: p.id,
+      name: p.nameUz || p.name,
+      emoji: p.emoji || '🥗',
+      delta,
+      newStock: newVal,
+      unit: p.unit || 'kg',
+      reason: reasonLabel + (orderId ? ' #' + String(orderId).slice(-4) : '')
+    });
+  });
+
+  if (logItems.length) {
+    logWarehouseMovement(logItems);
+    try { renderWarehouse(); updateWarehouseBadge(); renderProductsGrid(); } catch (e) {}
+  }
+}
+
+function renderWarehouse() {
+  const listEl = document.getElementById('warehouseList');
+  if (!listEl) return;
+
+  const prods = PRODUCTS || [];
+  const tracked = prods.filter(isProductTracked);
+  const totalKg = roundQty(tracked.reduce((s, p) => s + Math.max(0, Number(p.stock) || 0), 0));
+  const okCount = tracked.filter(p => getProductStockStatus(p) === 'ok').length;
+  const lowCount = tracked.filter(p => {
+    const st = getProductStockStatus(p);
+    return st === 'low' || st === 'empty';
+  }).length;
+  const totalVal = Math.round(tracked.reduce((s, p) => {
+    const q = Math.max(0, Number(p.stock) || 0);
+    const unitVal = Number(p.cost) > 0 ? Number(p.cost) : (Number(p.price) || 0);
+    return s + q * unitVal;
+  }, 0));
+
+  const elKg = document.getElementById('whTotalKg');
+  const elOk = document.getElementById('whOkCount');
+  const elLow = document.getElementById('whLowCount');
+  const elVal = document.getElementById('whTotalVal');
+  if (elKg) elKg.textContent = totalKg + ' kg';
+  if (elOk) elOk.textContent = String(okCount);
+  if (elLow) elLow.textContent = String(lowCount);
+  if (elVal) elVal.textContent = fmt(totalVal) + ' so\'m';
+
+  const searchInput = document.getElementById('warehouseSearch');
+  const qStr = (searchInput && searchInput.value ? searchInput.value : '').trim().toLowerCase();
+
+  const filtered = prods.filter(p => {
+    const nameMatch = !qStr ||
+      (p.name || '').toLowerCase().includes(qStr) ||
+      (p.nameUz || '').toLowerCase().includes(qStr);
+    if (!nameMatch) return false;
+    const st = getProductStockStatus(p);
+    if (warehouseFilterStatus === 'low') return st === 'low' || st === 'empty';
+    if (warehouseFilterStatus === 'ok') return st === 'ok';
+    return true;
+  });
+
+  if (!filtered.length) {
+    listEl.innerHTML = `<div style="text-align:center;padding:24px;color:var(--text3)">🏭 ${lang==='uz'?'Mahsulot topilmadi':'Товары не найдены'}</div>`;
+  } else {
+    listEl.innerHTML = filtered.map(p => {
+      const trackedItem = isProductTracked(p);
+      const st = getProductStockStatus(p);
+      const minTh = getProductMinStock(p);
+      const stockNum = trackedItem ? roundQty(p.stock) : null;
+      const unit = p.unit || 'kg';
+      const cap = Math.max(minTh * 4, 25);
+      const pct = trackedItem ? Math.max(0, Math.min(100, Math.round((Math.max(0, stockNum) / cap) * 100))) : 100;
+
+      const statusMeta = {
+        ok: { cls: 'ok', label: lang === 'uz' ? 'YETARLI' : 'В НАЛИЧИИ', bar: 'var(--green)' },
+        low: { cls: 'low', label: lang === 'uz' ? 'KAM QOLDI' : 'МАЛО', bar: 'var(--gold)' },
+        empty: { cls: 'empty', label: lang === 'uz' ? 'TUGAGAN' : 'НЕТ В НАЛИЧИИ', bar: 'var(--danger)' },
+        untracked: { cls: 'untracked', label: '∞ HISOBSIZ', bar: 'var(--text3)' }
+      }[st];
+
+      const qtyDisplay = trackedItem ? `${stockNum} <span style="font-size:13px;font-weight:600;color:var(--text2)">${escapeHTML(unit)}</span>` : '∞';
+      const costInfo = Number(p.cost) > 0 ? `${fmt(p.cost)} / ${fmt(p.price)} so'm` : `${fmt(p.price)} so'm`;
+
+      return `
+        <div class="wh-card ${st === 'low' || st === 'empty' ? 'status-' + st : ''}">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+            <div style="display:flex;align-items:center;gap:10px;min-width:0">
+              <div style="font-size:28px;line-height:1">${p.emoji || '🥗'}</div>
+              <div style="min-width:0">
+                <div style="font-weight:800;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHTML((lang==='uz' && p.nameUz) ? p.nameUz : p.name)}</div>
+                <div style="font-size:11px;color:var(--text3)">${costInfo} · Min: ${minTh} ${escapeHTML(unit)}</div>
+              </div>
+            </div>
+            <div style="text-align:right;flex-shrink:0">
+              <div class="wh-qty-big">${qtyDisplay}</div>
+              <span class="wh-status-pill ${statusMeta.cls}">${statusMeta.label}</span>
+            </div>
+          </div>
+          ${trackedItem ? `<div class="wh-bar-bg"><div class="wh-bar-fill" style="width:${pct}%;background:${statusMeta.bar}"></div></div>` : ''}
+          <div class="wh-actions">
+            <button class="wh-quick-btn plus" onclick="quickAdjustStock('${p.id}', 1)">+1</button>
+            <button class="wh-quick-btn plus" onclick="quickAdjustStock('${p.id}', 5)">+5</button>
+            <button class="wh-quick-btn plus" onclick="quickAdjustStock('${p.id}', 10)">+10</button>
+            <button class="wh-quick-btn minus" onclick="quickAdjustStock('${p.id}', -1)">-1</button>
+            <button class="wh-quick-btn" onclick="openWarehouseEditModal('${p.id}')">✏️ ${lang==='uz'?'Tahrir':'Изм.'}</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  renderWarehouseLogs();
+  renderCustomUiButtons();
+}
+
+function quickAdjustStock(prodId, delta, customReason) {
+  const p = (PRODUCTS || []).find(x => String(x.id) === String(prodId));
+  if (!p) return;
+  const wasTracked = isProductTracked(p);
+  const oldVal = wasTracked ? Number(p.stock) : 0;
+  const d = roundQty(delta);
+  const newVal = roundQty(oldVal + d);
+  p.stock = newVal;
+  if (p.minStock === undefined) p.minStock = 5;
+
+  const incVal = (wasTracked && typeof firebase !== 'undefined' && firebase.firestore && firebase.firestore.FieldValue && firebase.firestore.FieldValue.increment)
+    ? firebase.firestore.FieldValue.increment(d)
+    : newVal;
+
+  try {
+    db.collection('products').doc(String(p.id)).update({
+      stock: incVal,
+      minStock: getProductMinStock(p)
+    });
+  } catch (e) {
+    try { db.collection('products').doc(String(p.id)).set({ stock: newVal, minStock: getProductMinStock(p) }, { merge: true }); } catch (e2) {}
+  }
+
+  logWarehouseMovement([{
+    productId: p.id,
+    name: p.nameUz || p.name,
+    emoji: p.emoji || '🥗',
+    delta: d,
+    newStock: newVal,
+    unit: p.unit || 'kg',
+    reason: customReason || (d >= 0 ? 'Tezkor kirim' : 'Tezkor chiqim')
+  }]);
+
+  renderWarehouse();
+  updateWarehouseBadge();
+  renderProductsGrid();
+  try { renderDashboard(); } catch (e) {}
+  showToast(`${p.emoji || '🥗'} ${p.nameUz || p.name}: ${d >= 0 ? '+' : ''}${d} → ${newVal} ${p.unit || 'kg'}`, d >= 0 ? 'success' : 'info');
+}
+
+function openWarehouseBatchModal() {
+  const wrap = document.getElementById('warehouseBatchList');
+  if (!wrap) return;
+  wrap.innerHTML = (PRODUCTS || []).map(p => {
+    const curTxt = isProductTracked(p) ? `${roundQty(p.stock)} ${p.unit || 'kg'}` : '∞';
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:14px">${p.emoji || '🥗'} ${escapeHTML(p.nameUz || p.name)}</div>
+          <div style="font-size:11px;color:var(--text3)">Hozir: ${curTxt}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="number" step="0.5" min="0" id="whBatchIn-${p.id}" class="form-input" style="width:92px;text-align:center;padding:8px;font-weight:700" placeholder="0">
+          <span style="font-size:12px;color:var(--text3);min-width:22px">${escapeHTML(p.unit || 'kg')}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+  const noteEl = document.getElementById('warehouseBatchNote');
+  if (noteEl) noteEl.value = '';
+  openModal('warehouseBatchModal');
+}
+
+function saveWarehouseBatch() {
+  const noteEl = document.getElementById('warehouseBatchNote');
+  const note = (noteEl && noteEl.value ? noteEl.value : '').trim() || 'Tayyorlov (kirim)';
+  const batch = db.batch();
+  const logs = [];
+
+  (PRODUCTS || []).forEach(p => {
+    const inEl = document.getElementById('whBatchIn-' + p.id);
+    const addQty = inEl ? roundQty(parseFloat(inEl.value) || 0) : 0;
+    if (addQty <= 0) return;
+
+    const wasTracked = isProductTracked(p);
+    const oldVal = wasTracked ? Number(p.stock) : 0;
+    const newVal = roundQty(oldVal + addQty);
+    p.stock = newVal;
+    if (p.minStock === undefined) p.minStock = 5;
+
+    const ref = db.collection('products').doc(String(p.id));
+    const incVal = (wasTracked && typeof firebase !== 'undefined' && firebase.firestore && firebase.firestore.FieldValue && firebase.firestore.FieldValue.increment)
+      ? firebase.firestore.FieldValue.increment(addQty)
+      : newVal;
+    batch.update(ref, { stock: incVal, minStock: getProductMinStock(p) });
+
+    logs.push({
+      productId: p.id,
+      name: p.nameUz || p.name,
+      emoji: p.emoji || '🥗',
+      delta: addQty,
+      newStock: newVal,
+      unit: p.unit || 'kg',
+      reason: note
+    });
+  });
+
+  if (!logs.length) {
+    showToast(lang === 'uz' ? 'Kamida bitta mahsulot miqdorini kiriting' : 'Введите количество хотя бы одного товара', 'error');
+    return;
+  }
+
+  batch.commit();
+  logWarehouseMovement(logs);
+  closeModal('warehouseBatchModal');
+  renderWarehouse();
+  updateWarehouseBadge();
+  renderProductsGrid();
+  try { renderDashboard(); } catch (e) {}
+  showToast(`✅ ${logs.length} ta mahsulot skladga qo'shildi`, 'success');
+}
+
+function openWarehouseEditModal(prodId) {
+  const p = (PRODUCTS || []).find(x => String(x.id) === String(prodId));
+  if (!p) return;
+  const idEl = document.getElementById('whEditProductId');
+  const titleEl = document.getElementById('whEditTitle');
+  const infoEl = document.getElementById('whEditCurrentInfo');
+  const modeEl = document.getElementById('whEditMode');
+  const qtyEl = document.getElementById('whEditQty');
+  const minEl = document.getElementById('whEditMinStock');
+  const noteEl = document.getElementById('whEditNote');
+
+  if (idEl) idEl.value = String(p.id);
+  if (titleEl) titleEl.textContent = `${p.emoji || '🥗'} ${p.nameUz || p.name}`;
+  if (infoEl) infoEl.textContent = isProductTracked(p)
+    ? `Hozirgi qoldiq: ${roundQty(p.stock)} ${p.unit || 'kg'}`
+    : 'Hozircha cheklanmagan (hisobsiz)';
+  if (modeEl) modeEl.value = 'set';
+  if (qtyEl) qtyEl.value = isProductTracked(p) ? String(roundQty(p.stock)) : '0';
+  if (minEl) minEl.value = String(getProductMinStock(p));
+  if (noteEl) noteEl.value = '';
+  onWhEditModeChange();
+  openModal('warehouseEditModal');
+}
+
+function onWhEditModeChange() {
+  const modeEl = document.getElementById('whEditMode');
+  const grp = document.getElementById('whEditQtyGroup');
+  if (!grp || !modeEl) return;
+  if (grp.style) grp.style.display = modeEl.value === 'unlimited' ? 'none' : '';
+}
+
+function saveWarehouseEdit() {
+  const pid = document.getElementById('whEditProductId')?.value;
+  const p = (PRODUCTS || []).find(x => String(x.id) === String(pid));
+  if (!p) return;
+
+  const mode = document.getElementById('whEditMode')?.value || 'set';
+  const qtyInput = parseFloat(document.getElementById('whEditQty')?.value);
+  const minInput = parseFloat(document.getElementById('whEditMinStock')?.value);
+  const note = (document.getElementById('whEditNote')?.value || '').trim();
+  const minStock = !isNaN(minInput) ? Math.max(0, roundQty(minInput)) : getProductMinStock(p);
+  p.minStock = minStock;
+
+  if (mode === 'unlimited') {
+    delete p.stock;
+    const delVal = (typeof firebase !== 'undefined' && firebase.firestore && firebase.firestore.FieldValue && firebase.firestore.FieldValue.delete)
+      ? firebase.firestore.FieldValue.delete()
+      : null;
+    try { db.collection('products').doc(String(p.id)).update({ stock: delVal, minStock }); } catch (e) {}
+    logWarehouseMovement([{
+      productId: p.id, name: p.nameUz || p.name, emoji: p.emoji || '🥗',
+      delta: 0, newStock: '∞', unit: p.unit || 'kg', reason: note || 'Cheklanmagan rejimga o\'tkazildi'
+    }]);
+  } else {
+    if (isNaN(qtyInput)) {
+      showToast(lang === 'uz' ? 'Miqdorni to\'g\'ri kiriting' : 'Введите корректное число', 'error');
+      return;
+    }
+    const oldVal = isProductTracked(p) ? Number(p.stock) : 0;
+    let newVal = oldVal;
+    if (mode === 'set') newVal = roundQty(qtyInput);
+    else if (mode === 'add') newVal = roundQty(oldVal + qtyInput);
+    else if (mode === 'sub') newVal = roundQty(oldVal - qtyInput);
+    const delta = roundQty(newVal - oldVal);
+    p.stock = newVal;
+    try { db.collection('products').doc(String(p.id)).update({ stock: newVal, minStock }); } catch (e) {}
+    logWarehouseMovement([{
+      productId: p.id, name: p.nameUz || p.name, emoji: p.emoji || '🥗',
+      delta, newStock: newVal, unit: p.unit || 'kg',
+      reason: note || (mode === 'set' ? 'Inventarizatsiya (=)' : mode === 'add' ? 'Kirim (+)' : 'Spisaniya (-)')
+    }]);
+  }
+
+  closeModal('warehouseEditModal');
+  renderWarehouse();
+  updateWarehouseBadge();
+  renderProductsGrid();
+  renderProductsSettings();
+  try { renderDashboard(); } catch (e) {}
+  showToast('✅ Sklad yangilandi', 'success');
+}
+
+function logWarehouseMovement(entries) {
+  if (!Array.isArray(entries) || !entries.length) return;
+  const now = new Date().toISOString();
+  const stamped = entries.map((e, idx) => ({
+    id: Date.now() + idx,
+    date: now,
+    ...e
+  }));
+  warehouseLogs = [...stamped, ...warehouseLogs].slice(0, 40);
+  try { localStorage.setItem('teegu_wh_logs', JSON.stringify(warehouseLogs)); } catch (e) {}
+  try {
+    db.collection('settings').doc('main').set({ warehouseLogs: warehouseLogs.slice(0, 40) }, { merge: true });
+  } catch (e) {}
+  renderWarehouseLogs();
+}
+
+function renderWarehouseLogs() {
+  const el = document.getElementById('warehouseLogsList');
+  if (!el) return;
+  if (!warehouseLogs.length) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--text3);padding:8px 0">${lang==='uz'?'Hozircha harakatlar yo\'q':'Пока нет движений'}</div>`;
+    return;
+  }
+  el.innerHTML = warehouseLogs.slice(0, 20).map(l => {
+    const dNum = Number(l.delta);
+    const deltaStr = l.newStock === '∞' ? '∞' : (dNum > 0 ? `+${dNum}` : `${dNum}`);
+    const col = l.newStock === '∞' ? 'var(--text2)' : (dNum > 0 ? 'var(--green)' : (dNum < 0 ? 'var(--danger)' : 'var(--gold)'));
+    const tm = l.date ? new Date(l.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+    const dt = l.date ? new Date(l.date).toLocaleDateString('ru-RU') : '';
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
+        <div style="min-width:0">
+          <div style="font-weight:700">${l.emoji || '🥗'} ${escapeHTML(l.name || '')}</div>
+          <div style="color:var(--text3);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHTML(l.reason || '')} · ${dt} ${tm}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div style="font-weight:800;color:${col}">${deltaStr} ${escapeHTML(l.unit || 'kg')}</div>
+          <div style="font-size:10px;color:var(--text3)">Qoldiq: ${l.newStock}${l.newStock === '∞' ? '' : ' ' + escapeHTML(l.unit || 'kg')}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function sendWarehouseToTelegram() {
+  const tgToken = state.settings.tgToken || atob('ODc5NjU4ODA3MTpBQUc4Wl9SOGhQOUVTWlpfM0x4VWFrRDhQQ1hqNUM1WlA2WQ==');
+  const tgChatId = state.settings.tgChatId || '483325961';
+  if (!tgToken || !tgChatId) {
+    showToast('⚠️ Telegram sozlanmagan', 'error');
+    return false;
+  }
+  const tracked = (PRODUCTS || []).filter(isProductTracked);
+  if (!tracked.length) {
+    showToast('ℹ️ Skladda hisobga olingan mahsulot yo\'q', 'info');
+    return false;
+  }
+  const d = new Date();
+  const totalKg = roundQty(tracked.reduce((s, p) => s + Math.max(0, Number(p.stock) || 0), 0));
+  const lines = [
+    `🏭 <b>SKLAD QOLDIG'I — ${d.toLocaleDateString('ru-RU')} ${d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</b>`,
+    ``
+  ];
+  tracked.forEach(p => {
+    const st = getProductStockStatus(p);
+    const icon = st === 'empty' ? '🔴' : (st === 'low' ? '⚠️' : '✅');
+    lines.push(`${icon} ${p.emoji || '🥗'} ${escapeHTML(p.nameUz || p.name)}: <b>${roundQty(p.stock)} ${escapeHTML(p.unit || 'kg')}</b>`);
+  });
+  lines.push(``, `📦 <b>Jami qoldiq:</b> ${totalKg} kg`);
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: tgChatId, text: lines.join('\n'), parse_mode: 'HTML' })
+    });
+    const res = await r.json();
+    if (res.ok) {
+      showToast('✅ Sklad hisoboti Telegramga yuborildi', 'success');
+      return true;
+    }
+    showToast('❌ Telegram xatolik', 'error');
+    return false;
+  } catch (e) {
+    showToast('❌ Tarmoq xatosi', 'error');
+    return false;
+  }
+}
+
+// ==================== AI UI CONTROL ENGINE ====================
+const DEFAULT_UI_CONFIG = {
+  aiUiAccess: true,
+  themeVars: {},
+  styles: {},
+  renames: {},
+  visibility: {},
+  layout: {},
+  tabOrder: null,
+  customButtons: [],
+  updatedAt: null
+};
+
+let aiUiConfig = (() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('teegu_ui_config') || 'null');
+    return saved && typeof saved === 'object' ? { ...cloneUiConfig(DEFAULT_UI_CONFIG), ...cloneUiConfig(saved) } : cloneUiConfig(DEFAULT_UI_CONFIG);
+  } catch (e) {
+    return cloneUiConfig(DEFAULT_UI_CONFIG);
+  }
+})();
+
+let aiUiHistory = (() => {
+  try {
+    const h = JSON.parse(localStorage.getItem('teegu_ui_history') || '[]');
+    return Array.isArray(h) ? h : [];
+  } catch (e) {
+    return [];
+  }
+})();
+
+const ORIGINAL_UI_TEXTS = {};
+const PROTECTED_UI_SELECTORS = [
+  '#page-ai', '.tab[data-page="ai"]',
+  '#page-settings', '.tab[data-page="settings"]',
+  '#aiChatBox', '#aiUiInspectorModal', '#aiUiAccessToggle', '#loginOverlay'
+];
+
+function cloneUiConfig(cfg) {
+  return JSON.parse(JSON.stringify(cfg || DEFAULT_UI_CONFIG));
+}
+
+function initAiUiController() {
+  if (state && state.settings && state.settings.uiConfig) {
+    syncUiConfigFromRemote(state.settings.uiConfig);
+  } else {
+    applySavedUiConfig();
+    updateAiUiAccessButtons();
+  }
+}
+
+function syncUiConfigFromRemote(remoteCfg) {
+  if (!remoteCfg || typeof remoteCfg !== 'object') return;
+  const remoteTs = Number(remoteCfg.updatedAt) || 0;
+  const localTs = Number(aiUiConfig.updatedAt) || 0;
+  if (remoteTs >= localTs || !localTs) {
+    aiUiConfig = { ...cloneUiConfig(DEFAULT_UI_CONFIG), ...cloneUiConfig(remoteCfg) };
+    try { localStorage.setItem('teegu_ui_config', JSON.stringify(aiUiConfig)); } catch (e) {}
+    applySavedUiConfig();
+    updateAiUiAccessButtons();
+  }
+}
+
+function persistUiConfig(pushSnapshotBefore) {
+  if (pushSnapshotBefore) {
+    aiUiHistory.push(cloneUiConfig(pushSnapshotBefore));
+    if (aiUiHistory.length > 10) aiUiHistory = aiUiHistory.slice(-10);
+    try { localStorage.setItem('teegu_ui_history', JSON.stringify(aiUiHistory)); } catch (e) {}
+  }
+  aiUiConfig.updatedAt = Date.now();
+  const clean = cloneUiConfig(aiUiConfig);
+  try { localStorage.setItem('teegu_ui_config', JSON.stringify(clean)); } catch (e) {}
+  try { db.collection('settings').doc('main').set({ uiConfig: clean }, { merge: true }); } catch (e) {}
+}
+
+function updateAiUiAccessButtons() {
+  const enabled = aiUiConfig.aiUiAccess !== false;
+  const topBtn = document.getElementById('aiUiAccessToggle');
+  if (topBtn) {
+    topBtn.textContent = enabled ? '🎨 UI Dostup: ON' : '🔒 UI Dostup: OFF';
+    if (topBtn.classList) {
+      topBtn.classList.toggle('enabled', enabled);
+      topBtn.classList.toggle('disabled', !enabled);
+    }
+  }
+  const modalBtn = document.getElementById('uiModalToggleBtn');
+  if (modalBtn) {
+    modalBtn.textContent = enabled ? 'YOQILGAN' : 'O\'CHIRILGAN';
+    if (modalBtn.classList) {
+      modalBtn.classList.toggle('enabled', enabled);
+      modalBtn.classList.toggle('disabled', !enabled);
+    }
+  }
+  const sub = document.getElementById('uiAccessStatusSub');
+  if (sub) {
+    sub.textContent = enabled
+      ? 'Yoqilgan — AI sizning buyrug\'ingiz bilan tugma va dizaynlarni tahrirlay oladi'
+      : 'O\'chirilgan — AI faqat ma\'lumot beradi, tugmalarni o\'zgartira olmaydi';
+  }
+}
+
+function toggleAiUiAccess() {
+  aiUiConfig.aiUiAccess = !(aiUiConfig.aiUiAccess !== false);
+  persistUiConfig(null);
+  updateAiUiAccessButtons();
+  showToast(aiUiConfig.aiUiAccess ? '🎨 AI UI dostup yoqildi' : '🔒 AI UI dostup o\'chirildi', 'info');
+}
+
+function buildUiContext() {
+  return {
+    aiUiAccess: aiUiConfig.aiUiAccess !== false,
+    activeConfig: {
+      themeVars: aiUiConfig.themeVars || {},
+      styledSelectors: Object.keys(aiUiConfig.styles || {}),
+      renames: aiUiConfig.renames || {},
+      hiddenSelectors: Object.keys(aiUiConfig.visibility || {}).filter(k => aiUiConfig.visibility[k] === false),
+      layout: aiUiConfig.layout || {},
+      tabOrder: aiUiConfig.tabOrder || PAGE_ORDER,
+      customButtons: aiUiConfig.customButtons || []
+    },
+    availableSelectors: {
+      adminButtons: ['#submitBtn', '#btnHeaderAi', '#btnHeaderPending', '#btnHeaderSettings', '#btnNewClientQuick', '#btnTemplates', '#btnSaveTemplate', '#btnResetOrder', '#dashQuickOrderBtn', '#dashQuickWarehouseBtn', '#dashQuickReportBtn', '#btnSendDaySummary', '#btnAddClient', '#btnBroadcast', '#btnExportExcel', '#btnBroadcastPrice', '#btnAddProduct', '#btnWarehouseBatch', '#btnWarehouseTg', '#aiSendBtn'],
+      adminContainers: ['#productGrid', '#tabsBar', '.card', '.kpi-card', '.product-card', '.wh-card', '.btn-primary', '.btn-outline', '.tab'],
+      tabs: ['.tab[data-page="dashboard"]', '.tab[data-page="new-order"]', '.tab[data-page="orders"]', '.tab[data-page="debts"]', '.tab[data-page="delivery"]', '.tab[data-page="warehouse"]', '.tab[data-page="clients"]', '.tab[data-page="stats"]', '.tab[data-page="products"]', '.tab[data-page="map"]'],
+      otherApps: ['#agentSubmitBtn (scope:"agent")', '#courierOptimizeBtn (scope:"courier")', '#btnOrder (scope:"client")', '#checkoutSubmitBtn (scope:"client")']
+    }
+  };
+}
+
+function sanitizeCssProp(prop) {
+  if (!prop || typeof prop !== 'string') return '';
+  const trimmed = prop.trim();
+  const kebab = trimmed.startsWith('--') ? trimmed : trimmed.replace(/[A-Z]/g, m => '-' + m.toLowerCase()).toLowerCase();
+  return /^(--)?[a-z][a-z0-9-]{1,45}$/.test(kebab) ? kebab : '';
+}
+
+function sanitizeCssValue(val) {
+  if (val === null || val === undefined) return '';
+  const s = String(val).trim();
+  if (!s || s.length > 200) return '';
+  if (/javascript:|vbscript:|expression\s*\(|@import|url\s*\(|<|>|\{|\}|;/i.test(s)) return '';
+  return s;
+}
+
+function isSafeUiSelector(sel, isHideAction = false) {
+  if (!sel || typeof sel !== 'string') return false;
+  const s = sel.trim();
+  if (!s || s.length > 120 || /[<>;{}\\]/.test(s)) return false;
+  const low = s.toLowerCase();
+  if (isHideAction && PROTECTED_UI_SELECTORS.some(p => low === p.toLowerCase() || low.includes(p.toLowerCase()))) {
+    return false;
+  }
+  return true;
+}
+
+function applyUiActions(actions) {
+  if (!Array.isArray(actions) || !actions.length) return [];
+  if (aiUiConfig.aiUiAccess === false) return [];
+
+  const prevSnapshot = cloneUiConfig(aiUiConfig);
+  const applied = [];
+
+  for (const act of actions) {
+    if (!act || typeof act !== 'object') continue;
+    const t = act.type;
+    const scope = act.scope || 'admin';
+
+    if (t === 'set_theme' && act.vars && typeof act.vars === 'object') {
+      aiUiConfig.themeVars = aiUiConfig.themeVars || {};
+      let count = 0;
+      Object.entries(act.vars).forEach(([k, v]) => {
+        if (!/^--[a-zA-Z0-9-]{2,32}$/.test(k)) return;
+        const sv = sanitizeCssValue(v);
+        if (sv) {
+          aiUiConfig.themeVars[k] = sv;
+          count++;
+        }
+      });
+      if (count) applied.push(`Tema ranglari (${count} ta o'zgaruvchi)`);
+    } else if (t === 'style_element' && isSafeUiSelector(act.selector) && act.styles && typeof act.styles === 'object') {
+      const sel = act.selector.trim();
+      aiUiConfig.styles = aiUiConfig.styles || {};
+      const cur = aiUiConfig.styles[sel] || {};
+      const nextProps = { ...(cur.props || {}) };
+      let count = 0;
+      Object.entries(act.styles).forEach(([k, v]) => {
+        const pk = sanitizeCssProp(k);
+        const sv = sanitizeCssValue(v);
+        if (pk && sv) {
+          nextProps[pk] = sv;
+          count++;
+        }
+      });
+      if (count) {
+        aiUiConfig.styles[sel] = { scope, props: nextProps };
+        applied.push(`${sel} uslubi (${count} xossa)`);
+      }
+    } else if (t === 'rename_element' && isSafeUiSelector(act.selector) && typeof act.text === 'string') {
+      const sel = act.selector.trim();
+      const txt = act.text.trim().slice(0, 80);
+      if (txt) {
+        aiUiConfig.renames = aiUiConfig.renames || {};
+        aiUiConfig.renames[sel] = { text: txt, scope };
+        applied.push(`"${txt}" deb nomlandi (${sel})`);
+      }
+    } else if (t === 'set_visibility') {
+      const vis = act.visible !== false;
+      if (isSafeUiSelector(act.selector, !vis)) {
+        const sel = act.selector.trim();
+        aiUiConfig.visibility = aiUiConfig.visibility || {};
+        if (vis) delete aiUiConfig.visibility[sel];
+        else aiUiConfig.visibility[sel] = false;
+        applied.push(`${sel}: ${vis ? 'ko\'rsatildi' : 'yashirildi'}`);
+      }
+    } else if (t === 'set_layout') {
+      aiUiConfig.layout = aiUiConfig.layout || {};
+      if (act.columns !== undefined) {
+        const cols = Math.min(4, Math.max(1, parseInt(act.columns, 10) || 2));
+        aiUiConfig.layout.columns = cols;
+        applied.push(`Grid ustunlari: ${cols} ta`);
+      }
+      if (act.fontScale !== undefined) {
+        const fs = Math.min(1.35, Math.max(0.85, parseFloat(act.fontScale) || 1));
+        aiUiConfig.layout.fontScale = fs;
+        applied.push(`Shrift masshtabi: ${Math.round(fs * 100)}%`);
+      }
+      if (act.radius !== undefined) {
+        const sr = sanitizeCssValue(act.radius);
+        if (sr) {
+          aiUiConfig.layout.radius = sr;
+          applied.push(`Burchak yumaloqligi: ${sr}`);
+        }
+      }
+    } else if (t === 'reorder_tabs' && Array.isArray(act.order) && act.order.length) {
+      const cleanOrder = act.order.map(x => String(x).trim()).filter(Boolean);
+      if (cleanOrder.length) {
+        aiUiConfig.tabOrder = cleanOrder;
+        applied.push(`Tablar tartibi yangilandi`);
+      }
+    } else if (t === 'add_custom_button' && act.label && act.action) {
+      const actionStr = String(act.action).trim();
+      if (/^(navigate:|openModal:|call:|ai:)/.test(actionStr)) {
+        aiUiConfig.customButtons = aiUiConfig.customButtons || [];
+        const id = String(act.id || ('cbtn_' + Date.now())).replace(/[^a-zA-Z0-9_-]/g, '');
+        const page = ['dashboard', 'new-order', 'orders', 'warehouse'].includes(act.page) ? act.page : 'dashboard';
+        const color = sanitizeCssValue(act.color || '') || 'var(--accent)';
+        const btnObj = { id, page, label: String(act.label).trim().slice(0, 50), action: actionStr, color };
+        aiUiConfig.customButtons = aiUiConfig.customButtons.filter(b => b.id !== id).concat(btnObj);
+        applied.push(`Yangi tugma: "${btnObj.label}" (${page})`);
+      }
+    } else if (t === 'remove_custom_button' && act.id) {
+      aiUiConfig.customButtons = (aiUiConfig.customButtons || []).filter(b => b.id !== act.id);
+      applied.push(`Maxsus tugma o'chirildi (${act.id})`);
+    } else if (t === 'navigate' && act.page) {
+      try { showPage(String(act.page)); } catch (e) {}
+      applied.push(`Sahifa ochildi: ${act.page}`);
+    } else if (t === 'reset_ui') {
+      aiUiConfig = { ...cloneUiConfig(DEFAULT_UI_CONFIG), aiUiAccess: aiUiConfig.aiUiAccess !== false };
+      applied.push(`Barcha interfeys sozlamalari asl holiga qaytarildi`);
+      break;
+    }
+  }
+
+  if (applied.length) {
+    persistUiConfig(prevSnapshot);
+    applySavedUiConfig();
+  }
+  return applied;
+}
+
+const VALID_AI_UI_TYPES = new Set([
+  'set_theme', 'style_element', 'rename_element', 'set_visibility',
+  'set_layout', 'reorder_tabs', 'add_custom_button', 'remove_custom_button',
+  'navigate', 'reset_ui'
+]);
+
+function extractAndApplyUiActions(rawText) {
+  if (!rawText || typeof rawText !== 'string') return { cleanText: '', applied: [], blocked: false };
+  let cleanText = rawText;
+  let parsedActions = null;
+
+  const tagRe = /<<<UI_ACTIONS>>>([\s\S]*?)<<<END_UI_ACTIONS>>>/i;
+  const m = rawText.match(tagRe);
+  if (m && m[1]) {
+    cleanText = rawText.replace(tagRe, '').trim();
+    try {
+      const obj = JSON.parse(m[1].trim());
+      if (obj && Array.isArray(obj.actions)) parsedActions = obj.actions;
+    } catch (e) {}
+  } else {
+    const codeRe = /```(?:json)?\s*(\{[\s\S]*?"actions"\s*:\s*\[[\s\S]*?\][\s\S]*?\})\s*```/i;
+    const cm = rawText.match(codeRe);
+    if (cm && cm[1]) {
+      try {
+        const obj = JSON.parse(cm[1]);
+        if (obj && Array.isArray(obj.actions) && obj.actions.some(a => a && VALID_AI_UI_TYPES.has(a.type))) {
+          parsedActions = obj.actions;
+          cleanText = rawText.replace(codeRe, '').trim();
+        }
+      } catch (e) {}
+    }
+  }
+
+  if (!parsedActions || !parsedActions.length) {
+    return { cleanText, applied: [], blocked: false };
+  }
+  if (aiUiConfig.aiUiAccess === false) {
+    return { cleanText, applied: [], blocked: true };
+  }
+  const applied = applyUiActions(parsedActions);
+  return { cleanText, applied, blocked: false };
+}
+
+function applySavedUiConfig() {
+  const cfg = aiUiConfig || DEFAULT_UI_CONFIG;
+  const cssLines = [];
+
+  // Theme vars
+  const themeEntries = Object.entries(cfg.themeVars || {});
+  const rootRules = [];
+  themeEntries.forEach(([k, v]) => {
+    rootRules.push(`${k}: ${v} !important;`);
+    if (typeof document !== 'undefined' && document.documentElement && document.documentElement.style && typeof document.documentElement.style.setProperty === 'function') {
+      document.documentElement.style.setProperty(k, v);
+    }
+  });
+  if (cfg.layout && cfg.layout.radius) {
+    rootRules.push(`--r: ${cfg.layout.radius} !important;`);
+    rootRules.push(`--r2: ${cfg.layout.radius} !important;`);
+  }
+  if (rootRules.length) {
+    cssLines.push(`:root { ${rootRules.join(' ')} }`);
+  }
+
+  // Layout overrides
+  if (cfg.layout && cfg.layout.columns) {
+    cssLines.push(`.products-grid { grid-template-columns: repeat(${cfg.layout.columns}, 1fr) !important; }`);
+  }
+  if (cfg.layout && cfg.layout.fontScale) {
+    cssLines.push(`body { font-size: ${Math.round(14 * cfg.layout.fontScale)}px !important; }`);
+  }
+
+  // Element styles (for admin or all)
+  Object.entries(cfg.styles || {}).forEach(([sel, entry]) => {
+    if (!entry) return;
+    const sc = entry.scope || 'admin';
+    if (sc !== 'all' && sc !== 'admin') return;
+    const props = entry.props || entry;
+    const decls = Object.entries(props)
+      .filter(([pk, pv]) => pk !== 'scope' && pv !== undefined && pv !== '')
+      .map(([pk, pv]) => `${pk}: ${pv} !important;`);
+    if (decls.length) cssLines.push(`${sel} { ${decls.join(' ')} }`);
+  });
+
+  // Visibility overrides
+  Object.entries(cfg.visibility || {}).forEach(([sel, visible]) => {
+    if (visible === false && isSafeUiSelector(sel, true)) {
+      cssLines.push(`${sel} { display: none !important; }`);
+    }
+  });
+
+  if (typeof document !== 'undefined') {
+    let styleEl = document.getElementById('teeguAiCustomStyles');
+    if (!styleEl && document.head && typeof document.createElement === 'function') {
+      styleEl = document.createElement('style');
+      styleEl.id = 'teeguAiCustomStyles';
+      if (typeof document.head.appendChild === 'function') document.head.appendChild(styleEl);
+    }
+    if (styleEl) styleEl.textContent = cssLines.join('\n');
+  }
+
+  applyTabOrder();
+  applySavedUiRenames();
+  renderCustomUiButtons();
+}
+
+function applyTabOrder() {
+  const order = aiUiConfig && Array.isArray(aiUiConfig.tabOrder) ? aiUiConfig.tabOrder : null;
+  if (!order || typeof document === 'undefined') return;
+  const bar = document.getElementById('tabsBar');
+  if (!bar || !bar.children || typeof bar.appendChild !== 'function') return;
+  const children = Array.from(bar.children);
+  if (!children.length) return;
+  order.forEach(page => {
+    const tab = children.find(el => el && el.dataset && el.dataset.page === page);
+    if (tab) bar.appendChild(tab);
+  });
+}
+
+function applySavedUiRenames() {
+  if (typeof document === 'undefined') return;
+  const renames = (aiUiConfig && aiUiConfig.renames) || {};
+  Object.entries(renames).forEach(([sel, entry]) => {
+    const val = typeof entry === 'string' ? entry : (entry && entry.text);
+    const sc = typeof entry === 'object' && entry ? (entry.scope || 'admin') : 'admin';
+    if (!val || (sc !== 'all' && sc !== 'admin')) return;
+    try {
+      const el = document.querySelector(sel);
+      if (!el) return;
+      if (!ORIGINAL_UI_TEXTS[sel]) {
+        ORIGINAL_UI_TEXTS[sel] = el.textContent || el.innerText || '';
+      }
+      el.textContent = val;
+    } catch (e) {}
+  });
+}
+
+function renderCustomUiButtons() {
+  if (typeof document === 'undefined') return;
+  const btns = (aiUiConfig && Array.isArray(aiUiConfig.customButtons)) ? aiUiConfig.customButtons : [];
+  ['dashboard', 'new-order', 'orders', 'warehouse'].forEach(page => {
+    const wrap = document.getElementById('customBtns-' + page);
+    if (!wrap) return;
+    const pageBtns = btns.filter(b => b.page === page);
+    if (!pageBtns.length) {
+      wrap.innerHTML = '';
+      return;
+    }
+    wrap.innerHTML = pageBtns.map(b => {
+      const bg = b.color ? `background:${escapeHTML(b.color)};border-color:transparent;color:#fff;` : '';
+      return `<button class="ai-custom-btn" style="${bg}" onclick="executeCustomUiButtonAction('${escapeHTML(b.id)}')">${escapeHTML(b.label)}</button>`;
+    }).join('');
+  });
+}
+
+const ALLOWED_UI_CALLS = {
+  sendDaySummary: () => typeof sendDaySummary === 'function' && sendDaySummary(),
+  sendWarehouseToTelegram: () => typeof sendWarehouseToTelegram === 'function' && sendWarehouseToTelegram(),
+  openWarehouseBatchModal: () => typeof openWarehouseBatchModal === 'function' && openWarehouseBatchModal(),
+  exportToExcel: () => typeof exportToExcel === 'function' && exportToExcel(),
+  openBroadcastModal: () => typeof openBroadcastModal === 'function' && openBroadcastModal(),
+  openPriceBroadcastModal: () => typeof openPriceBroadcastModal === 'function' && openPriceBroadcastModal(),
+  optimizeDeliveryOrder: () => typeof optimizeDeliveryOrder === 'function' && optimizeDeliveryOrder(),
+  undoLastUiChange: () => undoLastUiChange(),
+  openUiInspectorModal: () => openUiInspectorModal()
+};
+
+function executeCustomUiButtonAction(btnId) {
+  const b = (aiUiConfig.customButtons || []).find(x => x.id === btnId);
+  if (!b || !b.action) return;
+  const act = String(b.action);
+  if (act.startsWith('navigate:')) {
+    showPage(act.slice(9).trim());
+  } else if (act.startsWith('openModal:')) {
+    openModal(act.slice(10).trim());
+  } else if (act.startsWith('call:')) {
+    const fnName = act.slice(5).trim();
+    if (ALLOWED_UI_CALLS[fnName]) ALLOWED_UI_CALLS[fnName]();
+  } else if (act.startsWith('ai:')) {
+    showPage('ai');
+    sendAiUserMessage(act.slice(3).trim());
+  }
+}
+
+function undoLastUiChange() {
+  if (!aiUiHistory.length) {
+    showToast(lang === 'uz' ? 'Qaytariladigan o\'zgarish yo\'q' : 'Нет изменений для отмены', 'info');
+    return false;
+  }
+  const prev = aiUiHistory.pop();
+  try { localStorage.setItem('teegu_ui_history', JSON.stringify(aiUiHistory)); } catch (e) {}
+
+  // Restore any renamed elements whose rename was removed in prev
+  const curRenames = aiUiConfig.renames || {};
+  const prevRenames = (prev && prev.renames) || {};
+  Object.keys(curRenames).forEach(sel => {
+    if (!prevRenames[sel] && ORIGINAL_UI_TEXTS[sel] !== undefined) {
+      try {
+        const el = document.querySelector(sel);
+        if (el) el.textContent = ORIGINAL_UI_TEXTS[sel];
+      } catch (e) {}
+    }
+  });
+
+  aiUiConfig = { ...cloneUiConfig(DEFAULT_UI_CONFIG), ...(prev ? cloneUiConfig(prev) : {}), aiUiAccess: aiUiConfig.aiUiAccess !== false };
+  persistUiConfig(null);
+  applySavedUiConfig();
+  updateAiUiAccessButtons();
+  renderUiInspector();
+  showToast('↩️ Oxirgi UI o\'zgarishi bekor qilindi', 'success');
+  return true;
+}
+
+function resetUiConfig() {
+  const prev = cloneUiConfig(aiUiConfig);
+  Object.keys(ORIGINAL_UI_TEXTS).forEach(sel => {
+    try {
+      const el = document.querySelector(sel);
+      if (el) el.textContent = ORIGINAL_UI_TEXTS[sel];
+    } catch (e) {}
+  });
+  if (typeof document !== 'undefined' && document.documentElement && document.documentElement.style && typeof document.documentElement.style.removeProperty === 'function') {
+    Object.keys(aiUiConfig.themeVars || {}).forEach(k => document.documentElement.style.removeProperty(k));
+    document.documentElement.style.removeProperty('--r');
+    document.documentElement.style.removeProperty('--r2');
+  }
+  aiUiConfig = { ...cloneUiConfig(DEFAULT_UI_CONFIG), aiUiAccess: aiUiConfig.aiUiAccess !== false };
+  persistUiConfig(prev);
+  applySavedUiConfig();
+  try { applyLang(); } catch (e) {}
+  renderUiInspector();
+  showToast('🗑️ Interfeys zavod holatiga qaytarildi', 'success');
+}
+
+function openUiInspectorModal() {
+  updateAiUiAccessButtons();
+  renderUiInspector();
+  openModal('aiUiInspectorModal');
+}
+
+function renderUiInspector() {
+  const el = document.getElementById('aiUiChangesList');
+  if (!el) return;
+  const rows = [];
+  Object.entries(aiUiConfig.themeVars || {}).forEach(([k, v]) => {
+    rows.push({ cat: 'themeVars', key: k, label: `🎨 Tema ${k}: ${v}` });
+  });
+  Object.entries(aiUiConfig.styles || {}).forEach(([sel, entry]) => {
+    rows.push({ cat: 'styles', key: sel, label: `✨ Uslub: ${sel} (${Object.keys(entry.props || entry || {}).length} xossa)` });
+  });
+  Object.entries(aiUiConfig.renames || {}).forEach(([sel, entry]) => {
+    const t = typeof entry === 'string' ? entry : (entry && entry.text);
+    rows.push({ cat: 'renames', key: sel, label: `🏷️ Nom (${sel}) → "${t}"` });
+  });
+  Object.entries(aiUiConfig.visibility || {}).forEach(([sel, vis]) => {
+    if (vis === false) rows.push({ cat: 'visibility', key: sel, label: `🙈 Yashirilgan: ${sel}` });
+  });
+  if (aiUiConfig.layout && Object.keys(aiUiConfig.layout).length) {
+    rows.push({ cat: 'layout', key: 'all', label: `📐 Joylashuv: ${JSON.stringify(aiUiConfig.layout)}` });
+  }
+  if (Array.isArray(aiUiConfig.tabOrder)) {
+    rows.push({ cat: 'tabOrder', key: 'all', label: `🔀 Tablar tartibi o'zgartirilgan` });
+  }
+  (aiUiConfig.customButtons || []).forEach(b => {
+    rows.push({ cat: 'customButtons', key: b.id, label: `🔘 Tugma (${b.page}): "${b.label}"` });
+  });
+
+  if (!rows.length) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--text3);padding:10px 0">${lang==='uz'?'Hozircha interfeys o\'zgartirilmagan (standart ko\'rinish)':'Пока нет активных изменений интерфейса'}</div>`;
+    return;
+  }
+  el.innerHTML = rows.map(r => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-bottom:6px;font-size:12px">
+      <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHTML(r.label)}</span>
+      <button class="chip" style="margin:0;padding:3px 8px;font-size:11px;color:var(--danger)" onclick="revertSingleUiItem('${escapeHTML(r.cat)}','${escapeHTML(r.key)}')">✕</button>
+    </div>
+  `).join('');
+}
+
+function revertSingleUiItem(cat, key) {
+  const prev = cloneUiConfig(aiUiConfig);
+  if (cat === 'themeVars' && aiUiConfig.themeVars) {
+    if (typeof document !== 'undefined' && document.documentElement && document.documentElement.style && typeof document.documentElement.style.removeProperty === 'function') {
+      document.documentElement.style.removeProperty(key);
+    }
+    delete aiUiConfig.themeVars[key];
+  } else if (cat === 'styles' && aiUiConfig.styles) {
+    delete aiUiConfig.styles[key];
+  } else if (cat === 'renames' && aiUiConfig.renames) {
+    if (ORIGINAL_UI_TEXTS[key] !== undefined) {
+      try {
+        const el = document.querySelector(key);
+        if (el) el.textContent = ORIGINAL_UI_TEXTS[key];
+      } catch (e) {}
+    }
+    delete aiUiConfig.renames[key];
+  } else if (cat === 'visibility' && aiUiConfig.visibility) {
+    delete aiUiConfig.visibility[key];
+  } else if (cat === 'layout') {
+    aiUiConfig.layout = {};
+  } else if (cat === 'tabOrder') {
+    aiUiConfig.tabOrder = null;
+  } else if (cat === 'customButtons') {
+    aiUiConfig.customButtons = (aiUiConfig.customButtons || []).filter(b => b.id !== key);
+  }
+  persistUiConfig(prev);
+  applySavedUiConfig();
+  renderUiInspector();
+  showToast('↩️ Tanlangan o\'zgarish bekor qilindi', 'info');
 }

@@ -16,6 +16,16 @@ let myOrders = [];
 let loggedCourierName = localStorage.getItem('courierAuth') || null;
 let routeSummary = null;
 
+// Listen to settings / shared UI config
+db.collection('settings').doc('main').onSnapshot(snap => {
+  if (snap.exists) {
+    const data = snap.data() || {};
+    if (data.uiConfig && typeof applySharedUiConfig === 'function') {
+      applySharedUiConfig(data.uiConfig, 'courier');
+    }
+  }
+});
+
 // Listen to couriers
 db.collection('couriers').onSnapshot(snap => {
   allCouriers = snap.docs.map(d => d.data());
@@ -294,6 +304,61 @@ function showToast(msg, type='info') {
   t.className = 'toast ' + type + ' show';
   setTimeout(() => { t.className = 'toast ' + type; }, 3000);
 }
+
+function applySharedUiConfig(cfg, appName) {
+  if (!cfg || typeof cfg !== 'object') return;
+  try { localStorage.setItem('teegu_ui_config', JSON.stringify(cfg)); } catch (e) {}
+  const cssLines = [];
+  const rootRules = [];
+  Object.entries(cfg.themeVars || {}).forEach(([k, v]) => {
+    if (/^--[a-zA-Z0-9-]+$/.test(k) && v) {
+      rootRules.push(`${k}: ${v} !important;`);
+      if (typeof document !== 'undefined' && document.documentElement && document.documentElement.style && typeof document.documentElement.style.setProperty === 'function') {
+        document.documentElement.style.setProperty(k, v);
+      }
+    }
+  });
+  if (cfg.layout && cfg.layout.radius) {
+    rootRules.push(`--r: ${cfg.layout.radius} !important; --r2: ${cfg.layout.radius} !important;`);
+  }
+  if (rootRules.length) cssLines.push(`:root { ${rootRules.join(' ')} }`);
+  if (cfg.layout && cfg.layout.fontScale) {
+    cssLines.push(`body { font-size: ${Math.round(14 * cfg.layout.fontScale)}px !important; }`);
+  }
+  Object.entries(cfg.styles || {}).forEach(([sel, entry]) => {
+    if (!entry) return;
+    const sc = entry.scope || 'admin';
+    if (sc !== 'all' && sc !== appName) return;
+    const decls = Object.entries(entry.props || entry)
+      .filter(([pk, pv]) => pk !== 'scope' && pv !== undefined && pv !== '')
+      .map(([pk, pv]) => `${pk}: ${pv} !important;`);
+    if (decls.length) cssLines.push(`${sel} { ${decls.join(' ')} }`);
+  });
+  Object.entries(cfg.visibility || {}).forEach(([sel, vis]) => {
+    if (vis === false && sel && !/[<>{};]/.test(sel)) cssLines.push(`${sel} { display: none !important; }`);
+  });
+  if (typeof document !== 'undefined') {
+    let styleEl = document.getElementById('teeguAiCustomStyles');
+    if (!styleEl && document.head && typeof document.createElement === 'function') {
+      styleEl = document.createElement('style');
+      styleEl.id = 'teeguAiCustomStyles';
+      if (typeof document.head.appendChild === 'function') document.head.appendChild(styleEl);
+    }
+    if (styleEl) styleEl.textContent = cssLines.join('\n');
+    Object.entries(cfg.renames || {}).forEach(([sel, entry]) => {
+      const val = typeof entry === 'string' ? entry : (entry && entry.text);
+      const sc = typeof entry === 'object' && entry ? (entry.scope || 'admin') : 'admin';
+      if (val && (sc === 'all' || sc === appName)) {
+        try { const el = document.querySelector(sel); if (el) el.textContent = val; } catch (e) {}
+      }
+    });
+  }
+}
+
+try {
+  const cachedUi = JSON.parse(localStorage.getItem('teegu_ui_config') || 'null');
+  if (cachedUi) applySharedUiConfig(cachedUi, 'courier');
+} catch (e) {}
 
 init();
 

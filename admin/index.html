@@ -136,11 +136,11 @@
     <div class="header-sub" id="headerSub">Система управления заказами</div>
   </div>
   <div class="header-right">
-    <div class="icon-btn" onclick="showPage('ai')" title="AI Agent" style="background:rgba(123,97,255,0.2);color:var(--accent2);border-color:var(--accent);font-size:15px;font-weight:bold;">✨</div>
+    <div class="icon-btn" id="btnHeaderAi" onclick="showPage('ai')" title="AI Agent" style="background:rgba(123,97,255,0.2);color:var(--accent2);border-color:var(--accent);font-size:15px;font-weight:bold;">✨</div>
     <div class="icon-btn lang-btn" onclick="toggleLang()" id="langBtn">UZ</div>
     <div class="icon-btn" onclick="toggleTheme()" id="themeBtn">🌙</div>
-    <div class="icon-btn badge-wrap" onclick="showPage('orders')">⏳<span class="badge" id="pendingBadge" style="display:none"></span></div>
-    <div class="icon-btn" onclick="showPage('settings')">⚙️</div>
+    <div class="icon-btn badge-wrap" id="btnHeaderPending" onclick="showPage('orders')">⏳<span class="badge" id="pendingBadge" style="display:none"></span></div>
+    <div class="icon-btn" id="btnHeaderSettings" onclick="showPage('settings')">⚙️</div>
   </div>
 </div>
 
@@ -150,6 +150,7 @@
   <div class="tab" data-page="orders" onclick="showPage('orders')">📋 <span class="t" data-ru="Заказы" data-uz="Buyurtmalar">Заказы</span> <span class="cnt" id="ordersCount">0</span></div>
   <div class="tab" data-page="debts" onclick="showPage('debts')">💰 <span class="t" data-ru="Долги" data-uz="Qarzlar">Долги</span> <span class="cnt" id="debtsCount">0</span></div>
   <div class="tab" data-page="delivery" onclick="showPage('delivery')">🚚 <span class="t" data-ru="Маршрут" data-uz="Marshrut">Маршрут</span> <span class="cnt" id="deliveryCount">0</span></div>
+  <div class="tab" data-page="warehouse" onclick="showPage('warehouse')">🏭 <span class="t" data-ru="Склад" data-uz="Sklad">Склад</span> <span class="cnt" id="warehouseBadge" style="display:none;background:var(--danger);color:#fff;">!</span></div>
   <div class="tab" data-page="clients" onclick="showPage('clients')">👥 <span class="t" data-ru="Клиенты" data-uz="Mijozlar">Клиенты</span></div>
   <div class="tab" data-page="stats" onclick="showPage('stats')">📊 <span class="t" data-ru="Итоги" data-uz="Tahlil">Итоги</span></div>
   <div class="tab" data-page="products" onclick="showPage('products');renderProductsSettings()">🛒 <span class="t" data-ru="Прод." data-uz="Mahsulot">Прод.</span></div>
@@ -165,6 +166,7 @@
 
 <!-- PAGE: NEW ORDER -->
 <div class="page active" id="page-new-order">
+  <div id="customBtns-new-order" class="ai-custom-buttons-wrap"></div>
   <div id="favStrip" style="display:none">
     <div style="font-size:11px;color:var(--text3);margin-bottom:5px">⭐ <span class="t" data-ru="Быстрый выбор" data-uz="Tezkor tanlash">Быстрый выбор</span></div>
     <div class="favorites-strip" id="favoritesStrip"></div>
@@ -176,7 +178,7 @@
         <div class="card-title">👤 <span class="t" data-ru="Клиент" data-uz="Mijoz">Клиент</span></div>
         <div class="card-sub t" data-ru="Выберите или создайте нового" data-uz="Tanlang yoki yangi qo'shing">Выберите или создайте нового</div>
       </div>
-      <button class="btn btn-outline btn-sm" onclick="openNewClientModal()">+ <span class="t" data-ru="Новый" data-uz="Yangi">Новый</span></button>
+      <button class="btn btn-outline btn-sm" id="btnNewClientQuick" onclick="openNewClientModal()">+ <span class="t" data-ru="Новый" data-uz="Yangi">Новый</span></button>
     </div>
     <div class="form-group">
       <label class="form-label t" data-ru="Клиент" data-uz="Mijoz">Клиент</label>
@@ -224,15 +226,16 @@
     </div>
   </div>
   <div style="display:flex;gap:8px;margin-bottom:8px">
-  <button class="btn btn-outline" style="width:auto;padding:13px 16px" onclick="openTemplatesModal()" title="Шаблоны">⭐</button>
-  <button class="btn btn-outline" style="width:auto;padding:13px 16px" onclick="saveTemplate()" title="Сохранить как шаблон">💾</button>
+  <button class="btn btn-outline" id="btnTemplates" style="width:auto;padding:13px 16px" onclick="openTemplatesModal()" title="Шаблоны">⭐</button>
+  <button class="btn btn-outline" id="btnSaveTemplate" style="width:auto;padding:13px 16px" onclick="saveTemplate()" title="Сохранить как шаблон">💾</button>
 </div>
 <button class="btn btn-success" id="submitBtn" onclick="submitOrder()" style="margin-bottom:8px">✅ <span class="t" data-ru="Оформить заказ" data-uz="Buyurtmani rasmiylashtirish">Оформить заказ</span></button>
-  <button class="btn btn-outline" onclick="resetOrder()">🔄 <span class="t" data-ru="Очистить" data-uz="Tozalash">Очистить</span></button>
+  <button class="btn btn-outline" id="btnResetOrder" onclick="resetOrder()">🔄 <span class="t" data-ru="Очистить" data-uz="Tozalash">Очистить</span></button>
 </div>
 
 <!-- PAGE: ORDERS -->
 <div class="page" id="page-orders">
+  <div id="customBtns-orders" class="ai-custom-buttons-wrap"></div>
   <div class="search-wrap"><span class="search-icon">🔍</span><input class="form-input" type="text" id="ordersSearch" oninput="filterOrders(this.value)" placeholder="Поиск..."></div>
   <div style="display:flex;gap:8px;margin-bottom:12px;overflow-x:auto;scrollbar-width:none">
     <div class="pill" onclick="filterByDate('all',this)" id="pill-all">Все</div>
@@ -265,11 +268,62 @@
         <div class="card-title">🚚 <span class="t" data-ru="Маршрут на сегодня" data-uz="Bugungi marshrut">Маршрут на сегодня</span></div>
         <div class="card-sub" id="deliverySubtitle"></div>
       </div>
-      <button class="btn btn-outline btn-sm" onclick="resetDelivery()">🔄</button>
+      <button class="btn btn-outline btn-sm" id="btnResetDelivery" onclick="resetDelivery()">🔄</button>
     </div>
-    <button class="btn btn-primary btn-sm" style="width:auto;padding:8px 16px" onclick="sendDaySummary()">📤 <span class="t" data-ru="Сводка дня в Telegram" data-uz="Kun xulosasini Telegramga">Сводка в Telegram</span></button>
+    <button class="btn btn-primary btn-sm" id="btnSendDaySummary" style="width:auto;padding:8px 16px" onclick="sendDaySummary()">📤 <span class="t" data-ru="Сводка дня в Telegram" data-uz="Kun xulosasini Telegramga">Сводка в Telegram</span></button>
   </div>
   <div id="deliveryList"><div class="empty"><div class="empty-icon">🚚</div><div class="empty-text t" data-ru="Нет заказов сегодня" data-uz="Bugun buyurtma yo'q">Нет заказов сегодня</div></div></div>
+</div>
+
+<!-- PAGE: WAREHOUSE (SKLAD) -->
+<div class="page" id="page-warehouse">
+  <div id="customBtns-warehouse" class="ai-custom-buttons-wrap"></div>
+  <div class="card" style="background:linear-gradient(135deg, rgba(0,229,255,0.10), rgba(123,97,255,0.08));border-color:rgba(0,229,255,0.35);">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px;">
+      <div>
+        <div class="card-title" style="font-size:17px;">🏭 <span class="t" data-ru="Склад салатов" data-uz="Salatlar skladi">Salatlar skladi</span></div>
+        <div class="card-sub t" data-ru="Остаток в реальном времени (авто-списание при заказах)" data-uz="Real vaqtdagi qoldiqlar (buyurtmalarda avtomatik ayriladi)">Real vaqtdagi qoldiqlar (buyurtmalarda avtomatik ayriladi)</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;font-weight:700;" class="t" data-ru="Всего на складе" data-uz="Jami qoldiq">Jami qoldiq</div>
+        <div id="whTotalKg" style="font-size:22px;font-weight:900;color:var(--accent2);">0 kg</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:8px;text-align:center;">
+        <div style="font-size:16px;font-weight:900;color:var(--green);" id="whOkCount">0</div>
+        <div style="font-size:10px;color:var(--text3);" class="t" data-ru="В норме" data-uz="Yetarli">Yetarli</div>
+      </div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:8px;text-align:center;">
+        <div style="font-size:16px;font-weight:900;color:var(--danger);" id="whLowCount">0</div>
+        <div style="font-size:10px;color:var(--text3);" class="t" data-ru="Мало / Нет" data-uz="Kam / Tugagan">Kam / Tugagan</div>
+      </div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:8px;text-align:center;">
+        <div style="font-size:14px;font-weight:900;color:var(--accent);" id="whTotalVal">0</div>
+        <div style="font-size:10px;color:var(--text3);" class="t" data-ru="Сумма (so'm)" data-uz="Qiymati">Qiymati</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-success btn-sm" id="btnWarehouseBatch" style="flex:1;" onclick="openWarehouseBatchModal()">➕ <span class="t" data-ru="Приход (Сделано)" data-uz="Kirim (Tayyorlandi)">Kirim (Tayyorlandi)</span></button>
+      <button class="btn btn-outline btn-sm" id="btnWarehouseTg" style="flex:1;border-color:var(--accent);color:var(--accent);" onclick="sendWarehouseToTelegram()">📤 <span class="t" data-ru="Остаток в Telegram" data-uz="Qoldiqni Telegramga">Qoldiqni Telegramga</span></button>
+    </div>
+  </div>
+
+  <div class="search-wrap"><span class="search-icon">🔍</span><input class="form-input" type="text" id="warehouseSearch" oninput="renderWarehouse()" placeholder="Salat qidirish / Поиск салата..."></div>
+  <div style="display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;scrollbar-width:none;">
+    <button class="pill selected" id="whPill-all" onclick="setWarehouseFilter('all', this)"><span class="t" data-ru="Все" data-uz="Hammasi">Hammasi</span></button>
+    <button class="pill" id="whPill-low" onclick="setWarehouseFilter('low', this)">🚨 <span class="t" data-ru="Мало / Закончилось" data-uz="Kam / Tugagan">Kam / Tugagan</span></button>
+    <button class="pill" id="whPill-ok" onclick="setWarehouseFilter('ok', this)">🟢 <span class="t" data-ru="В наличии" data-uz="Yetarli">Yetarli</span></button>
+  </div>
+
+  <div id="warehouseList"></div>
+
+  <div class="card" style="margin-top:14px;">
+    <div class="card-header" style="margin-bottom:8px;">
+      <div class="card-title">📜 <span class="t" data-ru="Журнал склада (последние)" data-uz="Sklad harakatlari tarixi">Sklad harakatlari tarixi</span></div>
+    </div>
+    <div id="warehouseLogsList" style="max-height:240px;overflow-y:auto;"></div>
+  </div>
 </div>
 
 <!-- PAGE: CLIENTS -->
@@ -301,8 +355,8 @@
   </div>
   <div class="search-wrap"><span class="search-icon">🔍</span><input class="form-input" type="text" oninput="filterClients(this.value)" placeholder="Поиск..."></div>
   <div style="display:flex;gap:8px;margin-bottom:14px;">
-    <button class="btn btn-primary" style="flex:1;" onclick="openNewClientModal()">➕ <span class="t" data-ru="Добавить клиента" data-uz="Mijoz qo'shish">Mijoz qo'shish</span></button>
-    <button class="btn btn-outline" style="flex:1;border-color:var(--accent);color:var(--accent);" onclick="openBroadcastModal()">📢 <span class="t" data-ru="Рассылка / Прайс" data-uz="E'lon / Narxnoma">E'lon / Narxnoma</span></button>
+    <button class="btn btn-primary" id="btnAddClient" style="flex:1;" onclick="openNewClientModal()">➕ <span class="t" data-ru="Добавить клиента" data-uz="Mijoz qo'shish">Mijoz qo'shish</span></button>
+    <button class="btn btn-outline" id="btnBroadcast" style="flex:1;border-color:var(--accent);color:var(--accent);" onclick="openBroadcastModal()">📢 <span class="t" data-ru="Рассылка / Прайс" data-uz="E'lon / Narxnoma">E'lon / Narxnoma</span></button>
   </div>
   <div id="clientsList"></div>
 </div>
@@ -359,7 +413,7 @@
     <div id="topClients"></div>
   </div>
 
-  <button class="btn btn-orange" onclick="exportToExcel()" style="margin-bottom:12px">📊 <span class="t" data-ru="Экспорт в Excel" data-uz="Excelga yuklash">Экспорт в Excel</span></button>
+  <button class="btn btn-orange" id="btnExportExcel" onclick="exportToExcel()" style="margin-bottom:12px">📊 <span class="t" data-ru="Экспорт в Excel" data-uz="Excelga yuklash">Экспорт в Excel</span></button>
 
   <div class="card" id="productStats"></div>
   <div class="card" id="productPriceStats"></div>
@@ -380,17 +434,19 @@
 <!-- PAGE: AI AGENT -->
 <div class="page" id="page-ai">
   <div class="card" style="background: linear-gradient(135deg, rgba(123,97,255,0.12), rgba(0,229,255,0.06)); border-color: rgba(123,97,255,0.4); margin-bottom: 12px; padding: 14px 16px;">
-    <div style="display:flex; justify-content:space-between; align-items:center;">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
       <div>
         <div style="font-size:17px; font-weight:800; display:flex; align-items:center; gap:6px;">
           <span>✨</span>
           <span style="background:linear-gradient(135deg, var(--accent2), var(--accent)); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">TeeGu AI Agent</span>
         </div>
         <div style="font-size:12px; color:var(--text2); margin-top:3px;">
-          <span class="t" data-ru="Умный бизнес-ассистент на базе Google Gemini" data-uz="Google Gemini asosidagi aqlli biznes maslahatchi">Google Gemini asosidagi aqlli biznes maslahatchi</span>
+          <span class="t" data-ru="Бизнес-ассистент + управление интерфейсом и кнопками" data-uz="Biznes maslahatchi + interfeys va tugmalarni boshqarish">Biznes maslahatchi + interfeys va tugmalarni boshqarish</span>
         </div>
       </div>
-      <div style="display:flex; gap:6px; align-items:center;">
+      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+        <button id="aiUiAccessToggle" class="ai-ui-access-pill enabled" onclick="toggleAiUiAccess()" title="Interfeys va tugmalarni o'zgartirish ruxsati">🎨 UI: ON</button>
+        <button class="icon-btn" id="btnAiUiInspector" onclick="openUiInspectorModal()" title="O'zgartirilgan interfeys" style="font-size:13px;">🛠️</button>
         <button class="icon-btn" onclick="clearAiChat()" title="Tozalash" style="font-size:13px;">🗑️</button>
         <button class="icon-btn" onclick="toggleAiKeyModal()" title="API Kalit" style="font-size:13px;">🔑</button>
       </div>
@@ -416,17 +472,32 @@
   </div>
 
   <!-- QUICK CHIPS -->
-  <div style="margin-bottom:12px;">
+  <div style="margin-bottom:10px;">
     <div style="font-size:11px; font-weight:700; color:var(--text3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">
-      ⚡ <span class="t" data-ru="Быстрый анализ" data-uz="Tezkor savollar">Tezkor savollar</span>
+      ⚡ <span class="t" data-ru="Быстрый анализ и склад" data-uz="Tezkor savollar va sklad">Tezkor savollar va sklad</span>
     </div>
     <div style="display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; scrollbar-width:none;">
       <button class="ai-chip" onclick="askAiQuick('today')">📊 <span class="t" data-ru="Сводка за сегодня" data-uz="Bugungi savdo">Bugungi savdo</span></button>
+      <button class="ai-chip" onclick="askAiQuick('warehouse')">🏭 <span class="t" data-ru="Остатки склада" data-uz="Sklad qoldig'i">Sklad qoldig'i</span></button>
       <button class="ai-chip" onclick="askAiQuick('debts')">💸 <span class="t" data-ru="Должники" data-uz="Qarzdorlar">Qarzdorlar</span></button>
       <button class="ai-chip" onclick="askAiQuick('forecast')">🔮 <span class="t" data-ru="Прогноз на завтра" data-uz="Ertangi prognoz">Ertangi prognoz</span></button>
       <button class="ai-chip" onclick="askAiQuick('top-products')">🍜 <span class="t" data-ru="Топ салаты" data-uz="Eng ko'p sotilgan">Eng ko'p sotilgan</span></button>
       <button class="ai-chip" onclick="askAiQuick('inactive-clients')">👥 <span class="t" data-ru="Уснувшие клиенты" data-uz="Nofaol mijozlar">Nofaol mijozlar</span></button>
       <button class="ai-chip" onclick="askAiQuick('delivery')">🚚 <span class="t" data-ru="Статус доставки" data-uz="Yetkazish holati">Yetkazish holati</span></button>
+    </div>
+  </div>
+
+  <!-- QUICK UI & BUTTON CONTROL CHIPS -->
+  <div style="margin-bottom:12px;">
+    <div style="font-size:11px; font-weight:700; color:var(--accent2); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">
+      🎨 <span class="t" data-ru="Управление кнопками и дизайном" data-uz="Tugmalar va dizaynni boshqarish">Tugmalar va dizaynni boshqarish</span>
+    </div>
+    <div style="display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; scrollbar-width:none;">
+      <button class="ai-chip" onclick="askAiQuick('ui-big-btns')">🔘 <span class="t" data-ru="Увеличить кнопки" data-uz="Tugmalarni kattalashtir">Tugmalarni kattalashtir</span></button>
+      <button class="ai-chip" onclick="askAiQuick('ui-emerald')">💎 <span class="t" data-ru="Изумрудная тема" data-uz="Yashil-zumrad mavzu">Yashil-zumrad mavzu</span></button>
+      <button class="ai-chip" onclick="askAiQuick('ui-warehouse-first')">🏭 <span class="t" data-ru="Склад на видное место" data-uz="Skladni boshiga chiqar">Skladni boshiga chiqar</span></button>
+      <button class="ai-chip" onclick="askAiQuick('ui-custom-btn')">➕ <span class="t" data-ru="Кнопка Склада на главный" data-uz="Tez Sklad tugmasi qo'sh">Tez Sklad tugmasi qo'sh</span></button>
+      <button class="ai-chip" onclick="askAiQuick('ui-reset')" style="border-color:rgba(255,75,75,0.4);color:var(--danger);">↩️ <span class="t" data-ru="Сбросить дизайн" data-uz="Asl holiga qaytar">Asl holiga qaytar</span></button>
     </div>
   </div>
 
@@ -439,8 +510,8 @@
     <!-- INPUT BAR -->
     <div style="border-top:1px solid var(--border); padding:10px 12px; background:var(--bg2); display:flex; align-items:center; gap:8px;">
       <button id="aiMicBtn" class="icon-btn ai-mic-btn" onclick="toggleVoiceInput()" title="Ovozli kiritish" style="flex-shrink:0;">🎤</button>
-      <input type="text" id="aiInput" class="form-input" placeholder="Savol bering (masalan: Bugun kimlarga yetkazdik?)..." style="padding:9px 12px; font-size:14px;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAiUserMessage();}">
-      <button class="btn btn-primary" onclick="sendAiUserMessage()" style="width:auto; padding:9px 14px; border-radius:12px; flex-shrink:0; font-weight:700;">➤</button>
+      <input type="text" id="aiInput" class="form-input" placeholder="Savol bering yoki tugmalarni o'zgartiring..." style="padding:9px 12px; font-size:14px;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAiUserMessage();}">
+      <button class="btn btn-primary" id="aiSendBtn" onclick="sendAiUserMessage()" style="width:auto; padding:9px 14px; border-radius:12px; flex-shrink:0; font-weight:700;">➤</button>
     </div>
   </div>
 </div>
@@ -504,6 +575,7 @@
 
 <!-- PAGE: DASHBOARD -->
 <div class="page" id="page-dashboard">
+  <div id="customBtns-dashboard" class="ai-custom-buttons-wrap"></div>
   <div id="dashboardContent" style="padding-bottom:8px"></div>
 </div>
 
@@ -541,8 +613,8 @@
         <div class="card-sub t" data-ru="Цены, себестоимость, добавить/удалить" data-uz="Narxlar, tannarx, qo'shish/o'chirish">Цены, себестоимость, добавить/удалить</div>
       </div>
       <div style="display:flex;gap:6px;">
-        <button class="btn btn-outline btn-sm" style="border-color:var(--accent);color:var(--accent);" onclick="openBroadcastModal('pricelist')">📢 <span class="t" data-ru="Прайс в TG" data-uz="Narxnoma (TG)">Narxnoma (TG)</span></button>
-        <button class="btn btn-primary btn-sm" onclick="openAddProductModal()">+ <span class="t" data-ru="Добавить" data-uz="Qo'shish">Добавить</span></button>
+        <button class="btn btn-outline btn-sm" id="btnBroadcastPrice" style="border-color:var(--accent);color:var(--accent);" onclick="openBroadcastModal('pricelist')">📢 <span class="t" data-ru="Прайс в TG" data-uz="Narxnoma (TG)">Narxnoma (TG)</span></button>
+        <button class="btn btn-primary btn-sm" id="btnAddProduct" onclick="openAddProductModal()">+ <span class="t" data-ru="Добавить" data-uz="Qo'shish">Добавить</span></button>
       </div>
     </div>
     <div id="productsSettingsList"></div>
@@ -873,6 +945,81 @@
   </div>
 </div>
 
-<script src="app.js?v=11"></script>
+<!-- MODAL: WAREHOUSE BATCH PRODUCTION / KIRIM -->
+<div class="modal-overlay" id="warehouseBatchModal">
+  <div class="modal" style="max-width:480px;">
+    <div class="modal-handle"></div>
+    <div class="modal-title">🏭 <span class="t" data-ru="Приход на склад (Производство)" data-uz="Skladga kirim (Tayyorlandi)">Skladga kirim (Tayyorlandi)</span></div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:10px;" class="t" data-ru="Укажите сколько кг каждого салата было приготовлено и добавлено на склад:" data-uz="Har bir salatdan necha kg tayyorlanib skladga qo'shilganini kiriting:">Har bir salatdan necha kg tayyorlanib skladga qo'shilganini kiriting:</div>
+    <div id="warehouseBatchList" style="max-height:50vh;overflow-y:auto;margin-bottom:12px;"></div>
+    <div class="form-group">
+      <label class="form-label t" data-ru="Комментарий" data-uz="Izoh">Izoh</label>
+      <input type="text" id="warehouseBatchNote" class="form-input" placeholder="Ertalabki tayyorlov / Yangi partiya">
+    </div>
+    <div class="row">
+      <button class="btn btn-outline" onclick="closeModal('warehouseBatchModal')"><span class="t" data-ru="Отмена" data-uz="Bekor">Bekor</span></button>
+      <button class="btn btn-success" onclick="saveWarehouseBatch()">✅ <span class="t" data-ru="Добавить на склад" data-uz="Skladga qo'shish">Skladga qo'shish</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: WAREHOUSE SINGLE PRODUCT EDIT -->
+<div class="modal-overlay" id="warehouseEditModal">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="whEditTitle">🏭 Sklad tahrirlash</div>
+    <input type="hidden" id="whEditProductId">
+    <div style="font-size:13px;color:var(--text2);margin-bottom:12px;" id="whEditCurrentInfo"></div>
+    <div class="form-group">
+      <label class="form-label t" data-ru="Действие" data-uz="Amal turi">Amal turi</label>
+      <select class="form-input" id="whEditMode" onchange="onWhEditModeChange()">
+        <option value="set">📝 Aniq qoldiqni o'rnatish (=)</option>
+        <option value="add">➕ Qo'shish (Kirim)</option>
+        <option value="sub">➖ Ayrish (Spisaniya / Brak)</option>
+        <option value="unlimited">∞ Cheklanmagan qilish (hisobdan chiqarish)</option>
+      </select>
+    </div>
+    <div class="form-group" id="whEditQtyGroup">
+      <label class="form-label t" data-ru="Количество (кг / шт)" data-uz="Miqdori (kg / dona)">Miqdori (kg / dona)</label>
+      <input type="number" step="0.1" id="whEditQty" class="form-input" placeholder="0">
+    </div>
+    <div class="form-group">
+      <label class="form-label t" data-ru="Мин. порог уведомления" data-uz="Kam qolish chegarasi (ogohlantirish)">Kam qolish chegarasi (ogohlantirish)</label>
+      <input type="number" step="0.5" id="whEditMinStock" class="form-input" placeholder="5">
+    </div>
+    <div class="form-group">
+      <label class="form-label t" data-ru="Причина / заметка" data-uz="Sabab / izoh">Sabab / izoh</label>
+      <input type="text" id="whEditNote" class="form-input" placeholder="Inventarizatsiya / Yangi tayyorlov / ...">
+    </div>
+    <div class="row">
+      <button class="btn btn-outline" onclick="closeModal('warehouseEditModal')"><span class="t" data-ru="Отмена" data-uz="Bekor">Bekor</span></button>
+      <button class="btn btn-primary" onclick="saveWarehouseEdit()">💾 <span class="t" data-ru="Сохранить" data-uz="Saqlash">Saqlash</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: AI UI INSPECTOR & INTERFACE CONTROLS -->
+<div class="modal-overlay" id="aiUiInspectorModal">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-handle"></div>
+    <div class="modal-title">🎨 <span class="t" data-ru="Доступ AI к интерфейсу и кнопкам" data-uz="AI Interfeys va Tugmalar Nazorati">AI Interfeys va Tugmalar Nazorati</span></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:12px;">
+      <div>
+        <div style="font-weight:800;font-size:13px;" class="t" data-ru="Разрешить AI менять кнопки и дизайн" data-uz="AI ga tugmalar va interfeysni o'zgartirish ruxsati">AI ga tugmalar va interfeysni o'zgartirish ruxsati</div>
+        <div style="font-size:11px;color:var(--text3);" id="uiAccessStatusSub">Yoqilgan — AI sizning buyrug'ingiz bilan tugma va dizaynlarni tahrirlay oladi</div>
+      </div>
+      <button id="uiModalToggleBtn" class="ai-ui-access-pill enabled" onclick="toggleAiUiAccess()">YOQILGAN</button>
+    </div>
+    <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px;" class="t" data-ru="Активные изменения интерфейса:" data-uz="Hozirgi faol o'zgarishlar:">Hozirgi faol o'zgarishlar:</div>
+    <div id="aiUiChangesList" style="max-height:42vh;overflow-y:auto;margin-bottom:12px;"></div>
+    <div class="row">
+      <button class="btn btn-outline" onclick="undoLastUiChange()">↩️ <span class="t" data-ru="Отменить посл." data-uz="Oxirgisini qaytar">Oxirgisini qaytar</span></button>
+      <button class="btn btn-danger" onclick="resetUiConfig()">🗑️ <span class="t" data-ru="Сбросить всё" data-uz="Asliga qaytarish">Asliga qaytarish</span></button>
+    </div>
+    <button class="btn btn-outline" style="margin-top:8px;" onclick="closeModal('aiUiInspectorModal')"><span class="t" data-ru="Закрыть" data-uz="Yopish">Yopish</span></button>
+  </div>
+</div>
+
+<script src="app.js?v=12"></script>
 </body>
 </html>

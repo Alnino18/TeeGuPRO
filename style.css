@@ -307,14 +307,118 @@
   }
 }
 
-.radar-item {
+  .radar-item {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+/* WAREHOUSE (SKLAD) STYLES */
+.wh-card {
   background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: 10px 12px;
-  margin-bottom: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r2);
+  padding: 14px;
+  margin-bottom: 10px;
+  transition: all 0.2s ease;
 }
+.wh-card.status-low { border-color: rgba(255, 153, 0, 0.55); background: linear-gradient(135deg, var(--card), rgba(255, 153, 0, 0.05)); }
+.wh-card.status-out { border-color: rgba(255, 75, 75, 0.6); background: linear-gradient(135deg, var(--card), rgba(255, 75, 75, 0.08)); }
+.wh-card.status-ok { border-color: rgba(0, 229, 255, 0.35); }
+.wh-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.wh-qty-big { font-family: 'Outfit', sans-serif; font-size: 24px; font-weight: 900; line-height: 1.1; text-align: right; }
+.wh-status-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 99px; }
+.wh-status-pill.ok { background: rgba(86, 212, 160, 0.16); color: #56d4a0; }
+.wh-status-pill.low { background: rgba(255, 153, 0, 0.18); color: var(--orange); }
+.wh-status-pill.out { background: rgba(255, 75, 75, 0.18); color: var(--danger); }
+.wh-status-pill.unset { background: var(--bg3); color: var(--text3); }
+.wh-bar-bg { width: 100%; height: 7px; background: var(--bg3); border-radius: 99px; overflow: hidden; margin: 10px 0; }
+.wh-bar-fill { height: 100%; border-radius: 99px; transition: width 0.4s ease; }
+.wh-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.wh-quick-btn {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 6px 11px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.wh-quick-btn:active { transform: scale(0.93); }
+.wh-quick-btn.plus { background: rgba(86, 212, 160, 0.14); border-color: rgba(86, 212, 160, 0.35); color: #56d4a0; }
+.wh-quick-btn.minus { background: rgba(255, 75, 75, 0.12); border-color: rgba(255, 75, 75, 0.3); color: var(--danger); }
+
+.stock-badge-mini {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 6px;
+  margin-top: 4px;
+}
+.stock-badge-mini.ok { background: rgba(86, 212, 160, 0.14); color: #56d4a0; }
+.stock-badge-mini.low { background: rgba(255, 153, 0, 0.16); color: var(--orange); }
+.stock-badge-mini.out { background: rgba(255, 75, 75, 0.16); color: var(--danger); }
+
+/* AI UI CONTROL BADGES & CUSTOM BUTTONS */
+.ai-ui-applied-box {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: rgba(123, 97, 255, 0.12);
+  border: 1px solid rgba(123, 97, 255, 0.35);
+  border-radius: 12px;
+  font-size: 12px;
+}
+.ai-ui-access-pill {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 9px;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 1px solid;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s;
+}
+.ai-ui-access-pill.enabled {
+  background: rgba(86, 212, 160, 0.16);
+  border-color: rgba(86, 212, 160, 0.45);
+  color: #56d4a0;
+}
+.ai-ui-access-pill.disabled {
+  background: rgba(255, 75, 75, 0.14);
+  border-color: rgba(255, 75, 75, 0.4);
+  color: var(--danger);
+}
+.ai-custom-buttons-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.ai-custom-buttons-wrap:empty { display: none; }
+.ai-custom-btn {
+  flex: 1 1 140px;
+  padding: 12px 14px;
+  border-radius: var(--r);
+  border: 1px solid rgba(255,255,255,0.12);
+  font-weight: 800;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+  transition: transform 0.15s;
+}
+.ai-custom-btn:active { transform: scale(0.96); }

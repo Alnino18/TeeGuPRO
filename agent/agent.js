@@ -33,7 +33,12 @@ let SETTINGS = {};
 let loggedAgentName = localStorage.getItem('agentAuth') || null;
 
 db.collection('settings').doc('main').onSnapshot(snap => {
-  if (snap.exists) SETTINGS = snap.data();
+  if (snap.exists) {
+    SETTINGS = snap.data();
+    if (SETTINGS.uiConfig && typeof applySharedUiConfig === 'function') {
+      applySharedUiConfig(SETTINGS.uiConfig, 'agent');
+    }
+  }
 });
 
 db.collection('agents').onSnapshot(snap => {
@@ -179,10 +184,16 @@ function renderProducts() {
     const qty = cart[p.id] || 0;
     const price = getProductPrice(p);
     const pName = p.nameUz || p.name || 'Mahsulot';
+    const hasStock = p.stock !== undefined && p.stock !== null && p.stock !== '' && !isNaN(Number(p.stock));
+    const stockVal = hasStock ? Math.round(Number(p.stock) * 100) / 100 : null;
+    const minSt = (p.minStock !== undefined && p.minStock !== null && p.minStock !== '' && !isNaN(Number(p.minStock))) ? Number(p.minStock) : 5;
+    const stockBadge = hasStock
+      ? `<span style="display:inline-block;margin-left:6px;padding:2px 7px;border-radius:8px;font-size:10px;font-weight:700;background:${stockVal <= minSt ? 'rgba(247,90,90,.16)' : 'rgba(45,212,160,.14)'};color:${stockVal <= minSt ? '#f75a5a' : '#2dd4a0'}">${stockVal <= 0 ? 'Tugagan (0 ' + (p.unit||'kg') + ')' : 'Sklad: ' + stockVal + ' ' + (p.unit||'kg')}</span>`
+      : '';
     return `
       <div class="product-row">
         <div style="flex:1">
-          <div style="font-weight:700; font-size:15px;">${p.emoji || '🥗'} ${pName}</div>
+          <div style="font-weight:700; font-size:15px;">${p.emoji || '🥗'} ${pName}${stockBadge}</div>
           <div style="font-size:12px; color:var(--text2)">${Number(price).toLocaleString('ru-RU')} so'm / ${p.unit||'kg'}</div>
         </div>
         <div style="display:flex; align-items:center; gap:12px;">
@@ -306,10 +317,36 @@ function submitOrder() {
     sentSheets: false,
     courier: '',
     partialPaid: 0,
-    debtPaid: !isDebt
+    debtPaid: !isDebt,
+    stockDeducted: true
   };
-  
-  db.collection('orders').doc(String(orderId)).set(orderData)
+
+  const batch = db.batch();
+  const tgToken = SETTINGS.tgToken || atob('ODc5NjU4ODA3MTpBQUc4Wl9SOGhQOUVTWlpfM0x4VWFrRDhQQ1hqNUM1WlA2WQ==');
+  const tgChatId = SETTINGS.tgChatId || '483325961';
+  items.forEach(i => {
+    const p = PRODUCTS.find(x => String(x.id) === String(i.id));
+    if (p && p.stock !== undefined && p.stock !== null && p.stock !== '' && !isNaN(Number(p.stock))) {
+      const newVal = Math.round((Number(p.stock) - Number(i.qty)) * 100) / 100;
+      p.stock = newVal;
+      const prodRef = db.collection('products').doc(String(p.id));
+      const incVal = (typeof firebase !== 'undefined' && firebase.firestore && firebase.firestore.FieldValue && firebase.firestore.FieldValue.increment)
+        ? firebase.firestore.FieldValue.increment(-i.qty)
+        : newVal;
+      batch.update(prodRef, { stock: incVal });
+      const minSt = (p.minStock !== undefined && p.minStock !== null && p.minStock !== '' && !isNaN(Number(p.minStock))) ? Number(p.minStock) : 5;
+      if (newVal <= minSt && tgToken && tgChatId) {
+        const warning = `⚠️ Diqqat! ${p.nameUz || p.name} zaxirasi kam qoldi (Agent buyurtmasi)! Qoldiq: ${newVal} ${p.unit||'kg'}`;
+        fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: tgChatId, text: warning })
+        }).catch(() => {});
+      }
+    }
+  });
+  batch.set(db.collection('orders').doc(String(orderId)), orderData);
+
+  batch.commit()
     .then(async () => {
       // Also save client if new, or update coordinates if provided
       const cIdStr = String(orderData.clientId);
@@ -502,6 +539,61 @@ function getMyLocation() {
     showToast("Qurilmangiz joylashuv aniqlashni qo'llab-quvvatlamaydi", 'error');
   }
 }
+
+function applySharedUiConfig(cfg, appName) {
+  if (!cfg || typeof cfg !== 'object') return;
+  try { localStorage.setItem('teegu_ui_config', JSON.stringify(cfg)); } catch (e) {}
+  const cssLines = [];
+  const rootRules = [];
+  Object.entries(cfg.themeVars || {}).forEach(([k, v]) => {
+    if (/^--[a-zA-Z0-9-]+$/.test(k) && v) {
+      rootRules.push(`${k}: ${v} !important;`);
+      if (typeof document !== 'undefined' && document.documentElement && document.documentElement.style && typeof document.documentElement.style.setProperty === 'function') {
+        document.documentElement.style.setProperty(k, v);
+      }
+    }
+  });
+  if (cfg.layout && cfg.layout.radius) {
+    rootRules.push(`--r: ${cfg.layout.radius} !important; --r2: ${cfg.layout.radius} !important;`);
+  }
+  if (rootRules.length) cssLines.push(`:root { ${rootRules.join(' ')} }`);
+  if (cfg.layout && cfg.layout.fontScale) {
+    cssLines.push(`body { font-size: ${Math.round(14 * cfg.layout.fontScale)}px !important; }`);
+  }
+  Object.entries(cfg.styles || {}).forEach(([sel, entry]) => {
+    if (!entry) return;
+    const sc = entry.scope || 'admin';
+    if (sc !== 'all' && sc !== appName) return;
+    const decls = Object.entries(entry.props || entry)
+      .filter(([pk, pv]) => pk !== 'scope' && pv !== undefined && pv !== '')
+      .map(([pk, pv]) => `${pk}: ${pv} !important;`);
+    if (decls.length) cssLines.push(`${sel} { ${decls.join(' ')} }`);
+  });
+  Object.entries(cfg.visibility || {}).forEach(([sel, vis]) => {
+    if (vis === false && sel && !/[<>{};]/.test(sel)) cssLines.push(`${sel} { display: none !important; }`);
+  });
+  if (typeof document !== 'undefined') {
+    let styleEl = document.getElementById('teeguAiCustomStyles');
+    if (!styleEl && document.head && typeof document.createElement === 'function') {
+      styleEl = document.createElement('style');
+      styleEl.id = 'teeguAiCustomStyles';
+      if (typeof document.head.appendChild === 'function') document.head.appendChild(styleEl);
+    }
+    if (styleEl) styleEl.textContent = cssLines.join('\n');
+    Object.entries(cfg.renames || {}).forEach(([sel, entry]) => {
+      const val = typeof entry === 'string' ? entry : (entry && entry.text);
+      const sc = typeof entry === 'object' && entry ? (entry.scope || 'admin') : 'admin';
+      if (val && (sc === 'all' || sc === appName)) {
+        try { const el = document.querySelector(sel); if (el) el.textContent = val; } catch (e) {}
+      }
+    });
+  }
+}
+
+try {
+  const cachedUi = JSON.parse(localStorage.getItem('teegu_ui_config') || 'null');
+  if (cachedUi) applySharedUiConfig(cachedUi, 'agent');
+} catch (e) {}
 
 init();
 

@@ -290,7 +290,8 @@ async function submitOrder() {
     debtPaid: paymentMethod !== 'консигнация' && paymentMethod !== 'Qarz',
     payment: paymentMethod,
     status: 'new',
-    date: new Date().toISOString()
+    date: new Date().toISOString(),
+    stockDeducted: true
   };
   
 
@@ -299,9 +300,14 @@ async function submitOrder() {
     
     order.items.forEach(i => {
       const p = products.find(x => x.id === i.id);
-      if(p && p.stock !== undefined && p.stock !== '') {
+      if(p && p.stock !== undefined && p.stock !== null && p.stock !== '' && !isNaN(Number(p.stock))) {
         const prodRef = db.collection('products').doc(String(p.id));
-        batch.update(prodRef, { stock: firebase.firestore.FieldValue.increment(-i.qty) });
+        const newVal = Math.round((Number(p.stock) - Number(i.qty)) * 100) / 100;
+        p.stock = newVal;
+        const incVal = (typeof firebase !== 'undefined' && firebase.firestore && firebase.firestore.FieldValue && firebase.firestore.FieldValue.increment)
+          ? firebase.firestore.FieldValue.increment(-i.qty)
+          : newVal;
+        batch.update(prodRef, { stock: incVal });
       }
     });
     
@@ -325,8 +331,10 @@ async function submitOrder() {
         // Also send warning if stock drops
         for (const i of order.items) {
            const p = products.find(x => x.id === i.id);
-           if(p && p.stock !== undefined && p.stock !== '' && (p.stock - i.qty) < 5) {
-               const warning = `⚠️ Diqqat! ${p.name} zaxirasi tugayapti. Qoldiq: ${p.stock - i.qty} ${p.unit||'kg'}`;
+           const minSt = (p && p.minStock !== undefined && p.minStock !== '' && !isNaN(Number(p.minStock))) ? Number(p.minStock) : 5;
+           if(p && p.stock !== undefined && p.stock !== '' && !isNaN(Number(p.stock)) && Number(p.stock) <= minSt) {
+               const rem = Math.round(Number(p.stock) * 100) / 100;
+               const warning = `⚠️ Diqqat! ${p.name} zaxirasi tugayapti. Qoldiq: ${rem} ${p.unit||'kg'}`;
                fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:warning})}).catch(()=>{});
            }
         }
@@ -581,5 +589,66 @@ window.confirmClientMap = function() {
   }
   closeClientMap();
 }
+
+function applySharedUiConfig(cfg, appName) {
+  if (!cfg || typeof cfg !== 'object') return;
+  try { localStorage.setItem('teegu_ui_config', JSON.stringify(cfg)); } catch (e) {}
+  const cssLines = [];
+  const rootRules = [];
+  Object.entries(cfg.themeVars || {}).forEach(([k, v]) => {
+    if (/^--[a-zA-Z0-9-]+$/.test(k) && v) {
+      rootRules.push(`${k}: ${v} !important;`);
+      if (typeof document !== 'undefined' && document.documentElement && document.documentElement.style && typeof document.documentElement.style.setProperty === 'function') {
+        document.documentElement.style.setProperty(k, v);
+      }
+    }
+  });
+  if (cfg.layout && cfg.layout.radius) {
+    rootRules.push(`--r: ${cfg.layout.radius} !important; --r2: ${cfg.layout.radius} !important;`);
+  }
+  if (rootRules.length) cssLines.push(`:root { ${rootRules.join(' ')} }`);
+  if (cfg.layout && cfg.layout.fontScale) {
+    cssLines.push(`body { font-size: ${Math.round(14 * cfg.layout.fontScale)}px !important; }`);
+  }
+  Object.entries(cfg.styles || {}).forEach(([sel, entry]) => {
+    if (!entry) return;
+    const sc = entry.scope || 'admin';
+    if (sc !== 'all' && sc !== appName) return;
+    const decls = Object.entries(entry.props || entry)
+      .filter(([pk, pv]) => pk !== 'scope' && pv !== undefined && pv !== '')
+      .map(([pk, pv]) => `${pk}: ${pv} !important;`);
+    if (decls.length) cssLines.push(`${sel} { ${decls.join(' ')} }`);
+  });
+  Object.entries(cfg.visibility || {}).forEach(([sel, vis]) => {
+    if (vis === false && sel && !/[<>{};]/.test(sel)) cssLines.push(`${sel} { display: none !important; }`);
+  });
+  if (typeof document !== 'undefined') {
+    let styleEl = document.getElementById('teeguAiCustomStyles');
+    if (!styleEl && document.head && typeof document.createElement === 'function') {
+      styleEl = document.createElement('style');
+      styleEl.id = 'teeguAiCustomStyles';
+      if (typeof document.head.appendChild === 'function') document.head.appendChild(styleEl);
+    }
+    if (styleEl) styleEl.textContent = cssLines.join('\n');
+    Object.entries(cfg.renames || {}).forEach(([sel, entry]) => {
+      const val = typeof entry === 'string' ? entry : (entry && entry.text);
+      const sc = typeof entry === 'object' && entry ? (entry.scope || 'admin') : 'admin';
+      if (val && (sc === 'all' || sc === appName)) {
+        try { const el = document.querySelector(sel); if (el) el.textContent = val; } catch (e) {}
+      }
+    });
+  }
+}
+
+try {
+  const cachedUi = JSON.parse(localStorage.getItem('teegu_ui_config') || 'null');
+  if (cachedUi) applySharedUiConfig(cachedUi, 'client');
+  db.collection('settings').doc('main').onSnapshot(snap => {
+    if (snap && snap.exists) {
+      const d = snap.data() || {};
+      if (d.uiConfig) applySharedUiConfig(d.uiConfig, 'client');
+    }
+  });
+} catch (e) {}
 
 

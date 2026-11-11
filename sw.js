@@ -1,4 +1,4 @@
-const CACHE = 'salat-v17';
+const CACHE = 'salat-v18';
 const ASSETS = [
   './',
   './admin/index.html',
@@ -10,6 +10,8 @@ const ASSETS = [
   './courier/index.html',
   './courier/courier.js',
   './courier/manifest.json',
+  './client.html',
+  './client.js',
   './style.css',
   './admin/app-icon.png',
   './agent/agent-icon.png',

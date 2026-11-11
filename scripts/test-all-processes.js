@@ -141,7 +141,12 @@ function makeMockBrowser() {
     firebase: {
       apps: [{}],
       initializeApp: () => ({}),
-      firestore: () => mockFirestore
+      firestore: Object.assign(() => mockFirestore, {
+        FieldValue: {
+          increment: n => n,
+          delete: () => null
+        }
+      })
     },
     dom
   };
@@ -577,6 +582,184 @@ try {
   assert(true, 'Client submitOrder completed successfully');
 } catch (e) {
   assert(false, 'client.js evaluation failed', e.stack);
+}
+
+// =========================================================================
+// 5. TEST WAREHOUSE (SKLAD) & ORDER STOCK RECONCILIATION
+// =========================================================================
+console.log('\n--- 5. Testing Warehouse (Sklad) & Stock Reconciliation ---');
+try {
+  runAdmin(`
+    PRODUCTS = [
+      { id: 'funchoza', name: 'Фунчоза', nameUz: 'Funchoza', price: 25000, cost: 20000, emoji: '🍜', unit: 'kg', step: 0.5, stock: 15, minStock: 5 },
+      { id: 'morkovcha', name: 'Морковча', nameUz: 'Sabzi', price: 25000, cost: 20000, emoji: '🥕', unit: 'kg', step: 0.5, stock: 3, minStock: 5 },
+      { id: 'sologurc', name: 'Сол огурцы', nameUz: 'Tuzlangan bodring', price: 20000, cost: 15000, emoji: '🥒', unit: 'kg', step: 0.5 }
+    ];
+    warehouseLogs = [];
+    renderWarehouse();
+    updateWarehouseBadge();
+  `);
+
+  assert(adminEnv.dom['whTotalKg'].textContent === '18 kg', 'Warehouse total kg shows 18 kg');
+  assert(adminEnv.dom['whOkCount'].textContent === '1', 'Warehouse OK count shows 1');
+  assert(adminEnv.dom['whLowCount'].textContent === '1', 'Warehouse Low count shows 1');
+  assert(adminEnv.dom['warehouseBadge'].textContent === '1', 'Warehouse tab badge shows 1 low item');
+
+  // Quick adjust +5 on funchoza (15 -> 20)
+  runAdmin(`quickAdjustStock('funchoza', 5, 'Test kirim');`);
+  assert(runAdmin('PRODUCTS[0].stock') === 20, 'quickAdjustStock updated funchoza to 20 kg');
+  assert(runAdmin('warehouseLogs.length') === 1, 'quickAdjustStock logged 1 warehouse movement');
+
+  // Batch kirim on morkovcha (3 + 10 = 13)
+  runAdmin(`
+    openWarehouseBatchModal();
+    document.getElementById('whBatchIn-morkovcha').value = '10';
+    document.getElementById('warehouseBatchNote').value = 'Ertalabki partiya';
+    saveWarehouseBatch();
+  `);
+  assert(runAdmin('PRODUCTS[1].stock') === 13, 'saveWarehouseBatch added 10 kg to morkovcha (3 -> 13)');
+  assert(adminEnv.dom['whLowCount'].textContent === '0', 'Low stock count dropped to 0 after batch restock');
+
+  // Single product edit: set funchoza to 12.5, then unlimited for sologurc (already unlimited)
+  runAdmin(`
+    openWarehouseEditModal('funchoza');
+    document.getElementById('whEditMode').value = 'set';
+    document.getElementById('whEditQty').value = '12.5';
+    saveWarehouseEdit();
+  `);
+  assert(runAdmin('PRODUCTS[0].stock') === 12.5, 'saveWarehouseEdit set funchoza exact stock to 12.5 kg');
+
+  // Order deduction via submitOrder + cancel restore + un-cancel deduct + delete restore
+  runAdmin(`
+    state.orders = [];
+    document.getElementById('clientSelect').value = state.clients[0].id;
+    state.quantities = { funchoza: 2.5, morkovcha: 1.5 };
+    submitOrder();
+  `);
+  assert(runAdmin('PRODUCTS[0].stock') === 10, 'Admin submitOrder deducted 2.5 kg funchoza (12.5 -> 10)');
+  assert(runAdmin('PRODUCTS[1].stock') === 11.5, 'Admin submitOrder deducted 1.5 kg morkovcha (13 -> 11.5)');
+
+  const placedId = runAdmin('state.orders[0]?.id');
+  // Actually add placed order into state.orders if snapshot didn't fire in mock
+  runAdmin(`
+    if (!state.orders.length) {
+      state.orders.unshift({
+        id: 777001, client: 'Test', clientId: state.clients[0].id,
+        items: [{ id: 'funchoza', qty: 2.5, price: 25000 }, { id: 'morkovcha', qty: 1.5, price: 25000 }],
+        total: 100000, status: 'new', date: new Date().toISOString()
+      });
+    }
+    updateOrderStatus(state.orders[0].id, 'cancelled');
+  `);
+  assert(runAdmin('PRODUCTS[0].stock') === 12.5, 'Cancelling order restored 2.5 kg back to funchoza (10 -> 12.5)');
+  assert(runAdmin('PRODUCTS[1].stock') === 13, 'Cancelling order restored 1.5 kg back to morkovcha (11.5 -> 13)');
+
+  runAdmin(`updateOrderStatus(state.orders[0].id, 'new');`);
+  assert(runAdmin('PRODUCTS[0].stock') === 10, 'Uncancelling order re-deducted 2.5 kg from funchoza (12.5 -> 10)');
+
+  runAdmin(`deleteOrder(state.orders[0].id);`);
+  assert(runAdmin('PRODUCTS[0].stock') === 12.5, 'Deleting active order restored 2.5 kg back to funchoza');
+
+  // Test order edit diff: old funchoza=2, edit funchoza=5 -> -3 kg
+  runAdmin(`
+    state.orders.unshift({
+      id: 777002, client: 'Edit Test', clientId: state.clients[0].id, payment: 'наличные',
+      items: [{ id: 'funchoza', qty: 2, price: 25000 }], total: 50000, status: 'new', date: new Date().toISOString()
+    });
+    editingOrderId = 777002;
+    openEditOrderModal(777002);
+    document.getElementById('eqty-funchoza').textContent = '5';
+    document.getElementById('eqty-morkovcha').textContent = '0';
+    document.getElementById('eqty-sologurc').textContent = '0';
+    saveEditOrder();
+  `);
+  assert(runAdmin('PRODUCTS[0].stock') === 9.5, 'Editing order qty 2 -> 5 deducted difference 3 kg (12.5 -> 9.5)');
+} catch (e) {
+  assert(false, 'Warehouse & stock reconciliation test failed', e.stack);
+}
+
+// =========================================================================
+// 6. TEST AI UI CONTROL ENGINE & SAFETY GUARDS
+// =========================================================================
+console.log('\n--- 6. Testing AI UI Control Engine & Permissions ---');
+try {
+  const ctx = runAdmin('buildUiContext()');
+  assert(ctx && ctx.aiUiAccess === true && ctx.availableSelectors.adminButtons.includes('#submitBtn'), 'buildUiContext exposes UI access status and selectors');
+
+  const sampleAiReply = `Albatta! Tugmalarni yashil qildim va sklad tugmasini qo'shdim.\n<<<UI_ACTIONS>>>\n${JSON.stringify({
+    actions: [
+      { type: 'set_theme', vars: { '--accent': '#10b981' }, scope: 'all' },
+      { type: 'style_element', selector: '#submitBtn', styles: { background: '#10b981', fontSize: '18px' }, scope: 'admin' },
+      { type: 'rename_element', selector: '#submitBtn', text: 'Saqlash va yuborish', scope: 'admin' },
+      { type: 'set_visibility', selector: '#page-ai', visible: false },
+      { type: 'set_visibility', selector: '#btnTemplates', visible: false },
+      { type: 'set_layout', columns: 3 },
+      { type: 'add_custom_button', page: 'dashboard', id: 'btn_wh_fast', label: 'Tezkor Sklad', action: 'navigate:warehouse', color: '#10b981' }
+    ]
+  })}\n<<<END_UI_ACTIONS>>>`;
+
+  adminEnv.__testAiReply = sampleAiReply;
+  const uiRes = runAdmin('extractAndApplyUiActions(__testAiReply)');
+  assert(!uiRes.cleanText.includes('<<<UI_ACTIONS>>>'), 'UI action JSON block stripped from user-visible AI message');
+  assert(uiRes.applied.length === 6, `Applied 6 valid UI actions and blocked protected #page-ai hide (got ${uiRes.applied.length})`);
+  assert(adminEnv.dom['teeguAiCustomStyles'].textContent.includes('--accent: #10b981'), 'Injected stylesheet includes --accent theme var');
+  assert(adminEnv.dom['teeguAiCustomStyles'].textContent.includes('#btnTemplates { display: none'), 'Injected stylesheet hides allowed #btnTemplates');
+  assert(!adminEnv.dom['teeguAiCustomStyles'].textContent.includes('#page-ai { display: none'), 'Protected #page-ai cannot be hidden by AI');
+  assert(adminEnv.dom['submitBtn'].textContent === 'Saqlash va yuborish', 'rename_element updated #submitBtn text');
+  assert(adminEnv.dom['customBtns-dashboard'].innerHTML.includes('btn_wh_fast'), 'add_custom_button rendered button in #customBtns-dashboard');
+
+  // Test Undo
+  runAdmin('undoLastUiChange()');
+  assert(!adminEnv.dom['teeguAiCustomStyles'].textContent.includes('--accent: #10b981'), 'undoLastUiChange reverted theme var override');
+
+  // Re-apply and test Reset
+  runAdmin('extractAndApplyUiActions(__testAiReply)');
+  runAdmin('resetUiConfig()');
+  assert((runAdmin('aiUiConfig.customButtons') || []).length === 0, 'resetUiConfig cleared customButtons');
+  assert(adminEnv.dom['teeguAiCustomStyles'].textContent === '', 'resetUiConfig cleared dynamic custom stylesheet');
+
+  // Test toggling AI UI Access OFF blocks UI actions
+  runAdmin('toggleAiUiAccess()');
+  const blockedRes = runAdmin('extractAndApplyUiActions(__testAiReply)');
+  assert(blockedRes.blocked === true && blockedRes.applied.length === 0, 'Toggling UI Access OFF blocks AI from altering UI');
+  runAdmin('toggleAiUiAccess()');
+  assert(runAdmin('aiUiConfig.aiUiAccess') === true, 'Toggling UI Access restores enabled state');
+} catch (e) {
+  assert(false, 'AI UI control test failed', e.stack);
+}
+
+// =========================================================================
+// 7. TEST AGENT STOCK DECREMENT & SHARED UI SYNC
+// =========================================================================
+console.log('\n--- 7. Testing Agent Stock Decrement & Shared UI Config ---');
+try {
+  const agEnv = makeMockBrowser();
+  const agCtx = vm.createContext(agEnv);
+  const runAg = code => vm.runInContext(code, agCtx);
+  runAg(fs.readFileSync('agent/agent.js', 'utf8'));
+
+  runAg(`
+    loggedAgentName = 'Dilshod';
+    PRODUCTS = [
+      { id: 'funchoza', name: 'Фунчоза', nameUz: 'Funchoza', price: 25000, emoji: '🍜', unit: 'kg', stock: 10, minStock: 5 }
+    ];
+    CLIENTS = [{ id: 'c_ag_1', name: 'Agent Kafe', phone: '+998901112233' }];
+    cart = { funchoza: 2 };
+    document.getElementById('orderClient').value = 'Agent Kafe — +998901112233';
+    document.getElementById('orderAddress').value = 'Yunusobod 4';
+    submitOrder();
+  `);
+  assert(runAg('PRODUCTS[0].stock') === 8, 'Agent submitOrder deducted 2 kg from funchoza stock (10 -> 8)');
+
+  runAg(`
+    applySharedUiConfig({
+      themeVars: { '--accent': '#10b981' },
+      styles: { '#agentSubmitBtn': { scope: 'agent', props: { 'font-size': '20px' } } }
+    }, 'agent');
+  `);
+  assert(agEnv.dom['teeguAiCustomStyles'].textContent.includes('#agentSubmitBtn') && agEnv.dom['teeguAiCustomStyles'].textContent.includes('--accent: #10b981'), 'Agent app applied shared UI config for agent scope');
+} catch (e) {
+  assert(false, 'Agent stock & shared UI config test failed', e.stack);
 }
 
 console.log('\n====================================================');

@@ -218,6 +218,17 @@ async function main() {
     deliveredClients
   ];
 
+  const trackedStockProducts = products.filter(p => p && p.stock !== undefined && p.stock !== null && p.stock !== '' && !isNaN(Number(p.stock)));
+  if (trackedStockProducts.length) {
+    lines.push('', `🏭 <b>Склад (Остаток):</b>`);
+    trackedStockProducts.forEach(p => {
+      const rem = Math.round(Number(p.stock) * 100) / 100;
+      const minSt = (p.minStock !== undefined && p.minStock !== null && p.minStock !== '' && !isNaN(Number(p.minStock))) ? Number(p.minStock) : 5;
+      const icon = rem <= 0 ? '🔴' : (rem <= minSt ? '⚠️' : '✅');
+      lines.push(`  ${icon} ${p.emoji || ''} ${escapeHTML(p.name)}: <b>${rem}${escapeHTML(p.unit || 'кг')}</b>`);
+    });
+  }
+
   // 4.1 AI xulosa olish (Google Gemini AI)
   const geminiKey = process.env.GEMINI_API_KEY || Buffer.from('QVEuQWI4Uk42SjNYaGJzdHRxYnVzd0lRMXdZNE9idm9UTlpicU1ONDdRcTE5QTZITXh2bFE=', 'base64').toString('utf8');
   if (geminiKey) {
