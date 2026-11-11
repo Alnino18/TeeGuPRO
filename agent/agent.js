@@ -29,12 +29,23 @@ let currentLat = null;
 let currentLng = null;
 let agentMapInstance = null;
 let SETTINGS = {};
+let AGENT_RULES = [];
+try {
+  const _cachedRules = JSON.parse(localStorage.getItem('teegu_business_rules') || 'null');
+  if (Array.isArray(_cachedRules)) AGENT_RULES = _cachedRules;
+} catch (e) {}
+let UNPAID_ORDERS = [];
 
 let loggedAgentName = localStorage.getItem('agentAuth') || null;
 
 db.collection('settings').doc('main').onSnapshot(snap => {
   if (snap.exists) {
     SETTINGS = snap.data();
+    if (Array.isArray(SETTINGS.businessRules)) {
+      AGENT_RULES = SETTINGS.businessRules;
+      try { localStorage.setItem('teegu_business_rules', JSON.stringify(AGENT_RULES)); } catch (e) {}
+      try { renderProducts(); } catch (e) {}
+    }
     if (SETTINGS.uiConfig && typeof applySharedUiConfig === 'function') {
       applySharedUiConfig(SETTINGS.uiConfig, 'agent');
     }
@@ -125,6 +136,13 @@ function startListeners() {
     }, err => {
       console.error("Orders listener error:", err);
     });
+
+  // Track unpaid credit orders for dynamic business rule enforcement
+  db.collection('orders')
+    .where('debtPaid', '==', false)
+    .onSnapshot(snap => {
+      UNPAID_ORDERS = snap.docs.map(d => d.data());
+    }, () => {});
 }
 
 function switchTab(tab) {
@@ -186,7 +204,7 @@ function renderProducts() {
     const pName = p.nameUz || p.name || 'Mahsulot';
     const hasStock = p.stock !== undefined && p.stock !== null && p.stock !== '' && !isNaN(Number(p.stock));
     const stockVal = hasStock ? Math.round(Number(p.stock) * 100) / 100 : null;
-    const minSt = (p.minStock !== undefined && p.minStock !== null && p.minStock !== '' && !isNaN(Number(p.minStock))) ? Number(p.minStock) : 5;
+    const minSt = getAgentProductMinStock(p);
     const stockBadge = hasStock
       ? `<span style="display:inline-block;margin-left:6px;padding:2px 7px;border-radius:8px;font-size:10px;font-weight:700;background:${stockVal <= minSt ? 'rgba(247,90,90,.16)' : 'rgba(45,212,160,.14)'};color:${stockVal <= minSt ? '#f75a5a' : '#2dd4a0'}">${stockVal <= 0 ? 'Tugagan (0 ' + (p.unit||'kg') + ')' : 'Sklad: ' + stockVal + ' ' + (p.unit||'kg')}</span>`
       : '';
@@ -295,7 +313,20 @@ function submitOrder() {
   if (existingClient && existingClient.id) {
     finalClientId = existingClient.id;
   }
-  
+
+  const ruleCheck = evaluateAgentOrderRules({
+    clientId: existingClient ? existingClient.id : finalClientId,
+    clientName: cName,
+    items,
+    payment,
+    rules: AGENT_RULES,
+    orders: UNPAID_ORDERS.length ? UNPAID_ORDERS : myOrders
+  });
+  if (ruleCheck.blocked) {
+    showToast('🚫 ' + ruleCheck.errors[0], 'error');
+    return;
+  }
+
   const orderId = Date.now();
   const isDebt = payment === 'Qarz' || payment === 'консигнация';
   const orderData = {
@@ -334,7 +365,7 @@ function submitOrder() {
         ? firebase.firestore.FieldValue.increment(-i.qty)
         : newVal;
       batch.update(prodRef, { stock: incVal });
-      const minSt = (p.minStock !== undefined && p.minStock !== null && p.minStock !== '' && !isNaN(Number(p.minStock))) ? Number(p.minStock) : 5;
+      const minSt = getAgentProductMinStock(p);
       if (newVal <= minSt && tgToken && tgChatId) {
         const warning = `⚠️ Diqqat! ${p.nameUz || p.name} zaxirasi kam qoldi (Agent buyurtmasi)! Qoldiq: ${newVal} ${p.unit||'kg'}`;
         fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
@@ -373,6 +404,13 @@ function submitOrder() {
           db.collection('orders').doc(String(orderId)).update({sent: true});
         }
       });
+      if (ruleCheck.largeOrderAlertKg && tgToken && tgChatId) {
+        const bigMsg = `🚨 KATTA BUYURTMA (Agent: ${loggedAgentName}, ${ruleCheck.largeOrderAlertKg} kg)!\n👤 Mijoz: ${cName}`;
+        fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: tgChatId, text: bigMsg })
+        }).catch(() => {});
+      }
       
       showToast("Buyurtma yuborildi!", 'success');
       
@@ -599,4 +637,54 @@ init();
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('../sw.js').catch(()=>{});
+}
+
+function getAgentProductMinStock(p) {
+  if (Array.isArray(AGENT_RULES)) {
+    const sp = AGENT_RULES.find(r => r && r.enabled && r.type === 'warehouse_low_alert_kg' && p && String(r.productId) === String(p.id));
+    if (sp && !isNaN(Number(sp.thresholdKg))) return Math.max(0, Number(sp.thresholdKg));
+    const gl = AGENT_RULES.find(r => r && r.enabled && r.type === 'warehouse_low_alert_kg' && (!r.productId || r.productId === 'all'));
+    if (gl && !isNaN(Number(gl.thresholdKg))) return Math.max(0, Number(gl.thresholdKg));
+  }
+  return (p && p.minStock !== undefined && p.minStock !== null && p.minStock !== '' && !isNaN(Number(p.minStock))) ? Number(p.minStock) : 5;
+}
+
+function evaluateAgentOrderRules(opts = {}) {
+  const { clientId, clientName, items = [], payment = '', rules = AGENT_RULES, orders = [] } = opts;
+  const activeRules = (Array.isArray(rules) ? rules : []).filter(r => r && r.enabled);
+  const errors = [];
+  let largeOrderAlertKg = null;
+  const isCredit = payment === 'Qarz' || payment === 'консигнация';
+  const totalQty = items.reduce((s, i) => s + (Number(i.qty) || 0), 0);
+  const totalKg = items.filter(i => !i.unit || !['шт', 'sht', 'dona', 'ta'].includes(String(i.unit).toLowerCase()))
+    .reduce((s, i) => s + (Number(i.qty) || 0), 0) || totalQty;
+
+  let unpaidTotal = 0;
+  let oldestUnpaidDays = 0;
+  const now = Date.now();
+  (orders || []).forEach(o => {
+    if (!o || o.status === 'cancelled' || o.debtPaid) return;
+    if (String(o.clientId) !== String(clientId)) return;
+    if (o.payment !== 'Qarz' && o.payment !== 'консигнация') return;
+    const rem = Math.max(0, (Number(o.total) || 0) - (Number(o.partialPaid) || 0));
+    if (rem > 0) {
+      unpaidTotal += rem;
+      const dAge = Math.floor((now - new Date(o.date).getTime()) / 86400000);
+      if (dAge > oldestUnpaidDays) oldestUnpaidDays = dAge;
+    }
+  });
+
+  activeRules.forEach(rule => {
+    if (rule.type === 'block_debt_above' && isCredit && Number(rule.limit) > 0 && unpaidTotal > Number(rule.limit)) {
+      errors.push(`Qoida: ${clientName || 'Mijoz'} qarzi (${Math.round(unpaidTotal).toLocaleString('ru-RU')} so'm) ${Math.round(Number(rule.limit)).toLocaleString('ru-RU')} limitidan oshgan — qarzga berilmaydi!`);
+    } else if (rule.type === 'max_order_debt_days' && isCredit && Number(rule.maxDays) > 0 && unpaidTotal > 0 && oldestUnpaidDays >= Number(rule.maxDays)) {
+      errors.push(`Qoida: ${oldestUnpaidDays} kunlik to'lanmagan qarz bor (limit ${rule.maxDays} kun)!`);
+    } else if (rule.type === 'min_order_kg' && Number(rule.minKg) > 0 && totalKg > 0 && totalKg < Number(rule.minKg)) {
+      errors.push(`Qoida: eng kam buyurtma ${rule.minKg} kg (hozir ${Math.round(totalKg * 10) / 10} kg)!`);
+    } else if (rule.type === 'large_order_alert_kg' && Number(rule.thresholdKg) > 0 && totalKg >= Number(rule.thresholdKg)) {
+      largeOrderAlertKg = Math.round(totalKg * 10) / 10;
+    }
+  });
+
+  return { blocked: errors.length > 0, errors, largeOrderAlertKg };
 }

@@ -141,6 +141,9 @@ db.collection('settings').doc('main').onSnapshot(snap => {
       if (state.settings.uiConfig && typeof syncUiConfigFromRemote === 'function') {
         syncUiConfigFromRemote(state.settings.uiConfig);
       }
+      if (Array.isArray(state.settings.businessRules) && typeof syncBusinessRulesFromRemote === 'function') {
+        syncBusinessRulesFromRemote(state.settings.businessRules);
+      }
       if (typeof renderWarehouseLogs === 'function') renderWarehouseLogs();
     } catch(e) { console.warn("Remote settings sync warning:", e); }
   }
@@ -230,6 +233,7 @@ function printOrder(id) {
 // INIT
 function startApp(){
   try { initAiUiController(); } catch(e) { console.warn("AI UI init warn:", e); }
+  try { loadBusinessRules(); updateAiTtsButton(); } catch(e) {}
   applyTheme();applyLang();
   renderProductsGrid();populateClientSelect();renderClientsList();
   renderOrdersList();renderStats();renderDebts();renderDelivery();renderWarehouse();renderFavorites();
@@ -397,6 +401,13 @@ async function submitOrder(){
   const items=getOrderItems();
   if(!items.length){showToast('⚠️ '+(lang==='uz'?'Mahsulot qo\'shing':'Добавьте продукт'),'error');return;}
   const client=state.clients.find(c=>c.id==clientId);
+  const ruleCheck = typeof evaluateOrderBusinessRules === 'function'
+    ? evaluateOrderBusinessRules({ clientId: client?.id, clientName: client?.name, items, payment: state.selectedPayment, rules: aiBusinessRules, orders: state.orders })
+    : { blocked: false, errors: [], largeOrderAlertKg: null };
+  if (ruleCheck.blocked) {
+    showToast('🚫 ' + ruleCheck.errors[0], 'error');
+    return;
+  }
   const selectedCourier = document.getElementById('orderCourier')?.value || '';
   const order={
     id:Date.now(),date:new Date().toISOString(),
@@ -447,6 +458,10 @@ async function submitOrder(){
   batch.commit();
   if (whLogEntries.length && typeof logWarehouseMovement === 'function') {
     logWarehouseMovement(whLogEntries);
+  }
+  if (ruleCheck.largeOrderAlertKg && tgToken && tgChatId) {
+    const bigMsg = `🚨 KATTA BUYURTMA (${ruleCheck.largeOrderAlertKg} kg)!\n👤 Mijoz: ${client?.name || ''}\n💰 Summa: ${fmt(order.total)} so'm`;
+    fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:bigMsg})}).catch(()=>{});
   }
   try { renderWarehouse(); updateWarehouseBadge(); } catch(e) {}
   
@@ -2402,7 +2417,12 @@ function buildBusinessContext() {
       birlik: p.unit || 'kg',
       minChegara: getProductMinStock(p),
       holati: !isProductTracked(p) ? 'KIRITILMAGAN' : (getProductStockStatus(p) === 'empty' ? 'TUGAGAN' : (getProductStockStatus(p) === 'low' ? 'KAM' : 'YETARLI'))
-    }))
+    })),
+    simulyatorBazasi: typeof buildSimulatorBaseline === 'function' ? buildSimulatorBaseline(30) : null,
+    hududVaMarshrutTahlili: typeof buildGeoTerritorySummary === 'function' ? buildGeoTerritorySummary() : null,
+    faolBiznesQoidalar: (typeof aiBusinessRules !== 'undefined' && Array.isArray(aiBusinessRules))
+      ? aiBusinessRules.map(r => ({ id: r.id, turi: r.type, faol: !!r.enabled, tavsif: r.label }))
+      : []
   };
 }
 
@@ -2517,6 +2537,8 @@ async function callGemini(apiKey, systemPrompt, userMessage, chatHistory = []) {
 function renderAiPage() {
   checkAiKeyStatus();
   if (typeof updateAiUiAccessButtons === 'function') updateAiUiAccessButtons();
+  if (typeof updateAiTtsButton === 'function') updateAiTtsButton();
+  if (typeof updateAiRulesBadge === 'function') updateAiRulesBadge();
   const box = document.getElementById('aiChatBox');
   if (!box) return;
   
@@ -2538,7 +2560,7 @@ function renderAiPage() {
       </div>
     `;
   } else {
-    box.innerHTML = aiChatHistory.map(m => {
+    box.innerHTML = aiChatHistory.map((m, idx) => {
       const uiBadge = (m.role === 'bot' && Array.isArray(m.uiApplied) && m.uiApplied.length)
         ? `<div class="ai-ui-applied-box">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
@@ -2548,11 +2570,32 @@ function renderAiPage() {
             <div style="font-size:11px;font-weight:500;color:var(--text2);margin-top:4px">${m.uiApplied.map(a => '• ' + escapeHTML(a)).join('<br>')}</div>
           </div>`
         : '';
+      const ruleBadge = (m.role === 'bot' && Array.isArray(m.ruleApplied) && m.ruleApplied.length)
+        ? `<div class="ai-rule-badge">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+              <span>🧠 ${lang==='uz' ? 'Biznes-qoida faollashtirildi' : 'Бизнес-правило применено'} (${m.ruleApplied.length})</span>
+              <button class="chip" style="padding:3px 9px;font-size:11px;margin:0" onclick="openAiRulesModal()">⚙️ ${lang==='uz'?'Qoidalar':'Правила'}</button>
+            </div>
+            <div style="font-size:11px;font-weight:500;color:var(--text2);margin-top:4px">${m.ruleApplied.map(a => '• ' + escapeHTML(a)).join('<br>')}</div>
+          </div>`
+        : '';
+      const simHtml = (m.role === 'bot' && m.simScenario && typeof renderSimCardHtml === 'function')
+        ? renderSimCardHtml(m.simScenario)
+        : '';
+      const isSpk = typeof aiSpeakingIdx !== 'undefined' && aiSpeakingIdx === idx;
+      const speakBtn = m.role === 'bot'
+        ? `<button class="ai-speak-btn ${isSpk ? 'speaking' : ''}" onclick="${isSpk ? 'stopAiSpeech()' : `speakAiMessage(${idx})`}">${isSpk ? '⏹ ' + (lang==='uz'?'To\'xtatish':'Стоп') : '🔊 ' + (lang==='uz'?'Tinglash':'Озвучить')}</button>`
+        : '';
       return `
       <div class="ai-msg ${m.role}">
         <div>${m.role === 'bot' ? renderMarkdown(m.text) : escapeHTML(m.text)}</div>
+        ${simHtml}
+        ${ruleBadge}
         ${uiBadge}
-        <div class="ai-msg-time">${m.time || ''}</div>
+        <div class="ai-msg-footer">
+          ${speakBtn}
+          <span class="ai-msg-time">${m.time || ''}</span>
+        </div>
       </div>
     `;
     }).join('');
@@ -2660,7 +2703,17 @@ QOIDALAR:
 3. Javobni chiroyli va qulay qilib formatlang: emojilar, qalin shriftlar (**bold**), ro'yxatlar ishlating.
 4. Agar "Ertaga nima tayyorlaymiz?" deb so'ralsa, oxirgi kunlar sotuv hajmi va hozirgi sklad qoldig'ini hisobga olib, har bir salat bo'yicha tavsiya qilingan kg miqdorini aniq raqamlar bilan yozib bering.
 5. Qarzlar bo'yicha gap ketganda, eng katta qarzdorlarni va telefon raqamlarini ko'rsating.
-6. Agar foydalanuvchi UI o'zgartirishini so'ramagan bo'lsa, <<<UI_ACTIONS>>> blokini ISHLATMANG. Faqat UI o'zgarishi so'ralganda aniq va xavfsiz <<<UI_ACTIONS>>> JSON qaytaring va nima o'zgarganini qisqa tushuntiring.${uiContextBlock}`;
+6. Agar foydalanuvchi UI o'zgartirishini so'ramagan bo'lsa, <<<UI_ACTIONS>>> blokini ISHLATMANG. Faqat UI o'zgarishi so'ralganda aniq va xavfsiz <<<UI_ACTIONS>>> JSON qaytaring va nima o'zgarganini qisqa tushuntiring.
+7. NARX VA FOYDA SIMULYATORI ("Nima bo'lar edi agar..."): Agar foydalanuvchi narx oshirish/tushirish, chegirma berish yoki foyda prognozi haqida ssenariy so'rasa, "simulyatorBazasi" dagi real raqamlarga suyanib hisoblang va javob oxirida quyidagi karta blokini qaytaring:
+<<<SIM_SCENARIO>>>
+{"title":"Ssenariy nomi","subtitle":"Qisqa izoh","oldRevenue":10000000,"newRevenue":11200000,"oldProfit":2000000,"newProfit":2650000,"volumeChangePct":-5,"breakEvenDropPct":24,"recommendation":"Qisqa tavsiya"}
+<<<END_SIM_SCENARIO>>>
+8. ODDIY GAP BILAN BIZNES-QOIDA TUZISH (<<<BIZ_RULES>>>): Agar foydalanuvchi avtomatik cheklov yoki ogohlantirish qoidasini yaratish/o'chirish/o'zgartirishni so'rasa (masalan: "Qarzi 500 000 dan oshgan mijozga nasiya yopilsin", "Eng kam buyurtma 2 kg bo'lsin", "Sklad 3 kg dan tushsa ogohlantir", "Buyurtma 30 kg dan oshsa xabar ber", "10 kundan oshgan qarzi bo'lsa nasiya bermasin"), javob oxirida quyidagi blokni qo'shing:
+<<<BIZ_RULES>>>
+{"ops":[{"op":"add","type":"block_debt_above|min_order_kg|warehouse_low_alert_kg|large_order_alert_kg|max_order_debt_days","limit":500000,"minKg":2,"thresholdKg":3,"maxDays":10,"productId":"all","label":"Qoidaning tushunarli nomi"}]}
+<<<END_BIZ_RULES>>>
+(Qoidani o'chirish uchun {"op":"remove","id":"..."} yoki o'chirib yoqish uchun {"op":"toggle","id":"...","enabled":false} yozing).
+9. MARSHRUT VA HUDUD BO'SHLIG'I TAHLILI: Agar yangi mijoz qayerdan topish, qaysi tumanga kengayish yoki marshrut samaradorligi so'ralsa, "hududVaMarshrutTahlili" dagi faol hududlar, 1-2 mijozli bo'sh yo'nalishlar ("boshliqYonalishlar") va kirmagan tumanlar ("kirmaganTumanlar") asosida aniq amaliy reja bering.${uiContextBlock}`;
 
     const aiResponse = await callGemini(apiKey, systemPrompt, text, prevHistory);
     
@@ -2669,22 +2722,39 @@ QOIDALAR:
 
     let cleanText = aiResponse;
     let uiApplied = [];
+    let ruleApplied = [];
+    let simScenario = null;
     if (typeof extractAndApplyUiActions === 'function') {
-      const uiRes = extractAndApplyUiActions(aiResponse);
-      cleanText = uiRes.cleanText || aiResponse;
+      const uiRes = extractAndApplyUiActions(cleanText);
+      cleanText = uiRes.cleanText || cleanText;
       uiApplied = uiRes.applied || [];
       if (uiRes.blocked) {
         cleanText += (lang === 'uz' ? '\n\n🔒 _Eslatma: UI Dostup o\'chirilgan. Tepadagi "🎨 UI: OFF" tugmasini yoqing._' : '\n\n🔒 _Доступ к UI отключен. Нажмите "🎨 UI: OFF" сверху._');
       }
     }
+    if (typeof extractAndApplyBizRules === 'function') {
+      const rRes = extractAndApplyBizRules(cleanText);
+      cleanText = rRes.cleanText || cleanText;
+      ruleApplied = rRes.applied || [];
+    }
+    if (typeof extractSimScenario === 'function') {
+      const sRes = extractSimScenario(cleanText);
+      cleanText = sRes.cleanText || cleanText;
+      simScenario = sRes.scenario || null;
+    }
     
     const botTime = new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
-    aiChatHistory.push({ role: 'bot', text: cleanText, uiApplied, time: botTime });
+    aiChatHistory.push({ role: 'bot', text: cleanText, uiApplied, ruleApplied, simScenario, time: botTime });
     
     if (aiChatHistory.length > 20) aiChatHistory = aiChatHistory.slice(-20);
     localStorage.setItem('aiChatHistory', JSON.stringify(aiChatHistory));
     
     renderAiPage();
+    const shouldAutoSpeak = (typeof aiAutoSpeak !== 'undefined' && aiAutoSpeak) || (typeof lastInputWasVoice !== 'undefined' && lastInputWasVoice);
+    lastInputWasVoice = false;
+    if (shouldAutoSpeak && typeof speakAiMessage === 'function') {
+      speakAiMessage(aiChatHistory.length - 1);
+    }
   } catch (err) {
     const typingEl = document.getElementById(typingId);
     if (typingEl) typingEl.remove();
@@ -2725,7 +2795,10 @@ function askAiQuick(type) {
     'ui-big-btns': isUz ? 'Ilovadagi asosiy tasdiqlash (#submitBtn) va tezkor buyurtma (#dashQuickOrderBtn) hamda agent/kuryer tugmalarini kattaroq, qalinroq va barmoq bilan bosishga qulay qilib o\'zgartir.' : 'Сделай основные кнопки оформления (#submitBtn, #dashQuickOrderBtn) более крупными, жирными и удобными для нажатия.',
     'ui-emerald': isUz ? 'Ilova rang temasini zamonaviy zumrad-yashil (Emerald) qilib o\'zgartir (--accent va --green yashil ohangda, hamma ilovalarga qo\'llansin).' : 'Измени цветовую тему приложения на современный изумрудно-зелёный стиль (для всех приложений).',
     'ui-warehouse-first': isUz ? 'Tepadagi menyuda Sklad bo\'limini dashboarddan keyingi 2-o\'ringa qo\'y va nomini "🏭 Ombor" deb yoz.' : 'Перемести вкладку Склада на 2-е место сразу после Главной и назови её "🏭 Ombor".',
-    'ui-custom-btn': isUz ? 'Bosh sahifaga (dashboard) bitta qulay tezkor tugma qo\'sh: "🏭 Skladga kirish" tugmasi, bosilganda Sklad sahifasini ochsin.' : 'Добавь на главную страницу (dashboard) быструю кнопку "🏭 Skladga kirish", которая открывает вкладку Склада.'
+    'ui-custom-btn': isUz ? 'Bosh sahifaga (dashboard) bitta qulay tezkor tugma qo\'sh: "🏭 Skladga kirish" tugmasi, bosilganda Sklad sahifasini ochsin.' : 'Добавь на главную страницу (dashboard) быструю кнопку "🏭 Skladga kirish", которая открывает вкладку Склада.',
+    'simulator': isUz ? 'Nima bo\'lar edi agar barcha salatlar narxini 10% oshirsak va 5% mijoz ketsa, yoki Funchoza narxini 2000 so\'m oshirsak? Real raqamlarga qarab 2 ta ssenariyni solishtirib ber va <<<SIM_SCENARIO>>> kartasini chiqar.' : 'Что если поднять цены на все салаты на 10% при оттоке 5% клиентов, или повысить цену Фунчозы на 2000 сум? Сравни сценарии по реальным цифрам и верни карточку <<<SIM_SCENARIO>>>.',
+    'rule-demo': isUz ? 'Avtomatik qoida o\'rnat: qarzi 500 000 so\'mdan oshgan mijozlarga nasiyaga (qarzga) buyurtma yopilsin va omborda salat 3 kg dan tushsa ogohlantirish chiqsin.' : 'Установи автоматические правила: блокировать отгрузку в долг клиентам с долгом выше 500 000 сум и предупреждать при остатке на складе ниже 3 кг.',
+    'territory': isUz ? 'Hududlar va marshrut bo\'shliqlarini tahlil qil: qayerdan yangi mijoz topsak yo\'l xarajatimiz tejaladi va qaysi tumanlarga hali kirmaganmiz?' : 'Проанализируй зоны доставки и маршруты: где лучше искать новых клиентов, чтобы снизить расходы на логистику, и какие районы еще не охвачены?'
   };
   
   const text = queries[type] || type;
@@ -2734,6 +2807,7 @@ function askAiQuick(type) {
 
 function clearAiChat() {
   if (confirm(lang === 'uz' ? 'AI suhbatlar tarixini tozalashni xohlaysizmi?' : 'Очистить историю чата с AI?')) {
+    if (typeof stopAiSpeech === 'function') stopAiSpeech();
     aiChatHistory = [];
     localStorage.removeItem('aiChatHistory');
     renderAiPage();
@@ -2773,6 +2847,7 @@ function toggleVoiceInput() {
     aiRecognition.onresult = function(event) {
       const speechResult = event.results[0][0].transcript;
       if (speechResult && inputEl) {
+        lastInputWasVoice = true;
         inputEl.value = (inputEl.value ? inputEl.value + ' ' : '') + speechResult;
         inputEl.focus();
       }
@@ -3393,6 +3468,12 @@ function isProductTracked(p) {
 }
 
 function getProductMinStock(p) {
+  if (typeof aiBusinessRules !== 'undefined' && Array.isArray(aiBusinessRules)) {
+    const specificRule = aiBusinessRules.find(r => r && r.enabled && r.type === 'warehouse_low_alert_kg' && p && String(r.productId) === String(p.id));
+    if (specificRule && !isNaN(Number(specificRule.thresholdKg))) return Math.max(0, Number(specificRule.thresholdKg));
+    const globalRule = aiBusinessRules.find(r => r && r.enabled && r.type === 'warehouse_low_alert_kg' && (!r.productId || r.productId === 'all'));
+    if (globalRule && !isNaN(Number(globalRule.thresholdKg))) return Math.max(0, Number(globalRule.thresholdKg));
+  }
   if (p && p.minStock !== undefined && p.minStock !== null && p.minStock !== '' && !isNaN(Number(p.minStock))) {
     return Math.max(0, Number(p.minStock));
   }
@@ -4430,4 +4511,713 @@ function revertSingleUiItem(cat, key) {
   applySavedUiConfig();
   renderUiInspector();
   showToast('↩️ Tanlangan o\'zgarish bekor qilindi', 'info');
+}
+
+// ==================== TWO-WAY VOICE ASSISTANT (TTS) ====================
+let aiAutoSpeak = false;
+try { aiAutoSpeak = localStorage.getItem('teegu_ai_auto_speak') === 'true'; } catch (e) {}
+let aiSpeakingIdx = -1;
+let lastInputWasVoice = false;
+
+function cleanTextForSpeech(rawText) {
+  return String(rawText || '')
+    .replace(/<<<UI_ACTIONS>>>[\s\S]*?(?:<<<END_UI_ACTIONS>>>|$)/g, ' ')
+    .replace(/<<<BIZ_RULES>>>[\s\S]*?(?:<<<END_BIZ_RULES>>>|$)/g, ' ')
+    .replace(/<<<SIM_SCENARIO>>>[\s\S]*?(?:<<<END_SIM_SCENARIO>>>|$)/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[\*#_`~|>]/g, ' ')
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function updateAiTtsButton() {
+  const btn = document.getElementById('aiTtsToggleBtn');
+  if (!btn) return;
+  if (aiAutoSpeak) {
+    btn.classList.add('active');
+    btn.textContent = lang === 'uz' ? '🔊 Ovoz: ON' : '🔊 Голос: ВКЛ';
+  } else {
+    btn.classList.remove('active');
+    btn.textContent = lang === 'uz' ? '🔇 Ovoz: OFF' : '🔇 Голос: ВЫКЛ';
+  }
+}
+
+function toggleAiTts() {
+  aiAutoSpeak = !aiAutoSpeak;
+  try { localStorage.setItem('teegu_ai_auto_speak', aiAutoSpeak ? 'true' : 'false'); } catch (e) {}
+  updateAiTtsButton();
+  if (!aiAutoSpeak) stopAiSpeech();
+  showToast(aiAutoSpeak
+    ? (lang === 'uz' ? '🔊 AI ovozli javobi yoqildi' : '🔊 Голосовые ответы AI включены')
+    : (lang === 'uz' ? '🔇 AI ovozli javobi o\'chirildi' : '🔇 Голосовые ответы AI выключены'), 'info');
+}
+
+function stopAiSpeech() {
+  aiSpeakingIdx = -1;
+  try {
+    if (typeof window !== 'undefined' && window.speechSynthesis && typeof window.speechSynthesis.cancel === 'function') {
+      window.speechSynthesis.cancel();
+    }
+  } catch (e) {}
+  renderAiPage();
+}
+
+function speakAiMessage(idx) {
+  const msg = Array.isArray(aiChatHistory) ? aiChatHistory[idx] : null;
+  if (!msg || !msg.text) return false;
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
+  const Utter = typeof SpeechSynthesisUtterance !== 'undefined'
+    ? SpeechSynthesisUtterance
+    : (typeof window !== 'undefined' ? window.SpeechSynthesisUtterance : null);
+  if (!synth || typeof synth.speak !== 'function' || !Utter) {
+    showToast(lang === 'uz' ? 'Brauzerda ovozli o\'qish mavjud emas' : 'Озвучка не поддерживается браузером', 'info');
+    return false;
+  }
+  const clean = cleanTextForSpeech(msg.text);
+  if (!clean) return false;
+
+  try { if (typeof synth.cancel === 'function') synth.cancel(); } catch (e) {}
+  aiSpeakingIdx = idx;
+  const utter = new Utter(clean);
+  const targetLang = lang === 'uz' ? 'uz-UZ' : 'ru-RU';
+  utter.lang = targetLang;
+  utter.rate = 1.02;
+  try {
+    const voices = typeof synth.getVoices === 'function' ? (synth.getVoices() || []) : [];
+    const exactVoice = voices.find(v => v && v.lang && v.lang.toLowerCase().startsWith(lang === 'uz' ? 'uz' : 'ru'));
+    const fallbackVoice = exactVoice || voices.find(v => v && v.lang && v.lang.toLowerCase().startsWith('ru'));
+    if (fallbackVoice) utter.voice = fallbackVoice;
+  } catch (e) {}
+
+  utter.onend = () => { aiSpeakingIdx = -1; renderAiPage(); };
+  utter.onerror = () => { aiSpeakingIdx = -1; renderAiPage(); };
+  synth.speak(utter);
+  renderAiPage();
+  return true;
+}
+
+// ==================== WHAT-IF PRICE & PROFIT SIMULATOR ====================
+function buildSimulatorBaseline(days = 30) {
+  const cutoff = Date.now() - days * 86400000;
+  const recentOrders = (state.orders || []).filter(o => o && o.status !== 'cancelled' && new Date(o.date).getTime() >= cutoff);
+  const byProd = {};
+  let earliestTs = Date.now();
+  recentOrders.forEach(o => {
+    const ts = new Date(o.date).getTime();
+    if (!isNaN(ts) && ts < earliestTs) earliestTs = ts;
+    (o.items || []).forEach(it => {
+      if (!it || !it.qty) return;
+      const key = String(it.id || it.name || 'other');
+      const prod = (PRODUCTS || []).find(p => String(p.id) === String(it.id));
+      if (!byProd[key]) {
+        byProd[key] = {
+          id: key,
+          name: (prod && (lang === 'uz' ? prod.nameUz : prod.name)) || it.nameUz || it.name || key,
+          basePrice: (prod && Number(prod.price)) || Number(it.price) || 0,
+          explicitCost: (prod && Number(prod.cost)) || 0,
+          qty: 0,
+          rev: 0,
+          profit: 0
+        };
+      }
+      const q = Number(it.qty) || 0;
+      const pVal = Number(it.price) || 0;
+      byProd[key].qty += q;
+      byProd[key].rev += q * pVal;
+      byProd[key].profit += typeof calculateItemProfit === 'function' ? calculateItemProfit(it, prod) : 0;
+    });
+  });
+
+  const observedDays = recentOrders.length ? Math.max(1, Math.min(days, Math.ceil((Date.now() - earliestTs) / 86400000))) : 0;
+  const productsSummary = Object.values(byProd).map(row => {
+    const avgPrice = row.qty > 0 ? Math.round(row.rev / row.qty) : row.basePrice;
+    const avgUnitProfit = row.qty > 0 ? Math.round(row.profit / row.qty) : 0;
+    return {
+      ...row,
+      qty: Math.round(row.qty * 10) / 10,
+      avgPrice,
+      avgUnitProfit,
+      marginPct: row.rev > 0 ? Math.round((row.profit / row.rev) * 100) : 0
+    };
+  });
+
+  const totalRev = Math.round(productsSummary.reduce((s, r) => s + r.rev, 0));
+  const totalProfit = Math.round(productsSummary.reduce((s, r) => s + r.profit, 0));
+  const totalKg = Math.round(productsSummary.reduce((s, r) => s + r.qty, 0) * 10) / 10;
+
+  return {
+    davrKunlar: days,
+    bazaviyKunlar: observedDays,
+    jamiKg: totalKg,
+    jamiTushum: totalRev,
+    jamiSofFoyda: totalProfit,
+    umumiyMarjaFoiz: totalRev > 0 ? Math.round((totalProfit / totalRev) * 100) : 0,
+    mahsulotlar: productsSummary
+  };
+}
+
+function simulatePriceScenario(params = {}) {
+  const {
+    productId = 'all',
+    priceDeltaPct = 0,
+    priceDeltaAbs = 0,
+    volumeElasticityPct = 0,
+    discountPct = 0,
+    days = 30
+  } = params;
+
+  const base = buildSimulatorBaseline(days);
+  const targets = base.mahsulotlar.filter(r => productId === 'all' || String(r.id) === String(productId));
+
+  let oldRevenue = 0;
+  let newRevenue = 0;
+  let oldProfit = 0;
+  let newProfit = 0;
+  let oldQty = 0;
+  let newQty = 0;
+
+  targets.forEach(row => {
+    const q = row.qty;
+    const origPrice = row.avgPrice || row.basePrice || 0;
+    const origUnitProfit = row.avgUnitProfit;
+    const rawNewPrice = origPrice * (1 + (Number(priceDeltaPct) || 0) / 100) + (Number(priceDeltaAbs) || 0);
+    const finalNewPrice = Math.max(0, Math.round(rawNewPrice * (1 - (Number(discountPct) || 0) / 100)));
+    const newQ = Math.max(0, Math.round(q * (1 + (Number(volumeElasticityPct) || 0) / 100) * 10) / 10);
+
+    let newUnitProfit = origUnitProfit;
+    if (finalNewPrice !== origPrice) {
+      if (row.explicitCost > 0) {
+        newUnitProfit = finalNewPrice - row.explicitCost;
+      } else {
+        newUnitProfit = origUnitProfit + (finalNewPrice - origPrice);
+      }
+    }
+
+    oldQty += q;
+    newQty += newQ;
+    oldRevenue += q * origPrice;
+    newRevenue += newQ * finalNewPrice;
+    oldProfit += q * origUnitProfit;
+    newProfit += newQ * newUnitProfit;
+  });
+
+  oldRevenue = Math.round(oldRevenue);
+  newRevenue = Math.round(newRevenue);
+  oldProfit = Math.round(oldProfit);
+  newProfit = Math.round(newProfit);
+
+  const profitDelta = newProfit - oldProfit;
+  const revenueDelta = newRevenue - oldRevenue;
+  const profitDeltaPct = oldProfit > 0 ? Math.round((profitDelta / oldProfit) * 1000) / 10 : 0;
+
+  // Break-even churn tolerance: max volume loss % before profit drops below baseline
+  let unitMarginAfter = newQty > 0 ? (newProfit / newQty) : 0;
+  let breakEvenDropPct = 0;
+  if (oldProfit > 0 && unitMarginAfter > 0 && oldQty > 0) {
+    const breakEvenQty = oldProfit / unitMarginAfter;
+    breakEvenDropPct = Math.round(((oldQty - breakEvenQty) / oldQty) * 1000) / 10;
+  }
+
+  return {
+    productId,
+    days,
+    oldQty: Math.round(oldQty * 10) / 10,
+    newQty: Math.round(newQty * 10) / 10,
+    oldRevenue,
+    newRevenue,
+    revenueDelta,
+    oldProfit,
+    newProfit,
+    profitDelta,
+    profitDeltaPct,
+    volumeChangePct: Number(volumeElasticityPct) || 0,
+    breakEvenDropPct
+  };
+}
+
+function extractSimScenario(rawText) {
+  if (!rawText || typeof rawText !== 'string') return { cleanText: rawText || '', scenario: null };
+  const match = rawText.match(/<<<SIM_SCENARIO>>>([\s\S]*?)<<<END_SIM_SCENARIO>>>/);
+  if (!match) return { cleanText: rawText, scenario: null };
+  const cleanText = rawText.replace(/<<<SIM_SCENARIO>>>[\s\S]*?<<<END_SIM_SCENARIO>>>/g, '').trim();
+  try {
+    const parsed = JSON.parse(match[1].trim());
+    if (parsed && typeof parsed === 'object') {
+      return { cleanText, scenario: parsed };
+    }
+  } catch (e) {}
+  return { cleanText, scenario: null };
+}
+
+function renderSimCardHtml(s) {
+  if (!s || typeof s !== 'object') return '';
+  const oldRev = Math.round(Number(s.oldRevenue) || 0);
+  const newRev = Math.round(Number(s.newRevenue) || 0);
+  const oldProf = Math.round(Number(s.oldProfit) || 0);
+  const newProf = Math.round(Number(s.newProfit) || 0);
+  const diffProf = newProf - oldProf;
+  const isPos = diffProf >= 0;
+  const beDrop = s.breakEvenDropPct !== undefined ? Number(s.breakEvenDropPct) : null;
+  return `
+    <div class="ai-sim-card">
+      <div style="font-weight:800;font-size:13px;color:var(--accent2);">📊 ${escapeHTML(s.title || (lang==='uz'?'What-If Simulyatsiya':'Сценарий «Что если»'))}</div>
+      ${s.subtitle ? `<div style="font-size:11px;color:var(--text2);margin-top:2px;">${escapeHTML(s.subtitle)}</div>` : ''}
+      <div class="ai-sim-grid">
+        <div class="ai-sim-col">
+          <div style="font-size:10px;color:var(--text3);font-weight:700;">${lang==='uz'?'HOZIRGI HOLAT':'ТЕКУЩЕЕ'}</div>
+          <div style="font-weight:700;margin-top:3px;">${fmt(oldRev)} so'm</div>
+          <div style="font-size:11px;color:#56d4a0;">Foyda: ${fmt(oldProf)}</div>
+        </div>
+        <div class="ai-sim-col">
+          <div style="font-size:10px;color:var(--text3);font-weight:700;">${lang==='uz'?'YANGI SSENARIY':'НОВЫЙ СЦЕНАРИЙ'}</div>
+          <div style="font-weight:800;margin-top:3px;">${fmt(newRev)} so'm</div>
+          <div style="font-size:11px;color:${isPos ? '#56d4a0' : 'var(--danger)'};font-weight:700;">Foyda: ${fmt(newProf)}</div>
+        </div>
+      </div>
+      <div class="ai-sim-delta ${isPos ? 'pos' : 'neg'}">
+        <span>${isPos ? '📈' : '📉'} Sof foyda farqi: ${isPos ? '+' : ''}${fmt(diffProf)} so'm</span>
+        ${beDrop !== null ? `<span>🛡️ Mijoz yo'qotish chegarasi: ${beDrop}%</span>` : ''}
+      </div>
+      ${s.recommendation ? `<div style="font-size:11px;color:var(--text2);margin-top:6px;">💡 ${escapeHTML(s.recommendation)}</div>` : ''}
+    </div>
+  `;
+}
+
+function openAiSimulatorModal() {
+  const sel = document.getElementById('simProductSelect');
+  if (sel) {
+    sel.innerHTML = `<option value="all">${lang==='uz'?'Barcha salatlar (Umumiy)':'Все салаты (Общий)'}</option>` +
+      (PRODUCTS || []).map(p => `<option value="${escapeAttr(String(p.id))}">${p.emoji || '🥗'} ${escapeHTML(lang==='uz'?(p.nameUz||p.name):p.name)} (${fmt(p.price)} so'm)</option>`).join('');
+  }
+  updateAiSimulatorPreview();
+  openModal('aiSimulatorModal');
+}
+
+function updateAiSimulatorPreview() {
+  const container = document.getElementById('simPreviewResult');
+  if (!container) return;
+  const productId = document.getElementById('simProductSelect')?.value || 'all';
+  const priceDeltaPct = parseFloat(document.getElementById('simPricePct')?.value || '0') || 0;
+  const volumeElasticityPct = parseFloat(document.getElementById('simVolumePct')?.value || '0') || 0;
+  const discountPct = parseFloat(document.getElementById('simDiscountPct')?.value || '0') || 0;
+
+  const res = simulatePriceScenario({ productId, priceDeltaPct, volumeElasticityPct, discountPct, days: 30 });
+  if (res.oldQty <= 0) {
+    container.innerHTML = `<div style="padding:12px;background:var(--bg3);border-radius:12px;font-size:12px;color:var(--text3);">📊 Oxirgi 30 kunda bu mahsulot bo'yicha buyurtmalar topilmadi. Avval buyurtma ma'lumotlari to'plansin.</div>`;
+    return;
+  }
+  const prod = productId === 'all' ? null : (PRODUCTS || []).find(p => String(p.id) === String(productId));
+  const title = prod ? ((lang==='uz'?prod.nameUz:prod.name) || prod.name) : (lang==='uz'?'Barcha mahsulotlar (30 kun)':'Все продукты (30 дн.)');
+  container.innerHTML = renderSimCardHtml({
+    title,
+    subtitle: `Narx: ${priceDeltaPct>=0?'+':''}${priceDeltaPct}% · Chegirma: ${discountPct}% · Hajm: ${volumeElasticityPct>=0?'+':''}${volumeElasticityPct}% (${res.oldQty} -> ${res.newQty} kg)`,
+    oldRevenue: res.oldRevenue,
+    newRevenue: res.newRevenue,
+    oldProfit: res.oldProfit,
+    newProfit: res.newProfit,
+    breakEvenDropPct: res.breakEvenDropPct,
+    recommendation: res.profitDelta >= 0
+      ? (lang==='uz' ? 'Bu ssenariy foydali — mijozlarning ' + res.breakEvenDropPct + '% gacha ketishini ham bemalol qoplaydi.' : 'Сценарий прибыльный — покрывает отток до ' + res.breakEvenDropPct + '% объёма.')
+      : (lang==='uz' ? 'Ehtiyot bo\'ling: bu kombinatsiya sof foydani kamaytiradi.' : 'Осторожно: при таком объеме чистая прибыль падает.')
+  });
+}
+
+function askAiAboutCurrentSimulation() {
+  const productId = document.getElementById('simProductSelect')?.value || 'all';
+  const pricePct = parseFloat(document.getElementById('simPricePct')?.value || '0') || 0;
+  const volPct = parseFloat(document.getElementById('simVolumePct')?.value || '0') || 0;
+  const discPct = parseFloat(document.getElementById('simDiscountPct')?.value || '0') || 0;
+  const prod = productId === 'all' ? null : (PRODUCTS || []).find(p => String(p.id) === String(productId));
+  const pName = prod ? (prod.nameUz || prod.name) : 'barcha mahsulotlar';
+  closeModal('aiSimulatorModal');
+  if (typeof showPage === 'function') showPage('ai');
+  const promptText = `Simulyator tahlili qil: Agar "${pName}" bo'yicha narxni ${pricePct >= 0 ? '+' : ''}${pricePct}%, chegirmani ${discPct}% qilsak va hajm ${volPct >= 0 ? '+' : ''}${volPct}% o'zgarsa nima bo'ladi? Menga raqamli <<<SIM_SCENARIO>>> va qaysi mijozlarga e'tibor berishni tushuntir.`;
+  sendAiUserMessage(promptText);
+}
+
+// ==================== ROUTE & TERRITORY GAP ANALYSIS ====================
+const TASHKENT_DISTRICTS = [
+  { key: 'Chilonzor', re: /chilonzor|чиланзар|qozirabot|алгоритм|аль-хорезми|farhod/i },
+  { key: 'Yunusobod', re: /yunusobod|юнусабад|ahmad donish|бодомзор|universam|универсам|minor/i },
+  { key: 'Sergeli', re: /sergeli|сергели|yarmarka|спутник|quruvchilar/i },
+  { key: 'Yakkasaroy', re: /yakkasaroy|яккасарай|shota rustaveli|руставели|bobur|toshkent city/i },
+  { key: 'Mirzo Ulugbek', re: /mirzo ulug|мирзо улуг|ttz|ттз|buyuk ipak|буёк ипак|qorasuv|карасу|darhon/i },
+  { key: 'Shayxontohur', re: /shayxontohur|шайхантаур|chorsu|чорсу|labzak|sebzar|ko'kcha|ibn sino/i },
+  { key: 'Olmazor', re: /olmazor|алмазар|beruniy|беруний|qoraqamish|каракамыш|tansiqboyev/i },
+  { key: 'Uchtepa', re: /uchtepa|учтепа|lutfiy|фархад|21-kvartal|22-kvartal/i },
+  { key: 'Yashnobod', re: /yashnobod|яшнабад|parkent|паркент|tuzel|тузель|qadimiy|aviasozlar|лисунова/i },
+  { key: 'Mirobod', re: /mirobod|мирабад|oybek|ойбек|gospital|fargona yoli|куйлюк|qo'yliq/i },
+  { key: 'Bektemir', re: /bektemir|бектемир|rohat|рохат|suvsoz/i },
+  { key: 'Yangihayot', re: /yangihayot|янгихаёт|yangi hayot/i }
+];
+
+function extractTashkentDistrict(addressStr) {
+  const txt = String(addressStr || '').trim();
+  if (!txt) return 'Manzil kiritilmagan';
+  for (const d of TASHKENT_DISTRICTS) {
+    if (d.re.test(txt)) return d.key;
+  }
+  return 'Boshqa / Aniqlanmagan hudud';
+}
+
+function buildGeoTerritorySummary() {
+  const clients = state.clients || [];
+  const orders30 = (state.orders || []).filter(o => o && o.status !== 'cancelled' && (Date.now() - new Date(o.date).getTime()) <= 30 * 86400000);
+  const revByClient = {};
+  const cntByClient = {};
+  orders30.forEach(o => {
+    const cid = String(o.clientId || o.client || '');
+    revByClient[cid] = (revByClient[cid] || 0) + (o.total || 0);
+    cntByClient[cid] = (cntByClient[cid] || 0) + 1;
+  });
+
+  const districtStats = {};
+  const geoClusters = {};
+  let unmappedClients = [];
+
+  clients.forEach(c => {
+    const cid = String(c.id || c.name || '');
+    const rev = revByClient[cid] || 0;
+    const ordCnt = cntByClient[cid] || 0;
+    const dist = extractTashkentDistrict((c.address || '') + ' ' + (c.note || '') + ' ' + (c.name || ''));
+
+    if (!districtStats[dist]) {
+      districtStats[dist] = { hudud: dist, mijozlarSoni: 0, buyurtmalar30Kun: 0, tushum30Kun: 0, namunaMijozlar: [] };
+    }
+    districtStats[dist].mijozlarSoni++;
+    districtStats[dist].buyurtmalar30Kun += ordCnt;
+    districtStats[dist].tushum30Kun += rev;
+    if (districtStats[dist].namunaMijozlar.length < 3) districtStats[dist].namunaMijozlar.push(c.name);
+
+    const lat = parseFloat(c.lat);
+    const lng = parseFloat(c.lng);
+    if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+      // ~2.2km grid cluster
+      const cellKey = (Math.round(lat * 45) / 45).toFixed(3) + ',' + (Math.round(lng * 45) / 45).toFixed(3);
+      if (!geoClusters[cellKey]) {
+        geoClusters[cellKey] = { zona: cellKey, hudud: dist, mijozlarSoni: 0, tushum30Kun: 0, mijozlar: [] };
+      }
+      geoClusters[cellKey].mijozlarSoni++;
+      geoClusters[cellKey].tushum30Kun += rev;
+      geoClusters[cellKey].mijozlar.push(c.name);
+    } else {
+      unmappedClients.push(c.name);
+    }
+  });
+
+  const allDistList = Object.values(districtStats).sort((a, b) => b.tushum30Kun - a.tushum30Kun || b.mijozlarSoni - a.mijozlarSoni);
+  const coveredKeys = new Set(Object.keys(districtStats));
+  const untappedDistricts = TASHKENT_DISTRICTS.map(d => d.key).filter(k => !coveredKeys.has(k));
+
+  const corridorGaps = allDistList
+    .filter(d => d.hudud !== 'Manzil kiritilmagan' && d.hudud !== 'Boshqa / Aniqlanmagan hudud' && d.mijozlarSoni <= 2)
+    .map(d => ({
+      hudud: d.hudud,
+      mijozlarSoni: d.mijozlarSoni,
+      tushum30Kun: d.tushum30Kun,
+      tavsiyaSababi: `Kuryer hozir shu yo'nalishga faqat ${d.mijozlarSoni} ta mijoz uchun bormoqda — yonidagi kafe/oshxonalarni qo'shilsa yetkazib berish xarajati tushadi.`
+    }));
+
+  const sparseClusters = Object.values(geoClusters)
+    .filter(cl => cl.mijozlarSoni === 1)
+    .sort((a, b) => b.tushum30Kun - a.tushum30Kun)
+    .slice(0, 5);
+
+  return {
+    jamiMijozlar: clients.length,
+    xaritadaBelgilangan: clients.length - unmappedClients.length,
+    koordinatasizMijozlarSoni: unmappedClients.length,
+    koordinatasizNamuna: unmappedClients.slice(0, 5),
+    faolHududlar: allDistList.slice(0, 8),
+    boshliqYonalishlar: corridorGaps,
+    yakkaKuryerNuqtalari: sparseClusters,
+    kirmaganTumanlar: untappedDistricts
+  };
+}
+
+// ==================== NATURAL-LANGUAGE BUSINESS RULES ENGINE ====================
+const DEFAULT_BIZ_RULES = [];
+let aiBusinessRules = [];
+let ruleUndoStack = [];
+
+function loadBusinessRules() {
+  try {
+    const raw = localStorage.getItem('teegu_business_rules');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) aiBusinessRules = parsed;
+    }
+  } catch (e) {}
+  if (state.settings && Array.isArray(state.settings.businessRules) && state.settings.businessRules.length >= 0) {
+    if (!aiBusinessRules.length && state.settings.businessRules.length) {
+      aiBusinessRules = JSON.parse(JSON.stringify(state.settings.businessRules));
+    }
+  }
+  updateAiRulesBadge();
+}
+
+function saveBusinessRules() {
+  try { localStorage.setItem('teegu_business_rules', JSON.stringify(aiBusinessRules)); } catch (e) {}
+  if (!state.settings) state.settings = {};
+  state.settings.businessRules = aiBusinessRules;
+  if (typeof db !== 'undefined' && db && typeof db.collection === 'function') {
+    try {
+      db.collection('settings').doc('main').set({ businessRules: aiBusinessRules }, { merge: true });
+    } catch (e) {}
+  }
+  updateAiRulesBadge();
+  try { renderWarehouse(); updateWarehouseBadge(); renderProductsGrid(); } catch (e) {}
+}
+
+function syncBusinessRulesFromRemote(remoteRules) {
+  if (!Array.isArray(remoteRules)) return;
+  aiBusinessRules = JSON.parse(JSON.stringify(remoteRules));
+  try { localStorage.setItem('teegu_business_rules', JSON.stringify(aiBusinessRules)); } catch (e) {}
+  updateAiRulesBadge();
+  try { renderWarehouse(); updateWarehouseBadge(); renderProductsGrid(); } catch (e) {}
+}
+
+function updateAiRulesBadge() {
+  const activeCount = (aiBusinessRules || []).filter(r => r && r.enabled).length;
+  const btn = document.getElementById('btnAiRules');
+  if (btn) btn.textContent = `🧠 ${lang === 'uz' ? 'Qoidalar' : 'Правила'} (${activeCount})`;
+  const badge = document.getElementById('aiRulesCountBadge');
+  if (badge) badge.textContent = `${activeCount} ${lang === 'uz' ? 'faol' : 'акт.'}`;
+}
+
+function getClientUnpaidDebtInfo(clientId, ordersList) {
+  if (clientId === undefined || clientId === null || clientId === '') return { unpaidTotal: 0, oldestUnpaidDays: 0 };
+  let unpaidTotal = 0;
+  let oldestUnpaidDays = 0;
+  const now = Date.now();
+  (ordersList || []).forEach(o => {
+    if (!o || o.status === 'cancelled' || o.debtPaid) return;
+    if (String(o.clientId) !== String(clientId)) return;
+    if (o.payment !== 'консигнация' && o.payment !== 'Qarz') return;
+    const rem = Math.max(0, (Number(o.total) || 0) - (Number(o.partialPaid) || 0));
+    if (rem > 0) {
+      unpaidTotal += rem;
+      const daysAgo = Math.floor((now - new Date(o.date).getTime()) / 86400000);
+      if (daysAgo > oldestUnpaidDays) oldestUnpaidDays = daysAgo;
+    }
+  });
+  return { unpaidTotal, oldestUnpaidDays };
+}
+
+function evaluateOrderBusinessRules(opts = {}) {
+  const { clientId, clientName, items = [], payment = '', rules = aiBusinessRules, orders = state.orders } = opts;
+  const activeRules = (Array.isArray(rules) ? rules : []).filter(r => r && r.enabled);
+  const errors = [];
+  const warnings = [];
+  const matchedRules = [];
+  let largeOrderAlertKg = null;
+
+  const isCredit = payment === 'консигнация' || payment === 'Qarz';
+  const totalQty = items.reduce((s, i) => s + (Number(i.qty) || 0), 0);
+  const totalKg = items.filter(i => !i.unit || !['шт', 'sht', 'dona', 'ta'].includes(String(i.unit).toLowerCase()))
+    .reduce((s, i) => s + (Number(i.qty) || 0), 0) || totalQty;
+
+  const debtInfo = getClientUnpaidDebtInfo(clientId, orders);
+
+  activeRules.forEach(rule => {
+    if (rule.type === 'block_debt_above' && isCredit) {
+      const limit = Number(rule.limit) || 0;
+      if (limit > 0 && debtInfo.unpaidTotal > limit) {
+        matchedRules.push(rule.id);
+        errors.push(
+          (lang === 'uz'
+            ? `Qoida bo'yicha taqiq: ${clientName || 'Mijoz'} qarzi (${fmt(debtInfo.unpaidTotal)} so'm) ${fmt(limit)} so'm limitidan oshgan — nasiya yopilgan!`
+            : `Блок по правилу: долг ${clientName || 'клиента'} (${fmt(debtInfo.unpaidTotal)} сум) превышает лимит ${fmt(limit)} сум!`)
+        );
+      }
+    } else if (rule.type === 'max_order_debt_days' && isCredit) {
+      const maxDays = Number(rule.maxDays) || 0;
+      if (maxDays > 0 && debtInfo.unpaidTotal > 0 && debtInfo.oldestUnpaidDays >= maxDays) {
+        matchedRules.push(rule.id);
+        errors.push(
+          (lang === 'uz'
+            ? `Qoida bo'yicha taqiq: ${debtInfo.oldestUnpaidDays} kunlik to'lanmagan qarz mavjud (limit ${maxDays} kun)!`
+            : `Блок по правилу: просроченный долг ${debtInfo.oldestUnpaidDays} дн. (лимит ${maxDays} дн.)!`)
+        );
+      }
+    } else if (rule.type === 'min_order_kg') {
+      const minKg = Number(rule.minKg) || 0;
+      if (minKg > 0 && totalKg > 0 && totalKg < minKg) {
+        matchedRules.push(rule.id);
+        errors.push(
+          (lang === 'uz'
+            ? `Qoida bo'yicha taqiq: eng kam buyurtma ${minKg} kg (hozir ${Math.round(totalKg * 10) / 10} kg)`
+            : `Блок по правилу: минимальный заказ ${minKg} кг (сейчас ${Math.round(totalKg * 10) / 10} кг)`)
+        );
+      }
+    } else if (rule.type === 'large_order_alert_kg') {
+      const th = Number(rule.thresholdKg) || 0;
+      if (th > 0 && totalKg >= th) {
+        matchedRules.push(rule.id);
+        largeOrderAlertKg = Math.round(totalKg * 10) / 10;
+        warnings.push(`Katta buyurtma (${largeOrderAlertKg} kg) Telegramga yuboriladi`);
+      }
+    }
+  });
+
+  return {
+    blocked: errors.length > 0,
+    errors,
+    warnings,
+    largeOrderAlertKg,
+    matchedRules
+  };
+}
+
+function applyBizRuleOperation(op) {
+  if (!op || typeof op !== 'object') return null;
+  const action = String(op.op || 'add').toLowerCase();
+  if (action === 'clear') {
+    aiBusinessRules = [];
+    return 'Barcha biznes qoidalar tozalandi';
+  }
+  if (action === 'remove') {
+    const before = aiBusinessRules.length;
+    aiBusinessRules = aiBusinessRules.filter(r => String(r.id) !== String(op.id) && r.type !== op.type);
+    return before !== aiBusinessRules.length ? `Qoida o'chirildi: ${op.id || op.type}` : null;
+  }
+  if (action === 'toggle') {
+    const target = aiBusinessRules.find(r => String(r.id) === String(op.id) || r.type === op.type);
+    if (!target) return null;
+    target.enabled = typeof op.enabled === 'boolean' ? op.enabled : !target.enabled;
+    return `${target.label} (${target.enabled ? 'YOQILDI' : 'O\'CHIRILDI'})`;
+  }
+  if (action === 'add') {
+    const validTypes = ['block_debt_above', 'min_order_kg', 'warehouse_low_alert_kg', 'large_order_alert_kg', 'max_order_debt_days'];
+    if (!validTypes.includes(op.type)) return null;
+    const rule = {
+      id: op.id || ('rule_' + Date.now() + '_' + Math.floor(Math.random() * 1000)),
+      type: op.type,
+      enabled: op.enabled !== false,
+      label: String(op.label || op.type),
+      createdAt: new Date().toISOString()
+    };
+    if (op.limit !== undefined) rule.limit = Number(op.limit) || 0;
+    if (op.minKg !== undefined) rule.minKg = Number(op.minKg) || 0;
+    if (op.thresholdKg !== undefined) rule.thresholdKg = Number(op.thresholdKg) || 0;
+    if (op.maxDays !== undefined) rule.maxDays = Number(op.maxDays) || 0;
+    if (op.productId) rule.productId = String(op.productId);
+
+    // Replace existing rule of same type+productId so AI edits cleanly instead of duplicating
+    aiBusinessRules = aiBusinessRules.filter(r => !(r.type === rule.type && (r.productId || 'all') === (rule.productId || 'all')));
+    aiBusinessRules.push(rule);
+    return rule.label;
+  }
+  return null;
+}
+
+function extractAndApplyBizRules(rawText) {
+  if (!rawText || typeof rawText !== 'string') return { cleanText: rawText || '', applied: [] };
+  const match = rawText.match(/<<<BIZ_RULES>>>([\s\S]*?)<<<END_BIZ_RULES>>>/);
+  if (!match) return { cleanText: rawText, applied: [] };
+  const cleanText = rawText.replace(/<<<BIZ_RULES>>>[\s\S]*?<<<END_BIZ_RULES>>>/g, '').trim();
+  const applied = [];
+  try {
+    const parsed = JSON.parse(match[1].trim());
+    const ops = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.ops) ? parsed.ops : [parsed]);
+    const prev = JSON.parse(JSON.stringify(aiBusinessRules || []));
+    ops.forEach(op => {
+      const msg = applyBizRuleOperation(op);
+      if (msg) applied.push(msg);
+    });
+    if (applied.length) {
+      ruleUndoStack.push(prev);
+      saveBusinessRules();
+      renderAiRulesModal();
+    }
+  } catch (e) {
+    console.warn('extractAndApplyBizRules parse warn:', e);
+  }
+  return { cleanText, applied };
+}
+
+function undoLastRuleChange() {
+  if (!ruleUndoStack.length) {
+    showToast(lang === 'uz' ? 'Qaytariladigan qoida o\'zgarishi yo\'q' : 'Нет изменений для отмены', 'info');
+    return;
+  }
+  aiBusinessRules = ruleUndoStack.pop();
+  saveBusinessRules();
+  renderAiRulesModal();
+  showToast('↩️ Oxirgi qoida o\'zgarishi bekor qilindi', 'success');
+}
+
+function toggleBusinessRule(ruleId) {
+  const prev = JSON.parse(JSON.stringify(aiBusinessRules || []));
+  const r = (aiBusinessRules || []).find(x => String(x.id) === String(ruleId));
+  if (!r) return;
+  ruleUndoStack.push(prev);
+  r.enabled = !r.enabled;
+  saveBusinessRules();
+  renderAiRulesModal();
+}
+
+function deleteBusinessRule(ruleId) {
+  const prev = JSON.parse(JSON.stringify(aiBusinessRules || []));
+  ruleUndoStack.push(prev);
+  aiBusinessRules = (aiBusinessRules || []).filter(x => String(x.id) !== String(ruleId));
+  saveBusinessRules();
+  renderAiRulesModal();
+}
+
+function clearBusinessRules() {
+  if (!aiBusinessRules.length) return;
+  const prev = JSON.parse(JSON.stringify(aiBusinessRules || []));
+  ruleUndoStack.push(prev);
+  aiBusinessRules = [];
+  saveBusinessRules();
+  renderAiRulesModal();
+  showToast('🗑️ Barcha biznes qoidalar o\'chirildi', 'info');
+}
+
+function applyQuickRulePreset(type) {
+  const presets = {
+    block_debt_above: { op: 'add', type: 'block_debt_above', limit: 500000, label: 'Qarzi 500 000 so\'mdan oshgan mijozga nasiya yopilsin' },
+    min_order_kg: { op: 'add', type: 'min_order_kg', minKg: 2, label: 'Eng kam buyurtma hajmi 2 kg bo\'lsin' },
+    warehouse_low_alert_kg: { op: 'add', type: 'warehouse_low_alert_kg', thresholdKg: 3, productId: 'all', label: 'Omborda salat 3 kg dan tushsa qizil ogohlantirish' },
+    large_order_alert_kg: { op: 'add', type: 'large_order_alert_kg', thresholdKg: 30, label: 'Buyurtma 30 kg dan oshsa Telegramga tezkor xabar' }
+  };
+  const p = presets[type];
+  if (!p) return;
+  ruleUndoStack.push(JSON.parse(JSON.stringify(aiBusinessRules || [])));
+  const res = applyBizRuleOperation(p);
+  if (res) {
+    saveBusinessRules();
+    renderAiRulesModal();
+    showToast('🧠 Qoida faollashtirildi: ' + res, 'success');
+  }
+}
+
+function openAiRulesModal() {
+  renderAiRulesModal();
+  openModal('aiRulesModal');
+}
+
+function renderAiRulesModal() {
+  updateAiRulesBadge();
+  const el = document.getElementById('aiRulesList');
+  if (!el) return;
+  if (!aiBusinessRules || !aiBusinessRules.length) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--text3);padding:12px 0;text-align:center;">🧠 ${lang==='uz'?'Hozircha faol biznes qoidasi yo\'q. Yuqoridagi shablondan tanlang yoki AI chatda oddiy gap bilan yozing!':'Пока нет активных бизнес-правил. Выберите шаблон или создайте в чате с AI.'}</div>`;
+    return;
+  }
+  el.innerHTML = aiBusinessRules.map(r => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px;background:var(--bg2);border:1px solid ${r.enabled ? 'rgba(0,229,255,0.4)' : 'var(--border)'};border-radius:11px;margin-bottom:7px;">
+      <div style="min-width:0;flex:1;">
+        <div style="font-size:12px;font-weight:700;color:${r.enabled ? 'var(--text)' : 'var(--text3)'};">${r.enabled ? '🟢' : '⏸️'} ${escapeHTML(r.label || r.type)}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:2px;">Tur: ${escapeHTML(r.type)}</div>
+      </div>
+      <div style="display:flex;gap:5px;flex-shrink:0;">
+        <button class="chip" style="margin:0;padding:4px 8px;font-size:11px;" onclick="toggleBusinessRule('${escapeAttr(r.id)}')">${r.enabled ? 'O\'chirish' : 'Yoqish'}</button>
+        <button class="chip" style="margin:0;padding:4px 8px;font-size:11px;color:var(--danger);" onclick="deleteBusinessRule('${escapeAttr(r.id)}')">✕</button>
+      </div>
+    </div>
+  `).join('');
 }

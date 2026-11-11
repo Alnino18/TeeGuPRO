@@ -51,6 +51,12 @@ const t = T[clientLang];
 let currentClient = null;
 let products = [];
 let cart = {};
+let CLIENT_RULES = [];
+try {
+  const _cRules = JSON.parse(localStorage.getItem('teegu_business_rules') || 'null');
+  if (Array.isArray(_cRules)) CLIENT_RULES = _cRules;
+} catch (e) {}
+let clientOrdersCache = [];
 
 // Update static text in HTML
 document.addEventListener('DOMContentLoaded', () => {
@@ -82,6 +88,10 @@ async function init() {
     const cSnap = await db.collection('clients').where('tgId', '==', tgUser.id).get();
     if(!cSnap.empty) {
       currentClient = cSnap.docs[0].data();
+      try {
+        const oSnap = await db.collection('orders').where('clientId', '==', currentClient.id).get();
+        if (oSnap && !oSnap.empty) clientOrdersCache = oSnap.docs.map(d => d.data());
+      } catch (e2) {}
     }
   } catch(e) {
     console.error("Ошибка при поиске клиента:", e);
@@ -276,6 +286,32 @@ async function submitOrder() {
       total += cart[id] * price;
     }
   }
+
+  // Enforce active dynamic business rules before placing order
+  if ((paymentMethod === 'консигнация' || paymentMethod === 'Qarz') && currentClient && (!clientOrdersCache || !clientOrdersCache.length)) {
+    try {
+      const oSnap = await db.collection('orders').where('clientId', '==', currentClient.id).get();
+      if (oSnap && !oSnap.empty) clientOrdersCache = oSnap.docs.map(d => d.data());
+    } catch (e) {}
+  }
+  const clientRuleRes = evaluateClientOrderRules({
+    clientId: currentClient && currentClient.id,
+    clientName: name,
+    items,
+    payment: paymentMethod,
+    rules: CLIENT_RULES,
+    orders: clientOrdersCache
+  });
+  if (clientRuleRes.blocked) {
+    if (tg && tg.showAlert) tg.showAlert(clientRuleRes.errors[0]);
+    else alert(clientRuleRes.errors[0]);
+    const checkoutBtnReset = document.getElementById('checkoutSubmitBtn');
+    if (checkoutBtnReset) {
+      checkoutBtnReset.disabled = false;
+      checkoutBtnReset.innerText = t.orderBtn;
+    }
+    return;
+  }
   
   const order = {
     id: Date.now(),
@@ -337,12 +373,16 @@ async function submitOrder() {
         // Also send warning if stock drops
         for (const i of order.items) {
            const p = products.find(x => x.id === i.id);
-           const minSt = (p && p.minStock !== undefined && p.minStock !== '' && !isNaN(Number(p.minStock))) ? Number(p.minStock) : 5;
+           const minSt = getClientProductMinStock(p);
            if(p && p.stock !== undefined && p.stock !== '' && !isNaN(Number(p.stock)) && Number(p.stock) <= minSt) {
                const rem = Math.round(Number(p.stock) * 100) / 100;
                const warning = `⚠️ Diqqat! ${p.name} zaxirasi tugayapti. Qoldiq: ${rem} ${p.unit||'kg'}`;
                fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:warning})}).catch(()=>{});
            }
+        }
+        if (clientRuleRes.largeOrderAlertKg) {
+          const bigMsg = `🚨 KATTA BUYURTMA (Client App - ${clientRuleRes.largeOrderAlertKg} kg)!\n👤 Mijoz: ${name}`;
+          fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:bigMsg})}).catch(()=>{});
         }
         
         await db.collection('orders').doc(String(order.id)).update({sent: true});
@@ -655,9 +695,69 @@ try {
   db.collection('settings').doc('main').onSnapshot(snap => {
     if (snap && snap.exists) {
       const d = snap.data() || {};
+      if (Array.isArray(d.businessRules)) {
+        CLIENT_RULES = d.businessRules;
+        try { localStorage.setItem('teegu_business_rules', JSON.stringify(CLIENT_RULES)); } catch (e) {}
+      }
       if (d.uiConfig) applySharedUiConfig(d.uiConfig, 'client');
     }
   });
 } catch (e) {}
+
+function getClientProductMinStock(p) {
+  if (Array.isArray(CLIENT_RULES)) {
+    const sp = CLIENT_RULES.find(r => r && r.enabled && r.type === 'warehouse_low_alert_kg' && p && String(r.productId) === String(p.id));
+    if (sp && !isNaN(Number(sp.thresholdKg))) return Math.max(0, Number(sp.thresholdKg));
+    const gl = CLIENT_RULES.find(r => r && r.enabled && r.type === 'warehouse_low_alert_kg' && (!r.productId || r.productId === 'all'));
+    if (gl && !isNaN(Number(gl.thresholdKg))) return Math.max(0, Number(gl.thresholdKg));
+  }
+  return (p && p.minStock !== undefined && p.minStock !== '' && !isNaN(Number(p.minStock))) ? Number(p.minStock) : 5;
+}
+
+function evaluateClientOrderRules(opts = {}) {
+  const { clientId, clientName, items = [], payment = '', rules = CLIENT_RULES, orders = clientOrdersCache } = opts;
+  const activeRules = (Array.isArray(rules) ? rules : []).filter(r => r && r.enabled);
+  const errors = [];
+  let largeOrderAlertKg = null;
+  const isCredit = payment === 'консигнация' || payment === 'Qarz';
+  const totalQty = items.reduce((s, i) => s + (Number(i.qty) || 0), 0);
+  const totalKg = items.filter(i => !i.unit || !['шт', 'sht', 'dona', 'ta'].includes(String(i.unit).toLowerCase()))
+    .reduce((s, i) => s + (Number(i.qty) || 0), 0) || totalQty;
+
+  let unpaidTotal = 0;
+  let oldestUnpaidDays = 0;
+  const now = Date.now();
+  (orders || []).forEach(o => {
+    if (!o || o.status === 'cancelled' || o.debtPaid) return;
+    if (clientId && String(o.clientId) !== String(clientId)) return;
+    if (o.payment !== 'консигнация' && o.payment !== 'Qarz') return;
+    const rem = Math.max(0, (Number(o.total) || 0) - (Number(o.partialPaid) || 0));
+    if (rem > 0) {
+      unpaidTotal += rem;
+      const dAge = Math.floor((now - new Date(o.date).getTime()) / 86400000);
+      if (dAge > oldestUnpaidDays) oldestUnpaidDays = dAge;
+    }
+  });
+
+  activeRules.forEach(rule => {
+    if (rule.type === 'block_debt_above' && isCredit && Number(rule.limit) > 0 && unpaidTotal > Number(rule.limit)) {
+      errors.push(clientLang === 'uz'
+        ? `Sizda to'lanmagan qarz (${fmt(unpaidTotal)} so'm) ${fmt(rule.limit)} so'm limitidan oshgan — qarzga buyurtma yopilgan.`
+        : `Ваш текущий долг (${fmt(unpaidTotal)} сум) превышает лимит ${fmt(rule.limit)} сум — заказ в долг недоступен.`);
+    } else if (rule.type === 'max_order_debt_days' && isCredit && Number(rule.maxDays) > 0 && unpaidTotal > 0 && oldestUnpaidDays >= Number(rule.maxDays)) {
+      errors.push(clientLang === 'uz'
+        ? `${oldestUnpaidDays} kunlik to'lanmagan qarz mavjud (limit ${rule.maxDays} kun).`
+        : `Имеется просроченный долг (${oldestUnpaidDays} дн., лимит ${rule.maxDays} дн.).`);
+    } else if (rule.type === 'min_order_kg' && Number(rule.minKg) > 0 && totalKg > 0 && totalKg < Number(rule.minKg)) {
+      errors.push(clientLang === 'uz'
+        ? `Eng kam buyurtma hajmi ${rule.minKg} kg (hozir ${Math.round(totalKg * 10) / 10} kg).`
+        : `Минимальный заказ ${rule.minKg} кг (сейчас ${Math.round(totalKg * 10) / 10} кг).`);
+    } else if (rule.type === 'large_order_alert_kg' && Number(rule.thresholdKg) > 0 && totalKg >= Number(rule.thresholdKg)) {
+      largeOrderAlertKg = Math.round(totalKg * 10) / 10;
+    }
+  });
+
+  return { blocked: errors.length > 0, errors, largeOrderAlertKg };
+}
 
 

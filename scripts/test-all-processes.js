@@ -1002,9 +1002,229 @@ try {
   assert(false, 'Regression suite 9 failed', e.stack);
 }
 
+// =========================================================================
+// 10. TESTING NEW AI FEATURES (SIMULATOR, VOICE TTS, GEO GAPS, BIZ RULES)
+// =========================================================================
+console.log('\n--- 10. Testing AI Simulator, Two-Way Voice TTS, Geo Territory Gaps & Business Rules ---');
+try {
+  // 10A. Price & Profit "What-If" Simulator
+  runAdmin(`
+    state.orders = [
+      { id: 'sim_o1', date: new Date().toISOString(), clientId: 'c_sim', client: 'Sim Kafe', status: 'done', items: [{ id: 'funchoza', name: 'Фунчоза', price: 25000, qty: 10 }], total: 250000 }
+    ];
+    PRODUCTS = [{ id: 'funchoza', name: 'Фунчоза', nameUz: 'Funchoza', price: 25000, emoji: '🍜', unit: 'kg', stock: 20, minStock: 5 }];
+    globalThis.__simRes = simulatePriceScenario({ productId: 'funchoza', priceDeltaPct: 10, volumeElasticityPct: -10, discountPct: 0, days: 30 });
+    globalThis.__extractedSim = extractSimScenario('Natija:\\n<<<SIM_SCENARIO>>>{"title":"Funchoza +10%","oldRevenue":250000,"newRevenue":247500,"oldProfit":50000,"newProfit":67500,"breakEvenDropPct":33.3}<<<END_SIM_SCENARIO>>>');
+    openAiSimulatorModal();
+    globalThis.__simModalHtml = document.getElementById('simPreviewResult').innerHTML;
+  `);
+  assert(
+    adminEnv.__simRes.oldRevenue === 250000 &&
+    adminEnv.__simRes.newRevenue === 247500 &&
+    adminEnv.__simRes.oldProfit === 50000 &&
+    adminEnv.__simRes.newProfit === 67500 &&
+    Math.abs(adminEnv.__simRes.breakEvenDropPct - 33.3) < 0.2,
+    'simulatePriceScenario computed exact revenue, net profit & break-even churn tolerance'
+  );
+  assert(
+    adminEnv.__extractedSim.cleanText === 'Natija:' && adminEnv.__extractedSim.scenario && adminEnv.__extractedSim.scenario.newProfit === 67500,
+    'extractSimScenario stripped <<<SIM_SCENARIO>>> block and parsed scenario object'
+  );
+  assert(adminEnv.__simModalHtml.includes('ai-sim-card') && adminEnv.__simModalHtml.includes('Foyda:'), 'openAiSimulatorModal rendered live Before/After KPI preview card');
+
+  // 10B. Route & Territory Gap Analysis
+  runAdmin(`
+    state.clients = [
+      { id: 'g1', name: 'Chilonzor 1', address: 'Chilonzor 5-kvartal', lat: 41.28, lng: 69.21 },
+      { id: 'g2', name: 'Chilonzor 2', address: 'Chilonzor Farhod bozori', lat: 41.282, lng: 69.215 },
+      { id: 'g3', name: 'Chilonzor 3', address: 'Chilonzor Qozirabot', lat: 41.279, lng: 69.209 },
+      { id: 'g4', name: 'Yunusobod Kafe', address: 'Yunusobod Universam 14', lat: 41.37, lng: 69.29 },
+      { id: 'g5', name: 'Nomalum joy', address: '' }
+    ];
+    state.orders = [
+      { id: 'go1', date: new Date().toISOString(), clientId: 'g1', total: 300000, status: 'done', items: [{ id: 'funchoza', price: 25000, qty: 12 }] },
+      { id: 'go2', date: new Date().toISOString(), clientId: 'g4', total: 100000, status: 'done', items: [{ id: 'funchoza', price: 25000, qty: 4 }] }
+    ];
+    globalThis.__geoSummary = buildGeoTerritorySummary();
+    globalThis.__bizCtx = buildBusinessContext();
+  `);
+  assert(
+    adminEnv.__geoSummary.jamiMijozlar === 5 &&
+    adminEnv.__geoSummary.koordinatasizMijozlarSoni === 1 &&
+    adminEnv.__geoSummary.boshliqYonalishlar.some(g => g.hudud === 'Yunusobod') &&
+    adminEnv.__geoSummary.kirmaganTumanlar.includes('Sergeli'),
+    'buildGeoTerritorySummary detected thin route corridor (Yunusobod), unmapped count & untapped districts'
+  );
+  assert(
+    adminEnv.__bizCtx.hududVaMarshrutTahlili && adminEnv.__bizCtx.simulyatorBazasi && Array.isArray(adminEnv.__bizCtx.faolBiznesQoidalar),
+    'buildBusinessContext enriched prompt with simulator baseline, geo gap analysis & active business rules'
+  );
+
+  // 10C. Two-Way Voice Assistant (TTS)
+  runAdmin(`
+    globalThis.__spokenUtterances = [];
+    window.SpeechSynthesisUtterance = function(txt) { this.text = txt; this.lang = ''; this.rate = 1; };
+    window.speechSynthesis = {
+      speak: u => globalThis.__spokenUtterances.push(u),
+      cancel: () => {},
+      getVoices: () => [{ lang: 'uz-UZ' }, { lang: 'ru-RU' }]
+    };
+    globalThis.__cleanSpeech = cleanTextForSpeech('**Salom!** 🎉 Bugun savdo 500 000 so\\'m <<<BIZ_RULES>>>{"ops":[]}<<<END_BIZ_RULES>>>');
+    toggleAiTts();
+    aiChatHistory = [{ role: 'bot', text: '**Tayyor!** Savdo yaxshi ketmoqda 🚀', time: '12:00' }];
+    globalThis.__spokeOk = speakAiMessage(0);
+    renderAiPage();
+    globalThis.__aiChatHtml = document.getElementById('aiChatBox').innerHTML;
+    stopAiSpeech();
+    if (aiAutoSpeak) toggleAiTts();
+  `);
+  assert(
+    adminEnv.__cleanSpeech === "Salom! Bugun savdo 500 000 so'm" &&
+    adminEnv.__spokeOk === true &&
+    adminEnv.__spokenUtterances.length === 1 &&
+    adminEnv.__spokenUtterances[0].text.includes('Tayyor!'),
+    'Two-Way Voice TTS sanitized markup/blocks and called window.speechSynthesis.speak'
+  );
+  assert(
+    adminEnv.__aiChatHtml.includes('ai-speak-btn'),
+    'renderAiPage rendered speaker playback control on bot messages'
+  );
+
+  // 10D. Natural-Language Business Rules Engine across Admin, Agent & Client
+  runAdmin(`
+    const ruleAiMsg = 'Qoidalar yoqildi!\\n<<<BIZ_RULES>>>{"ops":[{"op":"add","type":"block_debt_above","limit":500000,"label":"Qarz > 500k nasiya yopish"},{"op":"add","type":"min_order_kg","minKg":2,"label":"Min 2 kg buyurtma"},{"op":"add","type":"warehouse_low_alert_kg","thresholdKg":3,"productId":"all","label":"Sklad < 3 kg"},{"op":"add","type":"large_order_alert_kg","thresholdKg":20,"label":"Katta zakaz >= 20kg"}]}<<<END_BIZ_RULES>>>';
+    globalThis.__rApplied = extractAndApplyBizRules(ruleAiMsg);
+    globalThis.__dynMinStock = getProductMinStock({ id: 'funchoza', minStock: 5 });
+    globalThis.__rulesModalHtml = document.getElementById('aiRulesList').innerHTML;
+  `);
+  assert(
+    adminEnv.__rApplied.applied.length === 4 && adminEnv.__rApplied.cleanText === 'Qoidalar yoqildi!',
+    'extractAndApplyBizRules stripped block and activated 4 business rules'
+  );
+  assert(
+    adminEnv.__dynMinStock === 3 && adminEnv.dom['btnAiRules'].textContent.includes('(4)'),
+    'Dynamic warehouse_low_alert_kg rule updated getProductMinStock (5 -> 3) & header counter (4)'
+  );
+  assert(adminEnv.__rulesModalHtml.includes('Qarz &gt; 500k'), 'renderAiRulesModal rendered active rules list');
+
+  // Test Admin submitOrder blocking debtor (>500k) on credit and under-min-kg (<2kg)
+  globalThis.__runAdminRulesTest = async () => {
+    runAdmin(`
+      state.clients = [{ id: 'c_debtor', name: 'Qarzdor Kafe', phone: '+998901112233', type: 'кафе' }];
+      state.orders = [
+        { id: 'old_d', date: new Date().toISOString(), clientId: 'c_debtor', client: 'Qarzdor Kafe', payment: 'консигнация', total: 600000, partialPaid: 0, debtPaid: false, status: 'done', items: [] }
+      ];
+      PRODUCTS = [{ id: 'funchoza', name: 'Фунчоза', nameUz: 'Funchoza', price: 25000, emoji: '🍜', unit: 'kg', stock: 50, minStock: 5 }];
+      document.getElementById('clientSelect').value = 'c_debtor';
+      state.quantities = { funchoza: 3 };
+      state.selectedPayment = 'консигнация';
+    `);
+    await vm.runInContext(`submitOrder()`, adminContext);
+    assert(
+      runAdmin('PRODUCTS[0].stock') === 50 &&
+      (adminEnv.dom['toast'].textContent.includes('limit') || adminEnv.dom['toast'].textContent.includes('лимит')),
+      'Admin submitOrder BLOCKED credit order for debtor exceeding 500k limit'
+    );
+
+    runAdmin(`
+      state.selectedPayment = 'наличные';
+      state.quantities = { funchoza: 1 };
+    `);
+    await vm.runInContext(`submitOrder()`, adminContext);
+    assert(
+      runAdmin('PRODUCTS[0].stock') === 50 &&
+      (adminEnv.dom['toast'].textContent.includes('kam buyurtma') || adminEnv.dom['toast'].textContent.includes('минимальный заказ')),
+      'Admin submitOrder BLOCKED order below min_order_kg (1 kg < 2 kg)'
+    );
+
+    runAdmin(`
+      state.selectedPayment = 'наличные';
+      state.quantities = { funchoza: 2.5 };
+    `);
+    await vm.runInContext(`submitOrder()`, adminContext);
+    assert(runAdmin('PRODUCTS[0].stock') === 47.5, 'Admin submitOrder ALLOWED valid 2.5 kg cash order and deducted stock (50 -> 47.5)');
+
+    // Clean undo test in Admin
+    runAdmin(`clearBusinessRules(); undoLastRuleChange();`);
+    assert(runAdmin('aiBusinessRules.length') === 4, 'clearBusinessRules & undoLastRuleChange restored all 4 rules');
+  };
+
+  // Test Agent rule enforcement with shared AGENT_RULES
+  runAgent(`
+    AGENT_RULES = [
+      { id: 'r1', type: 'block_debt_above', enabled: true, limit: 500000 },
+      { id: 'r2', type: 'min_order_kg', enabled: true, minKg: 2 }
+    ];
+    UNPAID_ORDERS = [
+      { id: 'u1', clientId: 'ag_debtor', payment: 'Qarz', total: 700000, partialPaid: 0, debtPaid: false, status: 'new' }
+    ];
+    CLIENTS = [{ id: 'ag_debtor', name: 'Agent Debtor', phone: '+998901234567' }];
+    PRODUCTS = [{ id: 'funchoza', name: 'Funchoza', price: 25000, unit: 'kg', stock: 50 }];
+    document.getElementById('orderClient').value = 'Agent Debtor — +998901234567';
+    document.getElementById('orderPayment').value = 'Qarz';
+    cart = { funchoza: 3 };
+    submitOrder();
+    globalThis.__agToast1 = document.getElementById('toast').textContent;
+    globalThis.__agStockAfterCreditBlock = PRODUCTS[0].stock;
+    document.getElementById('orderPayment').value = 'Naqd';
+    cart = { funchoza: 1 };
+    submitOrder();
+    globalThis.__agToast2 = document.getElementById('toast').textContent;
+    globalThis.__agStockAfterMinBlock = PRODUCTS[0].stock;
+  `);
+  assert(
+    agentEnv.__agToast1.includes('limitidan oshgan') &&
+    agentEnv.__agToast2.includes('eng kam buyurtma') &&
+    agentEnv.__agStockAfterCreditBlock === 50 &&
+    agentEnv.__agStockAfterMinBlock === 50,
+    'Agent submitOrder BLOCKED both debt-limit credit order and under-min-kg order without deducting stock'
+  );
+
+  // Test Client rule enforcement with CLIENT_RULES
+  const runClientRulesTest = async () => {
+    const strictCEnv = makeMockBrowser();
+    strictCEnv.alertLog = [];
+    strictCEnv.alert = m => strictCEnv.alertLog.push(String(m));
+    strictCEnv.Telegram = { WebApp: { ready: () => {}, expand: () => {}, initDataUnsafe: { user: { id: 888, first_name: 'ClientR' } } } };
+    const strictCCtx = vm.createContext(strictCEnv);
+    vm.runInContext(fs.readFileSync('client.js', 'utf8'), strictCCtx);
+    await vm.runInContext(`
+      CLIENT_RULES = [
+        { id: 'cr1', type: 'block_debt_above', enabled: true, limit: 500000 },
+        { id: 'cr2', type: 'min_order_kg', enabled: true, minKg: 2 }
+      ];
+      currentClient = { id: 'cl_debtor', name: 'Client Debtor', phone: '+998901119988', address: 'Chilonzor' };
+      clientOrdersCache = [{ id: 'co1', clientId: 'cl_debtor', payment: 'консигнация', total: 650000, partialPaid: 0, debtPaid: false, status: 'done' }];
+      PRODUCTS = [{ id: 'funchoza', name: 'Funchoza', price: 25000, emoji: '🍜', unit: 'kg', stock: 40 }];
+      products = PRODUCTS;
+      cart = { funchoza: 3 };
+      document.getElementById('orderName').value = 'Client Debtor';
+      document.getElementById('orderPhone').value = '+998901119988';
+      document.getElementById('orderAddress').value = 'Chilonzor';
+      document.getElementById('orderPayment').value = 'консигнация';
+      submitOrder();
+    `, strictCCtx);
+    const creditBlocked = strictCEnv.alertLog.length > 0 && strictCEnv.alertLog[strictCEnv.alertLog.length - 1].includes('500');
+    const btnReenabledAfterBlock = strictCEnv.dom['checkoutSubmitBtn'] && strictCEnv.dom['checkoutSubmitBtn'].disabled === false;
+
+    await vm.runInContext(`
+      cart = { funchoza: 1 };
+      document.getElementById('orderPayment').value = 'наличные';
+      submitOrder();
+    `, strictCCtx);
+    const minKgBlocked = strictCEnv.alertLog.length > 1 && strictCEnv.alertLog[strictCEnv.alertLog.length - 1].includes('2');
+    assert(creditBlocked && btnReenabledAfterBlock && minKgBlocked, 'Client submitOrder BLOCKED both debtor credit checkout (>500k) and under-min-kg (<2kg) and restored button state');
+  };
+  globalThis.__runClientRulesTest = runClientRulesTest;
+} catch (e) {
+  assert(false, 'New AI Features test suite 10 failed', e.stack);
+}
+
 (async () => {
   await runAsyncAiTests();
   if (typeof runClientCheckoutRegression === 'function') await runClientCheckoutRegression();
+  if (typeof globalThis.__runAdminRulesTest === 'function') await globalThis.__runAdminRulesTest();
+  if (typeof globalThis.__runClientRulesTest === 'function') await globalThis.__runClientRulesTest();
   console.log('\n====================================================');
   console.log(`📊 FINAL RESULT: ${testsPassed} PASSED, ${testsFailed} FAILED`);
   console.log('====================================================');
