@@ -210,8 +210,11 @@ async function submitOrder() {
     return;
   }
   
-  document.getElementById('submitBtn').disabled = true;
-  document.getElementById('submitBtn').innerText = t.loading;
+  const checkoutBtn = document.getElementById('checkoutSubmitBtn');
+  if (checkoutBtn) {
+    checkoutBtn.disabled = true;
+    checkoutBtn.innerText = t.loading;
+  }
   
   try {
     // If no currentClient, search by phone or create new
@@ -254,8 +257,11 @@ async function submitOrder() {
     }
   } catch(e) {
     alert("Ошибка при сохранении профиля: " + e.message);
-    document.getElementById('submitBtn').disabled = false;
-    document.getElementById('submitBtn').innerText = t.orderBtn;
+    const checkoutBtnReset = document.getElementById('checkoutSubmitBtn');
+    if (checkoutBtnReset) {
+      checkoutBtnReset.disabled = false;
+      checkoutBtnReset.innerText = t.orderBtn;
+    }
     return;
   }
 
@@ -375,8 +381,11 @@ async function submitOrder() {
   } catch(e) {
     alert("Ошибка: " + e.message);
   } finally {
-    document.getElementById('submitBtn').disabled = false;
-    document.getElementById('submitBtn').innerText = t.orderBtn;
+    const checkoutBtnReset = document.getElementById('checkoutSubmitBtn');
+    if (checkoutBtnReset) {
+      checkoutBtnReset.disabled = false;
+      checkoutBtnReset.innerText = t.orderBtn;
+    }
   }
 }
 

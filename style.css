@@ -3,14 +3,14 @@
     --bg:#09090f;--bg2:#12121e;--bg3:#1d1d30;--card:#151525;--border:#2a2a46;
     --accent:#7b61ff;--accent2:#00e5ff;--accent3:#ff9900;--danger:#ff4b4b;
     --text:#f5f5fc;--text2:#a3a3c2;--text3:#6d6d99;
-    --green:#00e5ff;--orange:#ff9900;--blue:#3399ff;
+    --green:#00e5ff;--orange:#ff9900;--gold:#ffb300;--blue:#3399ff;
     --r:16px;--r2:24px;--shadow:0 8px 32px rgba(0,0,0,0.5);
   }
   body.light {
     --bg:#f4f5f7;--bg2:#ffffff;--bg3:#eaedf2;--card:#ffffff;--border:#dfe3e8;
     --accent:#6344ff;--accent2:#00b8d4;--accent3:#f57c00;--danger:#e53935;
     --text:#1a1c23;--text2:#5c6574;--text3:#8f9bb3;
-    --green:#00b8d4;--orange:#f57c00;--blue:#2979ff;--shadow:0 8px 32px rgba(0,0,0,0.08);
+    --green:#00b8d4;--orange:#f57c00;--gold:#f59e0b;--blue:#2979ff;--shadow:0 8px 32px rgba(0,0,0,0.08);
   }
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
   body{font-family:'Inter', sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;overflow-x:hidden;transition:background .3s,color .3s;}
@@ -78,6 +78,7 @@
   .btn-success{background:linear-gradient(135deg,var(--green),#3abf88);color:white;box-shadow:0 4px 20px rgba(86,212,160,.3);}
   .btn-danger{background:linear-gradient(135deg,var(--danger),#d44);color:white;}
   .btn-orange{background:linear-gradient(135deg,var(--orange),#e8922a);color:white;}
+  .btn-secondary{background:var(--bg3);border:1.5px solid var(--border);color:var(--text);}
   .btn-outline{background:transparent;border:1.5px solid var(--border);color:var(--text2);}
   .btn:disabled{opacity:.4;cursor:not-allowed;transform:none;}
   .btn-sm{padding:8px 14px;font-size:12px;border-radius:10px;width:auto;}
@@ -225,7 +226,7 @@
   @media print {
     body{background:#fff!important;color:#000!important;}
     .header,.tabs,.page:not(.active),.modal-overlay,.toast{display:none!important;}
-    #page-new-order,#page-orders,#page-debts,#page-clients,#page-stats,#page-settings,#page-delivery{display:none!important;}
+    #page-new-order,#page-orders,#page-debts,#page-clients,#page-stats,#page-settings,#page-delivery,#page-warehouse,#page-products,#page-ai,#page-map{display:none!important;}
     #print-area{display:block!important;}
     .no-print{display:none!important;}
   }
@@ -329,15 +330,15 @@
   transition: all 0.2s ease;
 }
 .wh-card.status-low { border-color: rgba(255, 153, 0, 0.55); background: linear-gradient(135deg, var(--card), rgba(255, 153, 0, 0.05)); }
-.wh-card.status-out { border-color: rgba(255, 75, 75, 0.6); background: linear-gradient(135deg, var(--card), rgba(255, 75, 75, 0.08)); }
+.wh-card.status-empty, .wh-card.status-out { border-color: rgba(255, 75, 75, 0.6); background: linear-gradient(135deg, var(--card), rgba(255, 75, 75, 0.08)); }
 .wh-card.status-ok { border-color: rgba(0, 229, 255, 0.35); }
 .wh-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .wh-qty-big { font-family: 'Outfit', sans-serif; font-size: 24px; font-weight: 900; line-height: 1.1; text-align: right; }
 .wh-status-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 99px; }
 .wh-status-pill.ok { background: rgba(86, 212, 160, 0.16); color: #56d4a0; }
 .wh-status-pill.low { background: rgba(255, 153, 0, 0.18); color: var(--orange); }
-.wh-status-pill.out { background: rgba(255, 75, 75, 0.18); color: var(--danger); }
-.wh-status-pill.unset { background: var(--bg3); color: var(--text3); }
+.wh-status-pill.empty, .wh-status-pill.out { background: rgba(255, 75, 75, 0.18); color: var(--danger); }
+.wh-status-pill.untracked, .wh-status-pill.unset { background: var(--bg3); color: var(--text3); }
 .wh-bar-bg { width: 100%; height: 7px; background: var(--bg3); border-radius: 99px; overflow: hidden; margin: 10px 0; }
 .wh-bar-fill { height: 100%; border-radius: 99px; transition: width 0.4s ease; }
 .wh-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
@@ -366,7 +367,8 @@
 }
 .stock-badge-mini.ok { background: rgba(86, 212, 160, 0.14); color: #56d4a0; }
 .stock-badge-mini.low { background: rgba(255, 153, 0, 0.16); color: var(--orange); }
-.stock-badge-mini.out { background: rgba(255, 75, 75, 0.16); color: var(--danger); }
+.stock-badge-mini.empty, .stock-badge-mini.out { background: rgba(255, 75, 75, 0.16); color: var(--danger); }
+.stock-badge-mini.untracked { background: var(--bg3); color: var(--text3); }
 
 /* AI UI CONTROL BADGES & CUSTOM BUTTONS */
 .ai-ui-applied-box {

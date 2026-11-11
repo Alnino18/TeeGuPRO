@@ -12,7 +12,7 @@
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@600;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="../style.css?v=20">
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -144,7 +144,7 @@
   </div>
 </div>
 
-<div class="tabs">
+<div class="tabs" id="tabsBar">
   <div class="tab active" data-page="dashboard" onclick="showPage('dashboard')">🏠 <span class="t" data-ru="Дашборд" data-uz="Bosh sahifa">Дашборд</span></div>
   <div class="tab" data-page="new-order" onclick="showPage('new-order')">➕ <span class="t" data-ru="Заказ" data-uz="Buyurtma">Заказ</span></div>
   <div class="tab" data-page="orders" onclick="showPage('orders')">📋 <span class="t" data-ru="Заказы" data-uz="Buyurtmalar">Заказы</span> <span class="cnt" id="ordersCount">0</span></div>
@@ -270,8 +270,12 @@
       </div>
       <button class="btn btn-outline btn-sm" id="btnResetDelivery" onclick="resetDelivery()">🔄</button>
     </div>
-    <button class="btn btn-primary btn-sm" id="btnSendDaySummary" style="width:auto;padding:8px 16px" onclick="sendDaySummary()">📤 <span class="t" data-ru="Сводка дня в Telegram" data-uz="Kun xulosasini Telegramga">Сводка в Telegram</span></button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" id="btnOptimizeDelivery" style="width:auto;padding:8px 16px" onclick="optimizeAdminDeliveryRoute()">🧭 <span class="t" data-ru="Умный маршрут" data-uz="Aqlli marshrut">Aqlli marshrut</span></button>
+      <button class="btn btn-primary btn-sm" id="btnSendDaySummary" style="width:auto;padding:8px 16px" onclick="sendDaySummary()">📤 <span class="t" data-ru="Сводка дня в Telegram" data-uz="Kun xulosasini Telegramga">Сводка в Telegram</span></button>
+    </div>
   </div>
+  <div id="adminRouteSummaryBox"></div>
   <div id="deliveryList"><div class="empty"><div class="empty-icon">🚚</div><div class="empty-text t" data-ru="Нет заказов сегодня" data-uz="Bugun buyurtma yo'q">Нет заказов сегодня</div></div></div>
 </div>
 
@@ -1020,6 +1024,6 @@
   </div>
 </div>
 
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>

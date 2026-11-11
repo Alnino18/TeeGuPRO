@@ -822,8 +822,157 @@ try {
   assert(false, 'Agent stock & shared UI config test failed', e.stack);
 }
 
+// =========================================================================
+// 8. STATIC CROSS-FILE INTEGRITY AUDIT (HTML IDs, HANDLERS, CSS & SW ASSETS)
+// =========================================================================
+console.log('\n--- 8. Testing Cross-File HTML IDs, Handlers, CSS Vars & SW Assets ---');
+try {
+  const path = require('path');
+  const appPairs = [
+    { name: 'admin', html: 'admin/index.html', js: 'admin/app.js', extraDynamicIds: new Set(['teeguAiCustomStyles', 'aiTypingIndicator']) },
+    { name: 'agent', html: 'agent/index.html', js: 'agent/agent.js', extraDynamicIds: new Set(['teeguAiCustomStyles']) },
+    { name: 'courier', html: 'courier/index.html', js: 'courier/courier.js', extraDynamicIds: new Set(['teeguAiCustomStyles']) },
+    { name: 'client', html: 'client.html', js: 'client.js', extraDynamicIds: new Set(['teeguAiCustomStyles']) }
+  ];
+
+  const styleCss = fs.readFileSync('style.css', 'utf8');
+  const definedCssVars = new Set([...styleCss.matchAll(/(--[a-zA-Z0-9_-]+)\s*:/g)].map(m => m[1]));
+  assert(definedCssVars.has('--gold'), 'style.css defines --gold CSS variable');
+  assert(styleCss.includes('.wh-card.status-empty'), 'style.css styles .wh-card.status-empty');
+  assert(styleCss.includes('.wh-status-pill.empty'), 'style.css styles .wh-status-pill.empty');
+  assert(styleCss.includes('.stock-badge-mini.empty'), 'style.css styles .stock-badge-mini.empty');
+  assert(styleCss.includes('.btn-secondary'), 'style.css defines .btn-secondary');
+
+  for (const p of appPairs) {
+    const html = fs.readFileSync(p.html, 'utf8');
+    const js = fs.readFileSync(p.js, 'utf8');
+    const staticIds = new Set([...html.matchAll(/\bid\s*=\s*["']([^"']+)["']/g)].map(m => m[1]));
+    const dynIds = new Set([...js.matchAll(/\bid\s*=\s*["']([A-Za-z0-9_-]+)/g)].map(m => m[1]));
+
+    const missingIds = [];
+    for (const m of js.matchAll(/document\.getElementById\(\s*['"]([A-Za-z0-9_-]+)['"]\s*\)/g)) {
+      const id = m[1];
+      if (!staticIds.has(id) && !dynIds.has(id) && !p.extraDynamicIds.has(id)) {
+        missingIds.push(id);
+      }
+    }
+    assert(missingIds.length === 0, `[${p.name}] All static document.getElementById targets exist in HTML`, missingIds.join(', '));
+
+    const definedFns = new Set([
+      ...[...js.matchAll(/\b(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g)].map(m => m[1]),
+      ...[...js.matchAll(/\b(?:const|let|var|window\.)([A-Za-z_$][A-Za-z0-9_$]*)\s*=/g)].map(m => m[1])
+    ]);
+    const missingHandlers = [];
+    for (const m of html.matchAll(/\bon(?:click|change|input)\s*=\s*"([^"]+)"/g)) {
+      const handler = m[1];
+      for (const fm of handler.matchAll(/(?:^|[^.\w$])([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g)) {
+        const fn = fm[1];
+        if (!['if','event','this','document','window'].includes(fn) && !definedFns.has(fn)) {
+          missingHandlers.push(fn);
+        }
+      }
+    }
+    assert(missingHandlers.length === 0, `[${p.name}] All HTML inline onclick/onchange functions exist in JS`, missingHandlers.join(', '));
+
+    const localVars = new Set([
+      ...definedCssVars,
+      ...[...html.matchAll(/(--[a-zA-Z0-9_-]+)\s*:/g)].map(m => m[1])
+    ]);
+    const missingCssVars = [...new Set(
+      [...html.matchAll(/var\(\s*(--[a-zA-Z0-9_-]+)\s*\)/g), ...js.matchAll(/var\(\s*(--[a-zA-Z0-9_-]+)\s*\)/g)]
+        .map(m => m[1])
+        .filter(v => !localVars.has(v))
+    )];
+    assert(missingCssVars.length === 0, `[${p.name}] All referenced CSS var(--...) variables are defined`, missingCssVars.join(', '));
+  }
+
+  const swCode = fs.readFileSync('sw.js', 'utf8');
+  const swAssets = [...swCode.matchAll(/'(\.\/[^']*)'/g)].map(m => m[1]);
+  const missingAssets = swAssets.filter(a => !fs.existsSync(a === './' ? 'index.html' : path.join(process.cwd(), a)));
+  assert(swAssets.length > 0 && missingAssets.length === 0, 'All Service Worker ASSETS paths exist on disk', missingAssets.join(', '));
+} catch (e) {
+  assert(false, 'Cross-file static integrity audit failed', e.stack);
+}
+
+// =========================================================================
+// 9. REGRESSION TESTS FOR MAP COORDS, ROUTE OPTIMIZER, TAB ORDER & CLIENT CHECKOUT
+// =========================================================================
+console.log('\n--- 9. Testing Fixed Regressions (Coords, Route Optimizer, Tabs, Client Checkout) ---');
+try {
+  // 9A. Admin saveClientCoords with active mapInstance (must not call updateLeafletMarkers)
+  runAdmin(`
+    mapInstance = { geoObjects: { remove: () => {}, add: () => {} } };
+    markersLayer = [];
+    state.clients = [{ id: 'c_map_1', name: 'Test Map Kafe', phone: '+998901110000', type: 'кафе' }];
+    state.orders = [{ id: 'o_map_1', clientId: 'c_map_1', date: new Date().toISOString(), items: [{ emoji: '🥗', qty: 2, unit: 'kg', price: 25000 }], total: 50000 }];
+    document.getElementById('coordSaveId').value = 'c_map_1';
+    document.getElementById('coordLat').value = '41.3111';
+    document.getElementById('coordLng').value = '69.2797';
+    saveClientCoords();
+  `);
+  assert(runAdmin(`state.clients.find(c => c.id === 'c_map_1').lat`) === 41.3111 && adminEnv.dom['mapRouteList'].innerHTML.includes('Test Map Kafe'), 'saveClientCoords updated coordinates and refreshed map route list without updateLeafletMarkers error');
+
+  // 9B. Admin optimizeAdminDeliveryRoute populates #adminRouteSummaryBox + #deliveryList stepNum
+  runAdmin(`
+    state.clients.push({ id: 'c_map_2', name: 'Second Point', phone: '+998902220000', lat: 41.35, lng: 69.29 });
+    state.orders.push({ id: 'o_map_2', clientId: 'c_map_2', client: 'Second Point', date: new Date().toISOString(), items: [{ emoji: '🥕', qty: 1, unit: 'kg', price: 25000 }], total: 25000 });
+    optimizeAdminDeliveryRoute();
+  `);
+  assert(adminEnv.dom['adminRouteSummaryBox'].innerHTML.includes('yandex.ru/maps/?rtext=') && adminEnv.dom['deliveryList'].innerHTML.includes('delivery-num'), 'optimizeAdminDeliveryRoute populated #adminRouteSummaryBox and rendered sorted stops');
+  runAdmin(`resetDelivery();`);
+  assert(runAdmin('adminOptimizedRoute === null') && adminEnv.dom['adminRouteSummaryBox'].innerHTML === '', 'resetDelivery cleared adminOptimizedRoute and #adminRouteSummaryBox');
+
+  // 9C. ALLOWED_UI_CALLS & applyTabOrder on #tabsBar + stock-badge-mini empty
+  runAdmin(`
+    const bar = document.getElementById('tabsBar');
+    const tabDash = { dataset: { page: 'dashboard' } };
+    const tabWh = { dataset: { page: 'warehouse' } };
+    bar.children = [tabDash, tabWh];
+    bar.appendChild = function(el) { this.children = this.children.filter(c => c !== el).concat(el); };
+    aiUiConfig.tabOrder = ['warehouse', 'dashboard'];
+    applyTabOrder();
+    globalThis.__firstTabAfterReorder = bar.children[0].dataset.page;
+    globalThis.__uiPriceCall = ALLOWED_UI_CALLS.openPriceBroadcastModal();
+    globalThis.__uiRouteCall = ALLOWED_UI_CALLS.optimizeAdminDeliveryRoute();
+    const prevLang = lang;
+    lang = 'uz';
+    PRODUCTS = [{ id: 'p_empty', name: 'Test', nameUz: 'Test', price: 20000, emoji: '🥗', unit: 'kg', stock: 0, minStock: 5 }];
+    renderProductsGrid();
+    lang = prevLang;
+  `);
+  assert(adminEnv.__firstTabAfterReorder === 'warehouse', 'applyTabOrder reordered #tabsBar tabs correctly');
+  assert(adminEnv.dom['broadcastModal'].classList.contains('open'), 'ALLOWED_UI_CALLS.openPriceBroadcastModal opens broadcastModal');
+  assert(adminEnv.dom['productsGrid'].innerHTML.includes('stock-badge-mini empty') && adminEnv.dom['productsGrid'].innerHTML.includes('Tugadi'), 'renderProductsGrid displays empty stock badge and Tugadi label when stock <= 0');
+
+  // 9D. Client submitOrder toggles #checkoutSubmitBtn without referencing missing #submitBtn
+  runClientCheckoutRegression = async () => {
+    const strictClientEnv = makeMockBrowser();
+    const realGetEl = strictClientEnv.document.getElementById;
+    strictClientEnv.document.getElementById = id => {
+      if (id === 'submitBtn') throw new Error('submitBtn does not exist in client.html!');
+      return realGetEl(id);
+    };
+    strictClientEnv.Telegram = { WebApp: { ready: () => {}, expand: () => {}, initDataUnsafe: { user: { id: 999, first_name: 'Client' } } } };
+    const strictClientCtx = vm.createContext(strictClientEnv);
+    vm.runInContext(fs.readFileSync('client.js', 'utf8'), strictClientCtx);
+    await vm.runInContext(`
+      currentClient = { id: 'cl_strict_1', name: 'Test', phone: '+998901234567', address: 'Chilonzor' };
+      PRODUCTS = [{ id: 'funchoza', name: 'Funchoza', price: 25000, emoji: '🍜', unit: 'kg' }];
+      cart = { funchoza: 2 };
+      document.getElementById('orderName').value = 'Test';
+      document.getElementById('orderPhone').value = '+998901234567';
+      document.getElementById('orderAddress').value = 'Chilonzor';
+      submitOrder();
+    `, strictClientCtx);
+    assert(strictClientEnv.dom['checkoutSubmitBtn'] && strictClientEnv.dom['checkoutSubmitBtn'].disabled === false, 'Client submitOrder updates #checkoutSubmitBtn safely without accessing nonexistent #submitBtn');
+  };
+} catch (e) {
+  assert(false, 'Regression suite 9 failed', e.stack);
+}
+
 (async () => {
   await runAsyncAiTests();
+  if (typeof runClientCheckoutRegression === 'function') await runClientCheckoutRegression();
   console.log('\n====================================================');
   console.log(`📊 FINAL RESULT: ${testsPassed} PASSED, ${testsFailed} FAILED`);
   console.log('====================================================');

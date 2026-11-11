@@ -345,7 +345,7 @@ function renderProductsGrid(){
     if (isTracked) {
       const stk = roundQty(p.stock);
       const st = getProductStockStatus(p);
-      const lbl = st === 'out' ? (lang==='uz'?'Tugadi':'Нет') : `${stk} ${p.unit||'кг'}`;
+      const lbl = (st === 'empty' || st === 'out') ? (lang==='uz'?'Tugadi':'Нет') : `${stk} ${p.unit||'кг'}`;
       stockBadge = `<div class="stock-badge-mini ${st}">🏭 ${lbl}</div>`;
     }
     return `
@@ -466,6 +466,9 @@ async function submitOrder(){
 function escapeHTML(str) {
   if (!str) return '';
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function escapeAttr(str) {
+  return escapeHTML(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 async function sendToTelegram(order){
@@ -921,15 +924,15 @@ function renderDebts(){
   if(!Object.keys(byClient).length){list.innerHTML=`<div class="empty"><div class="empty-icon">✅</div><div class="empty-text">${T[lang]?.noDebts || 'Qarzlar yo\'q'}</div></div>`;return;}
   list.innerHTML=Object.entries(byClient).map(([cid,data])=>{
     const remaining=data.total-data.paid;
-    const safeName = (data.name || '').replace(/'/g, "\\'");
+    const safeCid = String(cid).replace(/[^a-zA-Z0-9_-]/g, '');
     return`<div class="debt-item">
-      <div class="debt-client">${data.name}</div>
+      <div class="debt-client">${escapeHTML(data.name)}</div>
       <div class="debt-amount">${fmt(remaining)} so'm</div>
       ${data.paid>0?`<div style="font-size:12px;color:var(--green)">✅ ${lang==='uz'?'To\'langan':'Оплачено'}: ${fmt(data.paid)} so'm</div>`:''}
       <div class="debt-meta">${lang==='uz'?'Buyurtmalar':'Заказов'}: ${data.orders.length}</div>
       <div class="debt-orders">${data.orders.map(o=>{const d=new Date(o.date);return`• ${d.toLocaleDateString('ru-RU')} — ${fmt(o.total)} so'm${o.partialPaid?` (${lang==='uz'?'qoldi':'осталось'}: ${fmt(o.total-o.partialPaid)})`:''}`}).join('<br>')}</div>
-      <button class="debt-paid-btn" onclick="markDebtPaid('${cid}')">✅ ${lang==='uz'?"To'ladi":'Оплатил'}</button>
-      <button class="debt-partial-btn" onclick="openPartialPay('${cid}',${remaining},'${safeName}')">💰 ${lang==='uz'?'Qisman to\'lov':'Частично'}</button>
+      <button class="debt-paid-btn" onclick="markDebtPaid('${safeCid}')">✅ ${lang==='uz'?"To'ladi":'Оплатил'}</button>
+      <button class="debt-partial-btn" onclick="openPartialPay('${safeCid}',${remaining})">💰 ${lang==='uz'?'Qisman to\'lov':'Частично'}</button>
     </div>`;
   }).join('');
 }
@@ -941,7 +944,8 @@ function markDebtPaid(clientId){
 }
 function openPartialPay(clientId,remaining,name){
   partialClientId=clientId;
-  document.getElementById('partialClientInfo').textContent=`${name} — ${lang==='uz'?'Qarz':'Долг'}: ${fmt(remaining)} so'm`;
+  const resolvedName = name || (state.clients || []).find(c => String(c.id) === String(clientId))?.name || (state.orders || []).find(o => String(o.clientId) === String(clientId))?.client || 'Mijoz';
+  document.getElementById('partialClientInfo').textContent=`${resolvedName} — ${lang==='uz'?'Qarz':'Долг'}: ${fmt(remaining)} so'm`;
   document.getElementById('partialAmount').value='';
   document.getElementById('partialRemaining').textContent='';
   openModal('partialPayModal');
@@ -972,9 +976,19 @@ function applyPartialPayment(){
 }
 
 // DELIVERY
-function renderDelivery(){
+function renderDelivery(customOrdersList){
   const today=new Date().toDateString();
-  const todayOrders=(state.orders || []).filter(o=>o.date && new Date(o.date).toDateString()===today);
+  let todayOrders=(state.orders || []).filter(o=>o.date && new Date(o.date).toDateString()===today);
+  if (Array.isArray(customOrdersList)) {
+    todayOrders = customOrdersList;
+  } else if (typeof adminOptimizedRoute !== 'undefined' && adminOptimizedRoute && Array.isArray(adminOptimizedRoute.sortedOrders)) {
+    const orderRank = new Map();
+    adminOptimizedRoute.sortedOrders.forEach((so, idx) => orderRank.set(String(so.id), { idx, stepNum: so.stepNum, distKm: so.distKm }));
+    todayOrders = todayOrders.map(o => {
+      const r = orderRank.get(String(o.id));
+      return r ? { ...o, stepNum: r.stepNum, distKm: r.distKm, _rank: r.idx } : { ...o, _rank: 9999 };
+    }).sort((a, b) => a._rank - b._rank);
+  }
   const total=todayOrders.length;
   const done=todayOrders.filter(o=>o.delivered || o.status === 'done').length;
   const countEl = document.getElementById('deliveryCount');
@@ -986,15 +1000,16 @@ function renderDelivery(){
   if(!total){list.innerHTML=`<div class="empty"><div class="empty-icon">🚚</div><div class="empty-text">${T[lang]?.noOrders || 'Bugun buyurtma yo\'q'}</div></div>`;return;}
   list.innerHTML=todayOrders.map((o,i)=>{
     const isDone = !!(o.delivered || o.status === 'done');
-    const oId = String(o.id || '');
-    const itemsText = (o.items || []).map(i=>`${i.emoji || '🥗'}${i.qty}${i.unit||'кг'}`).join(' ');
+    const oId = String(o.id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    const itemsText = (o.items || []).map(it=>`${it.emoji || '🥗'}${it.qty}${it.unit||'кг'}`).join(' ');
+    const distInfo = (!isDone && o.stepNum && o.distKm !== undefined) ? ` · 📍 ~${o.distKm} km` : '';
     return `
     <div class="delivery-item ${isDone?'done':''}" id="ditem-${oId}">
       ${isDone?'<div class="delivery-check">✅</div>':`<div class="delivery-num">${o.stepNum || (i+1)}</div>`}
       <div class="delivery-info">
-        <div class="delivery-client">${o.client || 'Noma\'lum mijoz'}</div>
-        <div class="delivery-details">${itemsText} · ${fmt(o.total || 0)} so'm</div>
-        ${o.phone?`<div class="delivery-details">📞 ${o.phone}</div>`:''}
+        <div class="delivery-client">${escapeHTML(o.client || 'Noma\'lum mijoz')}</div>
+        <div class="delivery-details">${itemsText} · ${fmt(o.total || 0)} so'm${distInfo}</div>
+        ${o.phone?`<div class="delivery-details">📞 ${escapeHTML(o.phone)}</div>`:''}
       </div>
       ${!isDone?`<button class="delivery-done-btn" onclick="markDelivered('${oId}')">✅ ${lang==='uz'?'Yetkazildi':'Доставлено'}</button>`:`<span style="font-size:12px;color:var(--green);font-weight:700">${lang==='uz'?'Bajarildi':'Доставлено'}</span>`}
     </div>`;
@@ -1009,6 +1024,9 @@ function resetDelivery(){
   const batch = db.batch();
   (state.orders || []).filter(o=>o.date && new Date(o.date).toDateString()===today).forEach(o=>batch.update(db.collection('orders').doc(String(o.id)), {delivered:false, status:'new'}));
   batch.commit();
+  if (typeof adminOptimizedRoute !== 'undefined') adminOptimizedRoute = null;
+  const sumBox = document.getElementById('adminRouteSummaryBox');
+  if (sumBox) sumBox.innerHTML = '';
 }
 
 // CLIENTS
@@ -1171,19 +1189,20 @@ function renderStats(){
   }
   const originalOrders = state.orders;
   state.orders = orders;
-
-  const today=new Date().toDateString();
-  const todayO=orders.filter(o=>new Date(o.date).toDateString()===today);
-  const totalRev=orders.reduce((s,o)=>s+o.total,0);
-  const todayRev=todayO.reduce((s,o)=>s+o.total,0);
-  document.getElementById('statsGrid').innerHTML=`
-    <div class="stat-card"><div class="stat-val">${orders.length}</div><div class="stat-label">${T[lang].totalOrders}</div></div>
-    <div class="stat-card"><div class="stat-val">${todayO.length}</div><div class="stat-label">${T[lang].todayOrders}</div></div>
-    <div class="stat-card"><div class="stat-val" style="font-size:16px">${fmt(totalRev)}</div><div class="stat-label">${T[lang].totalRev}</div></div>
-    <div class="stat-card"><div class="stat-val" style="font-size:16px">${fmt(todayRev)}</div><div class="stat-label">${T[lang].todayRev}</div></div>`;
-  renderAvgStats();renderWeekCompare();renderChart();renderForecast();renderTopClients();renderMonthlyReport();renderSeasonality();
-  
-  state.orders = originalOrders;
+  try {
+    const today=new Date().toDateString();
+    const todayO=orders.filter(o=>new Date(o.date).toDateString()===today);
+    const totalRev=orders.reduce((s,o)=>s+o.total,0);
+    const todayRev=todayO.reduce((s,o)=>s+o.total,0);
+    document.getElementById('statsGrid').innerHTML=`
+      <div class="stat-card"><div class="stat-val">${orders.length}</div><div class="stat-label">${T[lang].totalOrders}</div></div>
+      <div class="stat-card"><div class="stat-val">${todayO.length}</div><div class="stat-label">${T[lang].todayOrders}</div></div>
+      <div class="stat-card"><div class="stat-val" style="font-size:16px">${fmt(totalRev)}</div><div class="stat-label">${T[lang].totalRev}</div></div>
+      <div class="stat-card"><div class="stat-val" style="font-size:16px">${fmt(todayRev)}</div><div class="stat-label">${T[lang].todayRev}</div></div>`;
+    renderAvgStats();renderWeekCompare();renderChart();renderForecast();renderTopClients();renderMonthlyReport();renderSeasonality();
+  } finally {
+    state.orders = originalOrders;
+  }
 
   const ps={};
   PRODUCTS.forEach(p=>{
@@ -1853,7 +1872,7 @@ function initYandexMap(all,route){
   updateYandexMarkers(all,route);
 }
 function updateYandexMarkers(all,route){
-  if(!mapInstance)return;
+  if(!mapInstance || typeof ymaps === 'undefined')return;
   if(markersLayer && markersLayer.length){
     markersLayer.forEach(m=>mapInstance.geoObjects.remove(m));
   }
@@ -1894,8 +1913,9 @@ function saveClientCoords(){
   const lat=parseFloat(document.getElementById('coordLat').value);
   const lng=parseFloat(document.getElementById('coordLng').value);
   if(isNaN(lat)||isNaN(lng)){showToast('⚠️ Неверные координаты','error');return;}
+  c.lat=lat; c.lng=lng;
   db.collection('clients').doc(String(id)).update({lat,lng}); closeModal('coordModal');
-  if(mapInstance){updateLeafletMarkers(state.clients.filter(x=>x.lat&&x.lng),state.clients.filter(x=>x.lat&&x.lng));}
+  if(mapInstance){ renderMap(); }
   showToast('📍 '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');
 }
 function detectMyLocation(){
@@ -2514,14 +2534,14 @@ Qo'llab-quvvatlanadigan action turlari:
 1. {"type":"set_theme","vars":{"--accent":"#10b981","--bg":"#091512","--card":"#13241f"},"scope":"all"}
    - O'zgartirsa bo'ladigan CSS o'zgaruvchilar: --bg, --bg2, --card, --card2, --border, --text, --text2, --text3, --accent, --accent2, --green, --gold, --danger, --r, --r2
 2. {"type":"style_element","selector":"#submitBtn","styles":{"fontSize":"18px","padding":"18px","borderRadius":"20px","background":"#10b981","color":"#fff","fontWeight":"900"},"scope":"admin"}
-   - Keng tarqalgan selektorlar: #submitBtn, #dashQuickOrderBtn, #dashQuickWarehouseBtn, #dashQuickReportBtn, #btnSendDaySummary, #btnAddProduct, #btnWarehouseBatch, #btnWarehouseTg, .tab, .btn-primary, .btn-outline, .product-card, .wh-card, #agentSubmitBtn (scope:"agent"), #courierOptimizeBtn (scope:"courier"), #checkoutSubmitBtn (scope:"client")
+   - Keng tarqalgan selektorlar: #submitBtn, #dashQuickOrderBtn, #dashQuickWarehouseBtn, #dashQuickReportBtn, #btnOptimizeDelivery, #btnSendDaySummary, #btnAddProduct, #btnWarehouseBatch, #btnWarehouseTg, .tab, .btn-primary, .btn-outline, .product-card, .wh-card, #agentSubmitBtn (scope:"agent"), #courierOptimizeBtn (scope:"courier"), #checkoutSubmitBtn (scope:"client")
    - Barcha ilovalarga (admin, agent, courier, client) taalluqli bo'lsa "scope":"all" yozing.
 3. {"type":"rename_element","selector":".tab[data-page=\"warehouse\"]","text":"📦 Ombor","scope":"admin"}
 4. {"type":"set_visibility","selector":"#btnTemplates","visible":false,"scope":"admin"}
 5. {"type":"set_layout","target":"productGrid|tabs|global","columns":3,"fontScale":1.08,"radius":"18px","compact":false,"scope":"admin"}
 6. {"type":"reorder_tabs","order":["dashboard","warehouse","new-order","orders","debts","delivery","clients","stats","products","map","ai","settings"]}
 7. {"type":"add_custom_button","page":"dashboard|new-order|orders|warehouse","id":"btn_fast_report","label":"📊 Tezkor hisobot","action":"navigate:stats","color":"#10b981"}
-   - Ruxsat etilgan action lar: "navigate:<pageId>", "openModal:<modalId>", "call:sendDaySummary|sendWarehouseToTelegram|openWarehouseBatchModal|exportToExcel|openBroadcastModal|openPriceBroadcastModal|optimizeDeliveryOrder|undoLastUiChange", "ai:<savol>"
+   - Ruxsat etilgan action lar: "navigate:<pageId>", "openModal:<modalId>", "call:sendDaySummary|sendWarehouseToTelegram|openWarehouseBatchModal|exportToExcel|openBroadcastModal|openPriceBroadcastModal|optimizeAdminDeliveryRoute|undoLastUiChange", "ai:<savol>"
 8. {"type":"remove_custom_button","id":"btn_fast_report"}
 9. {"type":"navigate","page":"warehouse|dashboard|new-order|orders|debts|delivery|clients|stats|products|map|settings"}
 10. {"type":"reset_ui"} — hamma UI o'zgarishlarni zavod holatiga qaytaradi.
@@ -3852,8 +3872,8 @@ function buildUiContext() {
       customButtons: aiUiConfig.customButtons || []
     },
     availableSelectors: {
-      adminButtons: ['#submitBtn', '#btnHeaderAi', '#btnHeaderPending', '#btnHeaderSettings', '#btnNewClientQuick', '#btnTemplates', '#btnSaveTemplate', '#btnResetOrder', '#dashQuickOrderBtn', '#dashQuickWarehouseBtn', '#dashQuickReportBtn', '#btnSendDaySummary', '#btnAddClient', '#btnBroadcast', '#btnExportExcel', '#btnBroadcastPrice', '#btnAddProduct', '#btnWarehouseBatch', '#btnWarehouseTg', '#aiSendBtn'],
-      adminContainers: ['#productGrid', '#tabsBar', '.card', '.kpi-card', '.product-card', '.wh-card', '.btn-primary', '.btn-outline', '.tab'],
+      adminButtons: ['#submitBtn', '#btnHeaderAi', '#btnHeaderPending', '#btnHeaderSettings', '#btnNewClientQuick', '#btnTemplates', '#btnSaveTemplate', '#btnResetOrder', '#dashQuickOrderBtn', '#dashQuickWarehouseBtn', '#dashQuickReportBtn', '#btnOptimizeDelivery', '#btnSendDaySummary', '#btnAddClient', '#btnBroadcast', '#btnExportExcel', '#btnBroadcastPrice', '#btnAddProduct', '#btnWarehouseBatch', '#btnWarehouseTg', '#aiSendBtn'],
+      adminContainers: ['#productsGrid', '#tabsBar', '.card', '.kpi-card', '.product-card', '.wh-card', '.btn-primary', '.btn-outline', '.tab'],
       tabs: ['.tab[data-page="dashboard"]', '.tab[data-page="new-order"]', '.tab[data-page="orders"]', '.tab[data-page="debts"]', '.tab[data-page="delivery"]', '.tab[data-page="warehouse"]', '.tab[data-page="clients"]', '.tab[data-page="stats"]', '.tab[data-page="products"]', '.tab[data-page="map"]'],
       otherApps: ['#agentSubmitBtn (scope:"agent")', '#courierOptimizeBtn (scope:"courier")', '#btnOrder (scope:"client")', '#checkoutSubmitBtn (scope:"client")']
     }
@@ -4151,8 +4171,8 @@ function renderCustomUiButtons() {
       return;
     }
     wrap.innerHTML = pageBtns.map(b => {
-      const bg = b.color ? `background:${escapeHTML(b.color)};border-color:transparent;color:#fff;` : '';
-      return `<button class="ai-custom-btn" style="${bg}" onclick="executeCustomUiButtonAction('${escapeHTML(b.id)}')">${escapeHTML(b.label)}</button>`;
+      const bg = b.color ? `background:${escapeAttr(b.color)};border-color:transparent;color:#fff;` : '';
+      return `<button class="ai-custom-btn" style="${bg}" data-btn-id="${escapeAttr(b.id)}" onclick="executeCustomUiButtonAction(this.dataset.btnId)">${escapeHTML(b.label)}</button>`;
     }).join('');
   });
 }
@@ -4163,8 +4183,9 @@ const ALLOWED_UI_CALLS = {
   openWarehouseBatchModal: () => typeof openWarehouseBatchModal === 'function' && openWarehouseBatchModal(),
   exportToExcel: () => typeof exportToExcel === 'function' && exportToExcel(),
   openBroadcastModal: () => typeof openBroadcastModal === 'function' && openBroadcastModal(),
-  openPriceBroadcastModal: () => typeof openPriceBroadcastModal === 'function' && openPriceBroadcastModal(),
-  optimizeDeliveryOrder: () => typeof optimizeDeliveryOrder === 'function' && optimizeDeliveryOrder(),
+  openPriceBroadcastModal: () => typeof openBroadcastModal === 'function' && openBroadcastModal('pricelist'),
+  optimizeAdminDeliveryRoute: () => typeof optimizeAdminDeliveryRoute === 'function' && optimizeAdminDeliveryRoute(),
+  optimizeDeliveryOrder: () => typeof optimizeAdminDeliveryRoute === 'function' && optimizeAdminDeliveryRoute(),
   undoLastUiChange: () => undoLastUiChange(),
   openUiInspectorModal: () => openUiInspectorModal()
 };
@@ -4276,7 +4297,7 @@ function renderUiInspector() {
   el.innerHTML = rows.map(r => `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-bottom:6px;font-size:12px">
       <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHTML(r.label)}</span>
-      <button class="chip" style="margin:0;padding:3px 8px;font-size:11px;color:var(--danger)" onclick="revertSingleUiItem('${escapeHTML(r.cat)}','${escapeHTML(r.key)}')">✕</button>
+      <button class="chip" style="margin:0;padding:3px 8px;font-size:11px;color:var(--danger)" data-cat="${escapeAttr(r.cat)}" data-key="${escapeAttr(r.key)}" onclick="revertSingleUiItem(this.dataset.cat,this.dataset.key)">✕</button>
     </div>
   `).join('');
 }
