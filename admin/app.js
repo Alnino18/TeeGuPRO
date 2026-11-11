@@ -197,6 +197,7 @@ function applyLang(){
   try { if (typeof applySavedUiRenames === 'function') applySavedUiRenames(); } catch(e) {}
   try { if (typeof updateAiUiAccessButtons === 'function') updateAiUiAccessButtons(); } catch(e) {}
   try { if (typeof updateAiTtsButton === 'function') updateAiTtsButton(); } catch(e) {}
+  try { if (typeof updateAiVoiceLangButtons === 'function') updateAiVoiceLangButtons(); } catch(e) {}
   try { if (typeof updateAiRulesBadge === 'function') updateAiRulesBadge(); } catch(e) {}
 }
 function toggleLang(){lang=lang==='ru'?'uz':'ru';localStorage.setItem('lang',lang);applyLang();renderAll();}
@@ -2998,59 +2999,81 @@ function clearAiChat() {
 }
 
 function toggleVoiceInput() {
-  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRec) {
-    showToast(lang === 'uz' ? 'Brauzeringiz ovozli kiritishni qo\'llamaydi' : 'Голосовой ввод не поддерживается', 'error');
-    return;
-  }
-  
+  try { if (typeof unlockAiAudioPlayback === 'function') unlockAiAudioPlayback(); } catch (e) {}
   const micBtn = document.getElementById('aiMicBtn');
   const inputEl = document.getElementById('aiInput');
-  
+
+  if (typeof geminiMicState !== 'undefined' && geminiMicState.active && geminiMicState.mode === 'chat') {
+    if (typeof stopGeminiMicRecorder === 'function') stopGeminiMicRecorder();
+    return;
+  }
+
   if (isAiRecording) {
-    if (aiRecognition) aiRecognition.stop();
+    try { if (aiRecognition) aiRecognition.stop(); } catch (e) {}
     isAiRecording = false;
     if (micBtn) micBtn.classList.remove('recording');
     return;
   }
-  
+
+  const recLang = typeof getVoiceRecognitionLang === 'function' ? getVoiceRecognitionLang() : (lang === 'uz' ? 'uz-UZ' : 'ru-RU');
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) {
+    if (typeof startGeminiMicRecorder === 'function') {
+      startGeminiMicRecorder('chat', recLang);
+    } else {
+      showToast(lang === 'uz' ? 'Brauzeringiz ovozli kiritishni qo\'llamaydi' : 'Голосовой ввод не поддерживается', 'error');
+    }
+    return;
+  }
+
   try {
     aiRecognition = new SpeechRec();
-    aiRecognition.lang = lang === 'uz' ? 'uz-UZ' : 'ru-RU';
+    aiRecognition.lang = recLang;
     aiRecognition.interimResults = false;
     aiRecognition.maxAlternatives = 1;
-    
+    let fallbackTriggered = false;
+
     aiRecognition.onstart = function() {
       isAiRecording = true;
       if (micBtn) micBtn.classList.add('recording');
-      showToast(lang === 'uz' ? 'Gapiring...' : 'Слушаю...', 'info');
+      showToast(recLang === 'uz-UZ' ? '🇺🇿 O\'zbekcha gapiring...' : '🇷🇺 Говорите по-русски...', 'info');
     };
-    
+
     aiRecognition.onresult = function(event) {
-      const speechResult = event.results[0][0].transcript;
+      const speechResult = event && event.results && event.results[0] && event.results[0][0] ? event.results[0][0].transcript : '';
       if (speechResult && inputEl) {
         lastInputWasVoice = true;
         inputEl.value = (inputEl.value ? inputEl.value + ' ' : '') + speechResult;
         inputEl.focus();
       }
     };
-    
+
     aiRecognition.onerror = function(event) {
-      console.warn('Speech recognition error:', event.error);
+      const errCode = event && event.error ? String(event.error) : '';
+      console.warn('Speech recognition error:', errCode);
       isAiRecording = false;
       if (micBtn) micBtn.classList.remove('recording');
+      if (!fallbackTriggered && (errCode === 'language-not-supported' || errCode === 'service-not-allowed' || errCode === 'network') && typeof startGeminiMicRecorder === 'function' && typeof canUseGeminiMicRecorder === 'function' && canUseGeminiMicRecorder()) {
+        fallbackTriggered = true;
+        startGeminiMicRecorder('chat', recLang);
+      }
     };
-    
+
     aiRecognition.onend = function() {
       isAiRecording = false;
-      if (micBtn) micBtn.classList.remove('recording');
+      if (micBtn && !(typeof geminiMicState !== 'undefined' && geminiMicState.active && geminiMicState.mode === 'chat')) {
+        micBtn.classList.remove('recording');
+      }
     };
-    
+
     aiRecognition.start();
   } catch (err) {
     console.error('Speech recognition init error:', err);
     isAiRecording = false;
     if (micBtn) micBtn.classList.remove('recording');
+    if (typeof startGeminiMicRecorder === 'function' && typeof canUseGeminiMicRecorder === 'function' && canUseGeminiMicRecorder()) {
+      startGeminiMicRecorder('chat', recLang);
+    }
   }
 }
 
@@ -4701,11 +4724,80 @@ function revertSingleUiItem(cat, key) {
   showToast('↩️ Tanlangan o\'zgarish bekor qilindi', 'info');
 }
 
-// ==================== TWO-WAY VOICE ASSISTANT (TTS) ====================
+// ==================== TWO-WAY VOICE ASSISTANT (GEMINI NEURAL UZ/RU TTS + STT) ====================
 let aiAutoSpeak = false;
 try { aiAutoSpeak = localStorage.getItem('teegu_ai_auto_speak') === 'true'; } catch (e) {}
+let aiVoiceLang = 'uz-UZ';
+try {
+  const savedVL = localStorage.getItem('teegu_ai_voice_lang');
+  if (savedVL === 'uz-UZ' || savedVL === 'ru-RU' || savedVL === 'auto') aiVoiceLang = savedVL;
+} catch (e) {}
 let aiSpeakingIdx = -1;
 let lastInputWasVoice = false;
+let aiSpeechSessionId = 0;
+let aiActiveAudio = null;
+let aiSharedAudioEl = null;
+const aiTtsCache = new Map();
+const geminiMicState = { active: false, mode: null, recorder: null, stream: null, chunks: [], mimeType: 'audio/webm', recLang: 'uz-UZ' };
+
+function getVoiceRecognitionLang() {
+  if (aiVoiceLang === 'uz-UZ') return 'uz-UZ';
+  if (aiVoiceLang === 'ru-RU') return 'ru-RU';
+  return lang === 'uz' ? 'uz-UZ' : 'ru-RU';
+}
+
+function detectSpeechLanguage(text) {
+  const s = String(text || '').trim();
+  if (!s) return aiVoiceLang === 'ru-RU' ? 'ru' : (lang === 'uz' ? 'uz' : 'ru');
+  if (/[ўқғҳЎҚҒҲ]/.test(s)) return 'uz';
+  if (/\b(so'm|so‘m|soʻm|summa|bugun|ertaga|mijoz|buyurtma|qarz|qarzdor|sklad|qoldiq|mahsulot|foyda|daromad|xarajat|yo'q|kerak|tayyor|yetkazish|salom|xo'p|naqd|qisman|sotildi|jami|o'rtacha)\b/i.test(s) || /(?:o['‘’ʻ`]|g['‘’ʻ`])/i.test(s)) {
+    return 'uz';
+  }
+  const cyrCount = (s.match(/[а-яА-ЯёЁ]/g) || []).length;
+  const latCount = (s.match(/[a-zA-Z]/g) || []).length;
+  if (cyrCount > latCount && cyrCount > 2) return 'ru';
+  if (latCount > 0) return 'uz';
+  return aiVoiceLang === 'ru-RU' ? 'ru' : (lang === 'uz' ? 'uz' : 'ru');
+}
+
+function getEffectiveSpeechLang(text) {
+  const detected = detectSpeechLanguage(text);
+  if (aiVoiceLang === 'auto') return detected;
+  if (/[ўқғҳЎҚҒҲ]/.test(text || '')) return 'uz';
+  if (aiVoiceLang === 'uz-UZ') {
+    const cyrCount = (String(text || '').match(/[а-яА-ЯёЁ]/g) || []).length;
+    const latCount = (String(text || '').match(/[a-zA-Z]/g) || []).length;
+    return cyrCount > latCount * 2 && cyrCount > 6 ? 'ru' : 'uz';
+  }
+  return detected;
+}
+
+function updateAiVoiceLangButtons() {
+  const label = aiVoiceLang === 'uz-UZ'
+    ? (lang === 'uz' ? '🇺🇿 UZ Ovoz' : '🇺🇿 УЗ Голос')
+    : (aiVoiceLang === 'ru-RU'
+      ? (lang === 'uz' ? '🇷🇺 RU Ovoz' : '🇷🇺 РУ Голос')
+      : (lang === 'uz' ? '🌐 Avto Ovoz' : '🌐 Авто Голос'));
+  ['aiVoiceLangBtn', 'driveVoiceLangBtn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = label;
+    el.classList.toggle('active', aiVoiceLang === 'uz-UZ');
+  });
+}
+
+function cycleAiVoiceLang() {
+  aiVoiceLang = aiVoiceLang === 'uz-UZ' ? 'ru-RU' : (aiVoiceLang === 'ru-RU' ? 'auto' : 'uz-UZ');
+  try { localStorage.setItem('teegu_ai_voice_lang', aiVoiceLang); } catch (e) {}
+  updateAiVoiceLangButtons();
+  stopAiSpeech();
+  const msg = aiVoiceLang === 'uz-UZ'
+    ? (lang === 'uz' ? '🇺🇿 Ovoz tili: O\'zbekcha (uz-UZ)' : '🇺🇿 Язык голоса: Узбекский (uz-UZ)')
+    : (aiVoiceLang === 'ru-RU'
+      ? (lang === 'uz' ? '🇷🇺 Ovoz tili: Ruscha (ru-RU)' : '🇷🇺 Язык голоса: Русский (ru-RU)')
+      : (lang === 'uz' ? '🌐 Ovoz tili: Avtomatik' : '🌐 Язык голоса: Авто'));
+  showToast(msg, 'info');
+}
 
 function cleanTextForSpeech(rawText) {
   return String(rawText || '')
@@ -4713,12 +4805,263 @@ function cleanTextForSpeech(rawText) {
     .replace(/<<<BIZ_RULES>>>[\s\S]*?(?:<<<END_BIZ_RULES>>>|$)/g, ' ')
     .replace(/<<<SIM_SCENARIO>>>[\s\S]*?(?:<<<END_SIM_SCENARIO>>>|$)/g, ' ')
     .replace(/<<<VOICE_ORDER>>>[\s\S]*?(?:<<<END_VOICE_ORDER>>>|$)/g, ' ')
+    .replace(/\[([^\]]+)\]\(https?:\/\/[^)]+\)/g, '$1')
     .replace(/https?:\/\/\S+/g, ' ')
     .replace(/<[^>]+>/g, ' ')
+    .replace(/\|\s*[:\-]{2,}[\s|:-]*/g, ' ')
+    .replace(/[-_=]{3,}/g, ' ')
+    .replace(/[ʻ’‘]/g, "'")
     .replace(/[\*#_`~|>]/g, ' ')
     .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function latinUzbekToRussianPhonetic(text) {
+  let s = String(text || '')
+    .replace(/ў/g, 'у').replace(/Ў/g, 'У')
+    .replace(/қ/g, 'к').replace(/Қ/g, 'К')
+    .replace(/ғ/g, 'г').replace(/Ғ/g, 'Г')
+    .replace(/ҳ/g, 'х').replace(/Ҳ/g, 'Х')
+    .replace(/[ʻ’‘`]/g, "'")
+    .replace(/so'm/gi, 'сум')
+    .replace(/o'/gi, 'у')
+    .replace(/g'/gi, 'г')
+    .replace(/sh/gi, 'ш')
+    .replace(/ch/gi, 'ч')
+    .replace(/yo/gi, 'ё')
+    .replace(/yu/gi, 'ю')
+    .replace(/ya/gi, 'я')
+    .replace(/ye/gi, 'е')
+    .replace(/ng/gi, 'нг')
+    .replace(/'/g, '');
+  const map = { a:'а', b:'б', c:'к', d:'д', e:'э', f:'ф', g:'г', h:'х', i:'и', j:'дж', k:'к', l:'л', m:'м', n:'н', o:'о', p:'п', q:'к', r:'р', s:'с', t:'т', u:'у', v:'в', w:'в', x:'х', y:'й', z:'з' };
+  return s.replace(/[a-zA-Z]/g, ch => map[ch.toLowerCase()] || ch);
+}
+
+function getGeminiCandidateKeys() {
+  const keys = [];
+  const primary = typeof getGeminiApiKey === 'function' ? getGeminiApiKey() : '';
+  const defKey = typeof DEFAULT_GEMINI_API_KEY !== 'undefined' ? DEFAULT_GEMINI_API_KEY : '';
+  if (primary) keys.push(primary);
+  if (defKey && !keys.includes(defKey)) keys.push(defKey);
+  return keys;
+}
+
+function extractGeminiAudioFromResponse(data) {
+  if (!data || typeof data !== 'object') return null;
+  const steps = Array.isArray(data.steps) ? data.steps : [];
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const st = steps[i];
+    if (st && (st.type === 'model_output' || !st.type) && Array.isArray(st.content)) {
+      for (let j = st.content.length - 1; j >= 0; j--) {
+        const c = st.content[j];
+        if (c && c.type === 'audio' && c.data) {
+          return { data: c.data, mimeType: c.mime_type || 'audio/wav', sampleRate: c.sample_rate || 24000 };
+        }
+      }
+    }
+  }
+  const outputs = Array.isArray(data.outputs) ? data.outputs : [];
+  for (let j = outputs.length - 1; j >= 0; j--) {
+    const c = outputs[j];
+    if (c && c.type === 'audio' && c.data) {
+      return { data: c.data, mimeType: c.mime_type || 'audio/wav', sampleRate: c.sample_rate || 24000 };
+    }
+  }
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  for (let k = parts.length - 1; k >= 0; k--) {
+    const p = parts[k];
+    if (p && p.inlineData && p.inlineData.data) {
+      return { data: p.inlineData.data, mimeType: p.inlineData.mimeType || 'audio/wav', sampleRate: 24000 };
+    }
+  }
+  return null;
+}
+
+function extractGeminiTextFromResponse(data) {
+  if (!data || typeof data !== 'object') return '';
+  if (typeof data.output_text === 'string' && data.output_text.trim()) return data.output_text.trim();
+  const out = [];
+  (Array.isArray(data.steps) ? data.steps : []).forEach(st => {
+    if (st && (st.type === 'model_output' || !st.type) && Array.isArray(st.content)) {
+      st.content.forEach(c => { if (c && c.type === 'text' && c.text) out.push(c.text); });
+    }
+  });
+  if (out.length) return out.join(' ').trim();
+  (Array.isArray(data.outputs) ? data.outputs : []).forEach(c => {
+    if (c && c.type === 'text' && c.text) out.push(c.text);
+  });
+  if (out.length) return out.join(' ').trim();
+  return (data.candidates?.[0]?.content?.parts || []).map(p => p?.text || '').join(' ').trim();
+}
+
+function wrapPcmToWav(pcmBytes, sampleRate = 24000) {
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+  const blockAlign = numChannels * (bitsPerSample / 8);
+  const wav = new Uint8Array(44 + pcmBytes.length);
+  const view = new DataView(wav.buffer);
+  const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + pcmBytes.length, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeStr(36, 'data');
+  view.setUint32(40, pcmBytes.length, true);
+  wav.set(pcmBytes, 44);
+  return wav;
+}
+
+function buildAudioPlayableUrl(base64Data, mimeType = 'audio/wav', sampleRate = 24000) {
+  if (typeof atob === 'function' && typeof Blob !== 'undefined' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+    const bin = atob(base64Data);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const isRiff = bytes.length >= 4 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+    const finalBytes = (!isRiff && /l16|pcm/i.test(mimeType)) ? wrapPcmToWav(bytes, sampleRate) : bytes;
+    const blobType = (!isRiff && /l16|pcm/i.test(mimeType)) ? 'audio/wav' : (mimeType || 'audio/wav');
+    return { url: URL.createObjectURL(new Blob([finalBytes], { type: blobType })), isObjectUrl: true };
+  }
+  return { url: `data:${mimeType || 'audio/wav'};base64,${base64Data}`, isObjectUrl: false };
+}
+
+function unlockAiAudioPlayback() {
+  if (typeof Audio === 'undefined') return;
+  try {
+    if (!aiSharedAudioEl) aiSharedAudioEl = new Audio();
+  } catch (e) {}
+}
+
+async function synthesizeSpeechWithGemini(text, targetLang) {
+  if (typeof fetch !== 'function') return null;
+  const keys = getGeminiCandidateKeys();
+  if (!keys.length) return null;
+
+  const trimmedText = text.length > 1400 ? (text.slice(0, 1400).replace(/\s+\S*$/, '') || text.slice(0, 1400)) : text;
+  const cacheKey = `${targetLang}::${trimmedText}`;
+  if (aiTtsCache.has(cacheKey)) return aiTtsCache.get(cacheKey);
+
+  const models = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
+  const speechStyle = targetLang === 'uz'
+    ? 'Clear, natural, warm Northern Uzbek pronunciation at a steady conversational pace'
+    : 'Clear, natural, warm Russian pronunciation at a steady conversational pace';
+  const voiceName = targetLang === 'uz' ? 'Sulafat' : 'Kore';
+
+  for (const activeKey of keys) {
+    for (const model of models) {
+      let timer = null;
+      try {
+        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        if (ctrl) timer = setTimeout(() => ctrl.abort(), 18000);
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/interactions?key=${encodeURIComponent(activeKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: ctrl ? ctrl.signal : undefined,
+            body: JSON.stringify({
+              model,
+              input: [{
+                type: 'user_input',
+                content: [{
+                  type: 'text',
+                  text: trimmedText,
+                  annotations: [{ type: 'speech_metadata', style: speechStyle }]
+                }]
+              }],
+              response_format: { type: 'audio' },
+              generation_config: { speech_config: [{ voice: voiceName }] }
+            })
+          }
+        );
+        if (timer) clearTimeout(timer);
+        if (!res.ok) continue;
+        const json = await res.json();
+        const audio = extractGeminiAudioFromResponse(json);
+        if (audio && audio.data) {
+          const playable = buildAudioPlayableUrl(audio.data, audio.mimeType, audio.sampleRate);
+          if (aiTtsCache.size >= 20) {
+            const firstKey = aiTtsCache.keys().next().value;
+            const old = aiTtsCache.get(firstKey);
+            if (old && old.isObjectUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+              try { URL.revokeObjectURL(old.url); } catch (e) {}
+            }
+            aiTtsCache.delete(firstKey);
+          }
+          aiTtsCache.set(cacheKey, playable);
+          return playable;
+        }
+      } catch (e) {
+        if (timer) clearTimeout(timer);
+      }
+    }
+  }
+  return null;
+}
+
+function speakViaBrowserSpeechSynthesis(clean, targetLang, idx, sessionId) {
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
+  const Utter = typeof SpeechSynthesisUtterance !== 'undefined'
+    ? SpeechSynthesisUtterance
+    : (typeof window !== 'undefined' ? window.SpeechSynthesisUtterance : null);
+  if (!synth || typeof synth.speak !== 'function' || !Utter) {
+    if (sessionId === aiSpeechSessionId) {
+      aiSpeakingIdx = -1;
+      renderAiPage();
+      showToast(lang === 'uz' ? 'Brauzerda ovozli o\'qish mavjud emas' : 'Озвучка не поддерживается браузером', 'info');
+    }
+    return false;
+  }
+
+  try { if (typeof synth.cancel === 'function') synth.cancel(); } catch (e) {}
+  let spokenText = clean;
+  let utterLang = targetLang === 'uz' ? 'uz-UZ' : 'ru-RU';
+  let chosenVoice = null;
+  try {
+    const voices = typeof synth.getVoices === 'function' ? (synth.getVoices() || []) : [];
+    const exactUz = voices.find(v => v && v.lang && v.lang.toLowerCase().startsWith('uz'));
+    const exactRu = voices.find(v => v && v.lang && v.lang.toLowerCase().startsWith('ru'));
+    if (targetLang === 'uz') {
+      if (exactUz) {
+        chosenVoice = exactUz;
+        utterLang = exactUz.lang || 'uz-UZ';
+      } else {
+        const altTurkic = voices.find(v => v && v.lang && /^(tr|az|kk|ky)/i.test(v.lang));
+        if (altTurkic) {
+          chosenVoice = altTurkic;
+          utterLang = altTurkic.lang;
+        } else {
+          chosenVoice = exactRu || null;
+          utterLang = 'ru-RU';
+          spokenText = latinUzbekToRussianPhonetic(clean);
+        }
+      }
+    } else {
+      chosenVoice = exactRu || null;
+      utterLang = 'ru-RU';
+    }
+  } catch (e) {}
+
+  aiSpeakingIdx = idx;
+  const utter = new Utter(spokenText);
+  utter.lang = utterLang;
+  utter.rate = 1.0;
+  if (chosenVoice) utter.voice = chosenVoice;
+
+  utter.onend = () => { if (sessionId === aiSpeechSessionId) { aiSpeakingIdx = -1; renderAiPage(); } };
+  utter.onerror = () => { if (sessionId === aiSpeechSessionId) { aiSpeakingIdx = -1; renderAiPage(); } };
+  synth.speak(utter);
+  renderAiPage();
+  return true;
 }
 
 function updateAiTtsButton() {
@@ -4734,17 +5077,28 @@ function updateAiTtsButton() {
 }
 
 function toggleAiTts() {
+  try { unlockAiAudioPlayback(); } catch (e) {}
   aiAutoSpeak = !aiAutoSpeak;
   try { localStorage.setItem('teegu_ai_auto_speak', aiAutoSpeak ? 'true' : 'false'); } catch (e) {}
   updateAiTtsButton();
   if (!aiAutoSpeak) stopAiSpeech();
   showToast(aiAutoSpeak
-    ? (lang === 'uz' ? '🔊 AI ovozli javobi yoqildi' : '🔊 Голосовые ответы AI включены')
+    ? (lang === 'uz' ? '🔊 AI ovozli javobi yoqildi (O\'zbekcha Neural TTS)' : '🔊 Голосовые ответы AI включены')
     : (lang === 'uz' ? '🔇 AI ovozli javobi o\'chirildi' : '🔇 Голосовые ответы AI выключены'), 'info');
 }
 
 function stopAiSpeech() {
+  aiSpeechSessionId++;
   aiSpeakingIdx = -1;
+  try {
+    if (aiActiveAudio) {
+      aiActiveAudio.pause();
+      aiActiveAudio.currentTime = 0;
+      aiActiveAudio.onended = null;
+      aiActiveAudio.onerror = null;
+      aiActiveAudio = null;
+    }
+  } catch (e) {}
   try {
     if (typeof window !== 'undefined' && window.speechSynthesis && typeof window.speechSynthesis.cancel === 'function') {
       window.speechSynthesis.cancel();
@@ -4756,35 +5110,225 @@ function stopAiSpeech() {
 function speakAiMessage(idx) {
   const msg = Array.isArray(aiChatHistory) ? aiChatHistory[idx] : null;
   if (!msg || !msg.text) return false;
-  const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
-  const Utter = typeof SpeechSynthesisUtterance !== 'undefined'
-    ? SpeechSynthesisUtterance
-    : (typeof window !== 'undefined' ? window.SpeechSynthesisUtterance : null);
-  if (!synth || typeof synth.speak !== 'function' || !Utter) {
-    showToast(lang === 'uz' ? 'Brauzerda ovozli o\'qish mavjud emas' : 'Озвучка не поддерживается браузером', 'info');
-    return false;
-  }
   const clean = cleanTextForSpeech(msg.text);
   if (!clean) return false;
 
-  try { if (typeof synth.cancel === 'function') synth.cancel(); } catch (e) {}
-  aiSpeakingIdx = idx;
-  const utter = new Utter(clean);
-  const targetLang = lang === 'uz' ? 'uz-UZ' : 'ru-RU';
-  utter.lang = targetLang;
-  utter.rate = 1.02;
-  try {
-    const voices = typeof synth.getVoices === 'function' ? (synth.getVoices() || []) : [];
-    const exactVoice = voices.find(v => v && v.lang && v.lang.toLowerCase().startsWith(lang === 'uz' ? 'uz' : 'ru'));
-    const fallbackVoice = exactVoice || voices.find(v => v && v.lang && v.lang.toLowerCase().startsWith('ru'));
-    if (fallbackVoice) utter.voice = fallbackVoice;
-  } catch (e) {}
+  const targetLang = getEffectiveSpeechLang(clean);
+  stopAiSpeech();
+  const mySession = aiSpeechSessionId;
 
-  utter.onend = () => { aiSpeakingIdx = -1; renderAiPage(); };
-  utter.onerror = () => { aiSpeakingIdx = -1; renderAiPage(); };
-  synth.speak(utter);
+  const canUseNeuralTts = typeof Audio !== 'undefined'
+    && typeof fetch === 'function'
+    && getGeminiCandidateKeys().length > 0
+    && (typeof navigator === 'undefined' || navigator.onLine !== false);
+
+  if (!canUseNeuralTts) {
+    return speakViaBrowserSpeechSynthesis(clean, targetLang, idx, mySession);
+  }
+
+  aiSpeakingIdx = idx;
+  try { unlockAiAudioPlayback(); } catch (e) {}
+  const audioEl = aiSharedAudioEl || new Audio();
+  aiActiveAudio = audioEl;
   renderAiPage();
+
+  synthesizeSpeechWithGemini(clean, targetLang).then(playable => {
+    if (mySession !== aiSpeechSessionId) return;
+    if (!playable || !playable.url) {
+      speakViaBrowserSpeechSynthesis(clean, targetLang, idx, mySession);
+      return;
+    }
+    audioEl.src = playable.url;
+    audioEl.onended = () => {
+      if (mySession === aiSpeechSessionId) {
+        aiSpeakingIdx = -1;
+        aiActiveAudio = null;
+        renderAiPage();
+      }
+    };
+    audioEl.onerror = () => {
+      if (mySession === aiSpeechSessionId) {
+        aiActiveAudio = null;
+        speakViaBrowserSpeechSynthesis(clean, targetLang, idx, mySession);
+      }
+    };
+    const playPromise = audioEl.play();
+    if (playPromise && typeof playPromise.catch === 'function') {
+      playPromise.catch(err => {
+        if (mySession !== aiSpeechSessionId) return;
+        aiSpeakingIdx = -1;
+        aiActiveAudio = null;
+        if (err && err.name === 'NotAllowedError') {
+          renderAiPage();
+          showToast(lang === 'uz' ? '🔊 Eshitish uchun xabar ostidagi O\'qish tugmasini bosing' : '🔊 Нажмите «Читать» под сообщением', 'info');
+        } else {
+          speakViaBrowserSpeechSynthesis(clean, targetLang, idx, mySession);
+        }
+      });
+    }
+  }).catch(() => {
+    if (mySession === aiSpeechSessionId) {
+      aiActiveAudio = null;
+      speakViaBrowserSpeechSynthesis(clean, targetLang, idx, mySession);
+    }
+  });
+
   return true;
+}
+
+function canUseGeminiMicRecorder() {
+  return typeof navigator !== 'undefined'
+    && navigator.mediaDevices
+    && typeof navigator.mediaDevices.getUserMedia === 'function'
+    && typeof MediaRecorder !== 'undefined';
+}
+
+function pickSupportedAudioMimeType() {
+  if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') return '';
+  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/mp4', 'audio/aac'];
+  return candidates.find(m => MediaRecorder.isTypeSupported(m)) || '';
+}
+
+function blobToBase64Audio(blob) {
+  return new Promise((resolve, reject) => {
+    if (typeof FileReader === 'undefined') return reject(new Error('FileReader unavailable'));
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const res = String(reader.result || '');
+      const idx = res.indexOf(',');
+      resolve(idx >= 0 ? res.slice(idx + 1) : res);
+    };
+    reader.onerror = () => reject(reader.error || new Error('Read failed'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function transcribeAudioWithGemini(blob, recLang) {
+  const keys = getGeminiCandidateKeys();
+  if (!keys.length || typeof fetch !== 'function') return '';
+  const base64 = await blobToBase64Audio(blob);
+  const rawMime = String(blob.type || 'audio/webm').split(';')[0].trim().toLowerCase();
+  const mimeType = rawMime === 'audio/mp4' ? 'audio/m4a' : (rawMime || 'audio/webm');
+  const vocab = [];
+  (state.products || []).slice(0, 25).forEach(p => { if (p?.name) vocab.push(p.name); if (p?.nameUz) vocab.push(p.nameUz); });
+  (state.clients || []).slice(0, 40).forEach(c => { if (c?.name) vocab.push(c.name); });
+  vocab.push('naqd', 'klik', 'qarz', 'konsignatsiya', "so'm", 'kg');
+
+  for (const activeKey of keys) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/interactions?key=${encodeURIComponent(activeKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gemini-3.5-transcribe',
+            input: [{ type: 'audio', data: base64, mime_type: mimeType }],
+            generation_config: {
+              transcription_config: {
+                language_codes: [recLang || 'uz-UZ'],
+                custom_vocabulary: vocab.slice(0, 80),
+                mode: 'smart'
+              }
+            }
+          })
+        }
+      );
+      if (!res.ok) continue;
+      const json = await res.json();
+      const transcript = extractGeminiTextFromResponse(json);
+      if (transcript) return transcript;
+    } catch (e) {}
+  }
+  return '';
+}
+
+function stopGeminiMicRecorder() {
+  try {
+    if (geminiMicState.recorder && geminiMicState.recorder.state !== 'inactive') {
+      geminiMicState.recorder.stop();
+    }
+  } catch (e) {}
+}
+
+async function startGeminiMicRecorder(mode, recLang) {
+  if (!canUseGeminiMicRecorder()) {
+    showToast(lang === 'uz' ? 'Brauzerda mikrofon yozish qo\'llanmaydi' : 'Микрофон не поддерживается браузером', 'error');
+    return false;
+  }
+  if (geminiMicState.active) {
+    stopGeminiMicRecorder();
+    return false;
+  }
+  const targetBtn = mode === 'drive' ? document.getElementById('driveVoiceOrderBtn') : document.getElementById('aiMicBtn');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = pickSupportedAudioMimeType();
+    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    geminiMicState.active = true;
+    geminiMicState.mode = mode;
+    geminiMicState.recorder = recorder;
+    geminiMicState.stream = stream;
+    geminiMicState.chunks = [];
+    geminiMicState.mimeType = mimeType || recorder.mimeType || 'audio/webm';
+    geminiMicState.recLang = recLang || getVoiceRecognitionLang();
+
+    if (mode === 'drive') isDriveRecording = true; else isAiRecording = true;
+    if (targetBtn) targetBtn.classList.add('recording');
+    showToast(
+      geminiMicState.recLang === 'uz-UZ'
+        ? '🎙️ Yozilmoqda (O\'zbekcha)... Tugagach yana bosing'
+        : '🎙️ Запись (Русский)... Нажмите снова для отправки',
+      'info'
+    );
+
+    recorder.ondataavailable = e => {
+      if (e && e.data && e.data.size > 0) geminiMicState.chunks.push(e.data);
+    };
+    recorder.onstop = async () => {
+      const m = geminiMicState.mode;
+      const rl = geminiMicState.recLang;
+      const mt = geminiMicState.mimeType;
+      const chunks = geminiMicState.chunks.slice();
+      try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+      geminiMicState.active = false;
+      geminiMicState.mode = null;
+      geminiMicState.recorder = null;
+      geminiMicState.stream = null;
+      geminiMicState.chunks = [];
+      if (m === 'drive') isDriveRecording = false; else isAiRecording = false;
+      if (targetBtn) targetBtn.classList.remove('recording');
+      if (!chunks.length) return;
+
+      showToast(lang === 'uz' ? '⏳ Ovoz matnga aylantirilmoqda...' : '⏳ Распознаём речь...', 'info');
+      const blob = new Blob(chunks, { type: mt });
+      const text = await transcribeAudioWithGemini(blob, rl);
+      if (!text) {
+        showToast(lang === 'uz' ? 'Ovozni tushunib bo\'lmadi, qayta urinib ko\'ring' : 'Не удалось распознать речь', 'error');
+        return;
+      }
+      if (m === 'drive') {
+        const inp = document.getElementById('driveVoiceInput');
+        if (inp) inp.value = text;
+        if (typeof previewDriveVoiceText === 'function') previewDriveVoiceText(text);
+      } else {
+        const inputEl = document.getElementById('aiInput');
+        if (inputEl) {
+          lastInputWasVoice = true;
+          inputEl.value = (inputEl.value ? inputEl.value + ' ' : '') + text;
+          inputEl.focus();
+        }
+      }
+    };
+    recorder.start();
+    return true;
+  } catch (e) {
+    geminiMicState.active = false;
+    if (mode === 'drive') isDriveRecording = false; else isAiRecording = false;
+    if (targetBtn) targetBtn.classList.remove('recording');
+    showToast(lang === 'uz' ? 'Mikrofonga ruxsat berilmadi' : 'Нет доступа к микрофону', 'error');
+    return false;
+  }
 }
 
 // ==================== WHAT-IF PRICE & PROFIT SIMULATOR ====================
@@ -5706,27 +6250,41 @@ async function sendOnMyWayNotification(orderId, customEta = null) {
 }
 
 function toggleDriveVoiceOrder() {
-  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRec) {
-    showToast(lang === 'uz' ? 'Brauzerda ovozli kiritish qo\'llanmaydi — pastdagi qatorga yozing' : 'Голосовой ввод не поддерживается', 'info');
+  try { if (typeof unlockAiAudioPlayback === 'function') unlockAiAudioPlayback(); } catch (e) {}
+  const btn = document.getElementById('driveVoiceOrderBtn');
+
+  if (typeof geminiMicState !== 'undefined' && geminiMicState.active && geminiMicState.mode === 'drive') {
+    if (typeof stopGeminiMicRecorder === 'function') stopGeminiMicRecorder();
     return;
   }
-  const btn = document.getElementById('driveVoiceOrderBtn');
   if (isDriveRecording && driveVoiceRec) {
-    driveVoiceRec.stop();
+    try { driveVoiceRec.stop(); } catch (e) {}
     isDriveRecording = false;
     if (btn) btn.classList.remove('recording');
     return;
   }
+
+  const recLang = typeof getVoiceRecognitionLang === 'function' ? getVoiceRecognitionLang() : (lang === 'uz' ? 'uz-UZ' : 'ru-RU');
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) {
+    if (typeof startGeminiMicRecorder === 'function' && typeof canUseGeminiMicRecorder === 'function' && canUseGeminiMicRecorder()) {
+      startGeminiMicRecorder('drive', recLang);
+    } else {
+      showToast(lang === 'uz' ? 'Brauzerda ovozli kiritish qo\'llanmaydi — pastdagi qatorga yozing' : 'Голосовой ввод не поддерживается', 'info');
+    }
+    return;
+  }
+
   try {
     driveVoiceRec = new SpeechRec();
-    driveVoiceRec.lang = lang === 'uz' ? 'uz-UZ' : 'ru-RU';
+    driveVoiceRec.lang = recLang;
     driveVoiceRec.interimResults = false;
     driveVoiceRec.maxAlternatives = 1;
+    let fallbackTriggered = false;
     driveVoiceRec.onstart = () => {
       isDriveRecording = true;
       if (btn) btn.classList.add('recording');
-      showToast('🎤 Buyurtmani ayting...', 'info');
+      showToast(recLang === 'uz-UZ' ? '🎤 Buyurtmani o\'zbekcha ayting...' : '🎤 Назовите заказ по-русски...', 'info');
     };
     driveVoiceRec.onresult = event => {
       const txt = event?.results?.[0]?.[0]?.transcript || '';
@@ -5734,12 +6292,28 @@ function toggleDriveVoiceOrder() {
       if (inp) inp.value = txt;
       previewDriveVoiceText(txt);
     };
-    driveVoiceRec.onerror = () => { isDriveRecording = false; if (btn) btn.classList.remove('recording'); };
-    driveVoiceRec.onend = () => { isDriveRecording = false; if (btn) btn.classList.remove('recording'); };
+    driveVoiceRec.onerror = ev => {
+      const errCode = ev && ev.error ? String(ev.error) : '';
+      isDriveRecording = false;
+      if (btn) btn.classList.remove('recording');
+      if (!fallbackTriggered && (errCode === 'language-not-supported' || errCode === 'service-not-allowed' || errCode === 'network') && typeof startGeminiMicRecorder === 'function' && typeof canUseGeminiMicRecorder === 'function' && canUseGeminiMicRecorder()) {
+        fallbackTriggered = true;
+        startGeminiMicRecorder('drive', recLang);
+      }
+    };
+    driveVoiceRec.onend = () => {
+      isDriveRecording = false;
+      if (btn && !(typeof geminiMicState !== 'undefined' && geminiMicState.active && geminiMicState.mode === 'drive')) {
+        btn.classList.remove('recording');
+      }
+    };
     driveVoiceRec.start();
   } catch (e) {
     isDriveRecording = false;
     if (btn) btn.classList.remove('recording');
+    if (typeof startGeminiMicRecorder === 'function' && typeof canUseGeminiMicRecorder === 'function' && canUseGeminiMicRecorder()) {
+      startGeminiMicRecorder('drive', recLang);
+    }
   }
 }
 

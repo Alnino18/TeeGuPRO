@@ -1474,12 +1474,173 @@ try {
   assert(false, 'Logged-in Startup & Regression test suite 12 failed', e.stack);
 }
 
+// =========================================================================
+// 13. UZBEK NEURAL TTS (GEMINI 3.8 TTS), VOICE LANG SWITCH & PHONETIC FALLBACK
+// =========================================================================
+console.log('\n--- 13. Testing Uzbek Neural TTS, Voice Language Switch & Transcribe Helpers ---');
+globalThis.__runUzbekVoiceAsyncTests = async () => {
+  try {
+    const voiceEnv = makeMockBrowser();
+    voiceEnv.localStorage.setItem('lang', 'ru');
+    voiceEnv.localStorage.setItem('teegu_ai_voice_lang', 'uz-UZ');
+    voiceEnv.navigator = { onLine: true, userAgent: 'MockAgent' };
+    voiceEnv.atob = b64 => Buffer.from(b64, 'base64').toString('binary');
+    voiceEnv.btoa = bin => Buffer.from(bin, 'binary').toString('base64');
+
+    const ttsRequests = [];
+    const fakeWavB64 = Buffer.from('RIFF\x24\x00\x00\x00WAVEfmt ').toString('base64');
+    let failTtsApi = false;
+    const playedAudios = [];
+
+    voiceEnv.Audio = function() {
+      this.src = '';
+      this.currentTime = 0;
+      this.paused = true;
+      this.pause = () => { this.paused = true; };
+      this.play = () => {
+        this.paused = false;
+        playedAudios.push(this.src);
+        return Promise.resolve();
+      };
+    };
+
+    voiceEnv.fetch = async (url, opts) => {
+      const body = opts && opts.body ? JSON.parse(opts.body) : null;
+      ttsRequests.push({ url, body });
+      if (failTtsApi) return { ok: false, status: 500, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          steps: [{
+            type: 'model_output',
+            content: [{ type: 'audio', mime_type: 'audio/wav', data: fakeWavB64 }]
+          }]
+        })
+      };
+    };
+
+    const spokenFallbackUtterances = [];
+    voiceEnv.window.SpeechSynthesisUtterance = function(txt) { this.text = txt; this.lang = ''; this.rate = 1; };
+    voiceEnv.window.speechSynthesis = {
+      speak: u => spokenFallbackUtterances.push(u),
+      cancel: () => {},
+      getVoices: () => [{ lang: 'ru-RU', name: 'Russian Offline' }]
+    };
+
+    const startedRecs = [];
+    voiceEnv.window.webkitSpeechRecognition = function() {
+      this.lang = '';
+      this.start = () => { startedRecs.push({ lang: this.lang }); if (this.onstart) this.onstart(); };
+      this.stop = () => { if (this.onend) this.onend(); };
+    };
+
+    const vCtx = vm.createContext(voiceEnv);
+    const adminCode = fs.readFileSync('admin/app.js', 'utf8');
+    vm.runInContext(adminCode, vCtx);
+
+    // 13A. Language detection & cleanup
+    const detUzLat = vm.runInContext(`detectSpeechLanguage("Bugungi savdo 1 250 000 so'm, qarz yo'q")`, vCtx);
+    const detUzCyr = vm.runInContext(`detectSpeechLanguage("Бугунги савдо 1 250 000 сўм, қарз йўқ")`, vCtx);
+    const detRu = vm.runInContext(`detectSpeechLanguage("Сегодня продано на 1 250 000 сум, долгов нет")`, vCtx);
+    const cleanedTable = vm.runInContext(`cleanTextForSpeech("**Jami:** [Batafsil](https://teegu.pro) | --- | 5 kg so‘m 📊")`, vCtx);
+    assert(
+      detUzLat === 'uz' && detUzCyr === 'uz' && detRu === 'ru',
+      'detectSpeechLanguage distinguished Uzbek Latin, Uzbek Cyrillic (ў/қ/ғ/ҳ), and Russian accurately'
+    );
+    assert(
+      cleanedTable === "Jami: Batafsil 5 kg so'm",
+      'cleanTextForSpeech stripped markdown links, table separators, emojis and normalized apostrophes: ' + JSON.stringify(cleanedTable)
+    );
+
+    // 13B. Voice language pill & SpeechRecognition override even while UI is in RU mode
+    vm.runInContext(`
+      updateAiVoiceLangButtons();
+      toggleVoiceInput();
+      toggleDriveVoiceOrder();
+    `, vCtx);
+    assert(
+      voiceEnv.dom['aiVoiceLangBtn']?.textContent.includes('УЗ Голос') &&
+      voiceEnv.dom['driveVoiceLangBtn']?.textContent.includes('УЗ Голос') &&
+      startedRecs.length === 2 && startedRecs[0].lang === 'uz-UZ' && startedRecs[1].lang === 'uz-UZ',
+      'With RU UI active, voice input defaulted to uz-UZ in both AI Chat & Drive Mode and updated pills'
+    );
+
+    vm.runInContext(`cycleAiVoiceLang();`, vCtx); // uz-UZ -> ru-RU
+    const langAfter1 = vm.runInContext(`getVoiceRecognitionLang()`, vCtx);
+    vm.runInContext(`cycleAiVoiceLang();`, vCtx); // ru-RU -> auto
+    const langAfter2 = vm.runInContext(`getVoiceRecognitionLang()`, vCtx);
+    vm.runInContext(`cycleAiVoiceLang();`, vCtx); // auto -> uz-UZ
+    const langAfter3 = vm.runInContext(`getVoiceRecognitionLang()`, vCtx);
+    assert(
+      langAfter1 === 'ru-RU' && langAfter2 === 'ru-RU' && langAfter3 === 'uz-UZ' &&
+      voiceEnv.localStorage.getItem('teegu_ai_voice_lang') === 'uz-UZ',
+      'cycleAiVoiceLang cycled cleanly through uz-UZ -> ru-RU -> auto -> uz-UZ and persisted choice'
+    );
+
+    // 13C. Async Gemini 3.8 Neural TTS for Uzbek + WAV Cache hit
+    vm.runInContext(`
+      aiChatHistory = [{ role: 'bot', text: "Bugungi savdo 500 000 so'm, hammasi tayyor!", time: '14:00' }];
+      speakAiMessage(0);
+    `, vCtx);
+    await new Promise(r => setTimeout(r, 30));
+
+    assert(
+      ttsRequests.length === 1 &&
+      ttsRequests[0].url.includes('/v1beta/interactions?key=') &&
+      ttsRequests[0].body.model === 'gemini-3.8-flash-lite-tts' &&
+      ttsRequests[0].body.response_format?.type === 'audio' &&
+      ttsRequests[0].body.generation_config?.speech_config?.[0]?.voice === 'Sulafat' &&
+      ttsRequests[0].body.input?.[0]?.content?.[0]?.annotations?.[0]?.style?.includes('Northern Uzbek') &&
+      playedAudios.length === 1 && (playedAudios[0].startsWith('blob:') || playedAudios[0].startsWith('data:audio/wav;base64,')),
+      'speakAiMessage used Gemini gemini-3.8-flash-lite-tts Interactions API for Uzbek WAV speech'
+    );
+
+    // Replay same message -> must hit cache with 0 new fetch calls
+    vm.runInContext(`speakAiMessage(0);`, vCtx);
+    await new Promise(r => setTimeout(r, 20));
+    assert(
+      ttsRequests.length === 1 && playedAudios.length === 2,
+      'Replaying spoken Uzbek message reused aiTtsCache cleanly with 0 duplicate API calls'
+    );
+
+    // 13D. Offline / API error fallback -> phonetic Cyrillic when browser lacks uz-UZ voice
+    failTtsApi = true;
+    vm.runInContext(`
+      aiChatHistory.push({ role: 'bot', text: "Qarz yo'q, bugun qancha foyda?", time: '14:05' });
+      speakAiMessage(1);
+    `, vCtx);
+    await new Promise(r => setTimeout(r, 30));
+    const fallbackTxt = spokenFallbackUtterances[0]?.text || '';
+    assert(
+      spokenFallbackUtterances.length === 1 &&
+      spokenFallbackUtterances[0].lang === 'ru-RU' &&
+      !/[a-zA-Z]/.test(fallbackTxt) &&
+      fallbackTxt.includes('карз'),
+      'Offline/API-failure browser fallback transliterated Uzbek Latin into phonetic Cyrillic for ru-RU voice: ' + JSON.stringify(fallbackTxt)
+    );
+
+    // 13E. stopAiSpeech resets speaking index & pauses audio + PCM WAV & Transcribe extractors
+    vm.runInContext(`stopAiSpeech();`, vCtx);
+    const spkIdxAfterStop = vm.runInContext(`aiSpeakingIdx`, vCtx);
+    const wavBytesLen = vm.runInContext(`wrapPcmToWav(new Uint8Array([1, 2, 3, 4]), 24000).length`, vCtx);
+    const parsedTr = vm.runInContext(`extractGeminiTextFromResponse({ steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Alfraganus 5 kg funchoza' }] }] })`, vCtx);
+    assert(
+      spkIdxAfterStop === -1 && wavBytesLen === 48 && parsedTr === 'Alfraganus 5 kg funchoza',
+      'stopAiSpeech, wrapPcmToWav (44-byte RIFF header) & extractGeminiTextFromResponse worked cleanly'
+    );
+  } catch (e) {
+    assert(false, 'Uzbek Neural TTS async suite 13 failed', e.stack);
+  }
+};
+
 (async () => {
   await runAsyncAiTests();
   if (typeof runClientCheckoutRegression === 'function') await runClientCheckoutRegression();
   if (typeof globalThis.__runAdminRulesTest === 'function') await globalThis.__runAdminRulesTest();
   if (typeof globalThis.__runClientRulesTest === 'function') await globalThis.__runClientRulesTest();
   if (typeof globalThis.__runDriveModeAsyncTests === 'function') await globalThis.__runDriveModeAsyncTests();
+  if (typeof globalThis.__runUzbekVoiceAsyncTests === 'function') await globalThis.__runUzbekVoiceAsyncTests();
   console.log('\n====================================================');
   console.log(`📊 FINAL RESULT: ${testsPassed} PASSED, ${testsFailed} FAILED`);
   console.log('====================================================');
