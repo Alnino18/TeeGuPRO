@@ -1,6 +1,6 @@
 
 function isDebtOrder(o) {
-  if (!o) return false;
+  if (!o || o.status === 'cancelled') return false;
   const p = (o.payment || '').toLowerCase();
   return (p === 'консигнация' || p === 'qarz' || p === 'nasiya' || p === 'долг') && !o.debtPaid;
 }
@@ -83,95 +83,98 @@ let state={
   templates: [],
   couriers: [],
   agents: [],
-  quantities:{},selectedPayment:'наличные',currentOrderId:null,dateFilter:'all',
+  quantities:{},selectedPayment:'наличные',currentOrderId:null,dateFilter:'today',
 };
 
-// Real-time Listeners
-db.collection('products').onSnapshot(snap => {
-  if (snap.empty) {
-    PRODUCTS = DEFAULT_PRODUCTS;
-    const batch = db.batch();
-    PRODUCTS.forEach(p => batch.set(db.collection('products').doc(String(p.id)), p));
-    batch.commit();
-  } else {
-    PRODUCTS = snap.docs.map(d => d.data());
-  }
-  renderProductsGrid(); renderProductsSettings();
-  try { renderWarehouse(); } catch(e) {}
-  try { updateWarehouseBadge(); } catch(e) {}
-  try { renderDashboard(); } catch(e) {}
-});
+// Real-time Listeners (started after authentication and script init)
+let realtimeListenersStarted = false;
+function startRealtimeListeners() {
+  if (realtimeListenersStarted) return;
+  realtimeListenersStarted = true;
 
-db.collection('clients').onSnapshot(snap => {
-  state.clients = snap.docs.map(d => {
-    const data = d.data();
-    if (!data.id) data.id = d.id;
-    return data;
+  db.collection('products').onSnapshot(snap => {
+    if (snap.empty) {
+      PRODUCTS = DEFAULT_PRODUCTS;
+      const batch = db.batch();
+      PRODUCTS.forEach(p => batch.set(db.collection('products').doc(String(p.id)), p));
+      batch.commit().catch(()=>{});
+    } else {
+      PRODUCTS = snap.docs.map(d => d.data()).filter(Boolean).sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+    }
+    try { renderProductsGrid(); } catch(e) { console.error(e); }
+    try { renderProductsSettings(); } catch(e) { console.error(e); }
+    try { renderWarehouse(); } catch(e) { console.error(e); }
+    try { updateWarehouseBadge(); } catch(e) {}
+    try { renderDashboard(); } catch(e) { console.error(e); }
+  }, err => console.warn('products snapshot warn:', err));
+
+  db.collection('clients').onSnapshot(snap => {
+    state.clients = snap.docs.map(d => {
+      const data = d.data();
+      if (!data.id) data.id = d.id;
+      return data;
+    });
+    try { populateClientSelect(); } catch(e) { console.error("populateClientSelect error:", e); }
+    try { renderClientsList(); } catch(e) { console.error("renderClientsList error:", e); }
+    try { renderDashboard(); } catch(e) { console.error("renderDashboard error:", e); }
   });
-  try { populateClientSelect(); } catch(e) { console.error("populateClientSelect error:", e); }
-  try { renderClientsList(); } catch(e) { console.error("renderClientsList error:", e); }
-  try { renderDashboard(); } catch(e) { console.error("renderDashboard error:", e); }
-});
 
+  db.collection('orders').onSnapshot(snap => {
+    isOrdersLoaded = true;
+    state.orders = snap.docs.map(d => {
+      const data = d.data();
+      if (!data.id) data.id = d.id;
+      return data;
+    }).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+    try { renderOrdersList(); } catch(e) { console.error("renderOrdersList error:", e); }
+    try { renderClientsList(); } catch(e) { console.error("renderClientsList error:", e); }
+    try { renderStats(); } catch(e) { console.error("renderStats error:", e); }
+    try { renderDebts(); } catch(e) { console.error("renderDebts error:", e); }
+    try { renderDelivery(); } catch(e) { console.error("renderDelivery error:", e); }
+    try { renderWarehouse(); } catch(e) {}
+    try { renderFavorites(); } catch(e) { console.error("renderFavorites error:", e); }
+    try { renderDashboard(); } catch(e) { console.error("renderDashboard error:", e); }
+    try { updateBadges(); } catch(e) { console.error("updateBadges error:", e); }
+    try { if (typeof checkAutoDailySummary === 'function') checkAutoDailySummary(); } catch(e) {}
+  });
+
+  db.collection('settings').doc('main').onSnapshot(snap => {
+    if (snap.exists) {
+      state.settings = snap.data();
+      loadSettings();
+      try {
+        if (state.settings.uiConfig && typeof syncUiConfigFromRemote === 'function') {
+          syncUiConfigFromRemote(state.settings.uiConfig);
+        }
+        if (Array.isArray(state.settings.businessRules) && typeof syncBusinessRulesFromRemote === 'function') {
+          syncBusinessRulesFromRemote(state.settings.businessRules);
+        }
+        if (typeof renderWarehouseLogs === 'function') renderWarehouseLogs();
+      } catch(e) { console.warn("Remote settings sync warning:", e); }
+    }
+  });
+
+  db.collection('couriers').onSnapshot(snap => {
+    state.couriers = snap.docs.map(d => d.data());
+    try { renderCouriersSettings(); populateCourierSelects(); } catch(e) {}
+  });
+
+  db.collection('agents').onSnapshot(snap => {
+    state.agents = snap.docs.map(d => d.data());
+    try { renderAgentsSettings(); } catch(e) {}
+  });
+
+  db.collection('templates').onSnapshot(snap => {
+    state.templates = snap.docs.map(d => d.data());
+    try { renderTemplates(); } catch(e) {}
+  });
+}
 let isOrdersLoaded = false;
-db.collection('orders').onSnapshot(snap => {
-  isOrdersLoaded = true;
-  state.orders = snap.docs.map(d => {
-    const data = d.data();
-    if (!data.id) data.id = d.id;
-    return data;
-  }).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-  try { renderOrdersList(); } catch(e) { console.error("renderOrdersList error:", e); }
-  try { renderClientsList(); } catch(e) { console.error("renderClientsList error:", e); }
-  try { renderStats(); } catch(e) { console.error("renderStats error:", e); }
-  try { renderDebts(); } catch(e) { console.error("renderDebts error:", e); }
-  try { renderDelivery(); } catch(e) { console.error("renderDelivery error:", e); }
-  try { renderWarehouse(); } catch(e) {}
-  try { renderFavorites(); } catch(e) { console.error("renderFavorites error:", e); }
-  try { renderDashboard(); } catch(e) { console.error("renderDashboard error:", e); }
-  try { updateBadges(); } catch(e) { console.error("updateBadges error:", e); }
-  try { if (typeof checkAutoDailySummary === 'function') checkAutoDailySummary(); } catch(e) {}
-});
-
-db.collection('settings').doc('main').onSnapshot(snap => {
-  if (snap.exists) {
-    state.settings = snap.data();
-    loadSettings();
-    try {
-      if (state.settings.uiConfig && typeof syncUiConfigFromRemote === 'function') {
-        syncUiConfigFromRemote(state.settings.uiConfig);
-      }
-      if (Array.isArray(state.settings.businessRules) && typeof syncBusinessRulesFromRemote === 'function') {
-        syncBusinessRulesFromRemote(state.settings.businessRules);
-      }
-      if (typeof renderWarehouseLogs === 'function') renderWarehouseLogs();
-    } catch(e) { console.warn("Remote settings sync warning:", e); }
-  }
-});
-
-db.collection('couriers').onSnapshot(snap => {
-  state.couriers = snap.docs.map(d => d.data());
-  renderCouriersSettings(); populateCourierSelects();
-});
-
-db.collection('agents').onSnapshot(snap => {
-  state.agents = snap.docs.map(d => d.data());
-  renderAgentsSettings();
-});
-
-db.collection('templates').onSnapshot(snap => {
-  state.templates = snap.docs.map(d => d.data());
-  renderTemplates();
-});
 
 function saveProducts() {
   const batch = db.batch();
   PRODUCTS.forEach(p => batch.set(db.collection('products').doc(String(p.id)), p));
-  batch.commit();
-}
-
-function save() {
-  // Legacy save function, now handled by direct Firestore writes
+  batch.commit().catch(()=>{});
 }
 
 
@@ -186,66 +189,84 @@ const T={
 };
 
 function applyLang(){
-  document.getElementById('langBtn').textContent=lang==='ru'?'UZ':'RU';
-  document.getElementById('headerSub').textContent=T[lang].headerSub;
+  const lb = document.getElementById('langBtn');
+  if (lb) lb.textContent=lang==='ru'?'UZ':'RU';
+  const hs = document.getElementById('headerSub');
+  if (hs) hs.textContent=T[lang].headerSub;
   document.querySelectorAll('.t').forEach(el=>{const v=el.dataset[lang];if(v)el.textContent=v;});
   try { if (typeof applySavedUiRenames === 'function') applySavedUiRenames(); } catch(e) {}
+  try { if (typeof updateAiUiAccessButtons === 'function') updateAiUiAccessButtons(); } catch(e) {}
+  try { if (typeof updateAiTtsButton === 'function') updateAiTtsButton(); } catch(e) {}
+  try { if (typeof updateAiRulesBadge === 'function') updateAiRulesBadge(); } catch(e) {}
 }
 function toggleLang(){lang=lang==='ru'?'uz':'ru';localStorage.setItem('lang',lang);applyLang();renderAll();}
-function renderAll(){renderProductsGrid();renderOrdersList();renderClientsList();renderStats();renderDebts();renderDelivery();renderWarehouse();renderFavorites();renderDashboard();try{renderCustomUiButtons();}catch(e){}}
+function renderAll(){
+  const tasks=[renderProductsGrid,renderOrdersList,renderClientsList,renderStats,renderDebts,renderDelivery,renderWarehouse,renderFavorites,renderDashboard,()=>typeof renderAiPage==='function'&&renderAiPage(),()=>typeof renderCustomUiButtons==='function'&&renderCustomUiButtons()];
+  tasks.forEach(fn=>{try{fn();}catch(e){console.warn('renderAll warn:',e);}});
+}
 
 function printOrder(id) {
   const o = state.orders.find(x => x.id == id);
   if(!o) return;
   const d = new Date(o.date);
-  const ds = d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
+  const ds = isNaN(d.getTime()) ? '—' : (d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'}));
   let html = `<div style="text-align:center; font-size:18px; font-weight:bold; border-bottom:1px dashed #000; padding-bottom:10px; margin-bottom:10px;">
     🥗 TeeGu.PRO
   </div>
   <div style="margin-bottom:10px;">
-    <b>Чек:</b> #${o.id.toString().slice(-4)}<br>
+    <b>Чек:</b> #${String(o.id||'').slice(-4)}<br>
     <b>Дата:</b> ${ds}<br>
-    <b>Клиент:</b> ${o.client}<br>
-    ${o.phone ? `<b>Тел:</b> ${o.phone}<br>` : ''}
-    ${o.address ? `<b>Адрес:</b> ${o.address}<br>` : ''}
-    ${o.courier ? `<b>Курьер:</b> ${o.courier}<br>` : ''}
+    <b>Клиент:</b> ${escapeHTML(o.client||'')}<br>
+    ${o.phone ? `<b>Тел:</b> ${escapeHTML(o.phone)}<br>` : ''}
+    ${o.address ? `<b>Адрес:</b> ${escapeHTML(o.address)}<br>` : ''}
+    ${o.courier ? `<b>Курьер:</b> ${escapeHTML(o.courier)}<br>` : ''}
   </div>
   <table style="width:100%; border-collapse:collapse; margin-bottom:10px;">
     <tr style="border-bottom:1px solid #000;"><th style="text-align:left">Наим.</th><th style="text-align:right">Кол</th><th style="text-align:right">Сумма</th></tr>`;
   
-  o.items.forEach(i => {
-    html += `<tr><td style="padding:2px 0;">${i.name}</td><td style="text-align:right">${i.qty}${i.unit||'кг'}</td><td style="text-align:right">${fmt(i.qty*i.price)}</td></tr>`;
+  (o.items || []).forEach(i => {
+    html += `<tr><td style="padding:2px 0;">${escapeHTML(i.name||i.nameUz||'')}</td><td style="text-align:right">${i.qty}${escapeHTML(i.unit||'кг')}</td><td style="text-align:right">${fmt((Number(i.qty)||0)*(Number(i.price)||0))}</td></tr>`;
   });
   
   html += `</table>
   <div style="font-size:16px; font-weight:bold; border-top:1px dashed #000; padding-top:10px; margin-bottom:10px;">
-    ИТОГО: ${fmt(o.total)} сум
+    ИТОГО: ${fmt(Number(o.total)||0)} сум
   </div>
   <div style="text-align:center; font-size:12px; font-style:italic;">
     Спасибо за покупку!<br>
-    ${state.settings.phone ? 'Тел: ' + state.settings.phone : ''}
+    ${state.settings.phone ? 'Тел: ' + escapeHTML(state.settings.phone) : ''}
   </div>`;
   
-  document.getElementById('print-area').innerHTML = html;
+  const pa = document.getElementById('print-area');
+  if (pa) pa.innerHTML = html;
   window.print();
 }
 
 // INIT
 function startApp(){
+  try { startRealtimeListeners(); } catch(e) { console.error("listeners err:", e); }
   try { initAiUiController(); } catch(e) { console.warn("AI UI init warn:", e); }
   try { loadBusinessRules(); updateAiTtsButton(); } catch(e) {}
-  applyTheme();applyLang();
-  renderProductsGrid();populateClientSelect();renderClientsList();
-  renderOrdersList();renderStats();renderDebts();renderDelivery();renderWarehouse();renderFavorites();
-  loadSettings();updateBadges();renderProductsSettings(); renderCouriersSettings(); populateCourierSelects();
-  document.getElementById('partialAmount').addEventListener('input',updatePartialRemaining);
-  renderDashboard();
+  try { applyTheme(); applyLang(); } catch(e) { console.warn("Theme/lang warn:", e); }
+  try { renderProductsGrid(); } catch(e) { console.error("renderProductsGrid err:", e); }
+  try { populateClientSelect(); renderClientsList(); } catch(e) { console.error("clients init err:", e); }
+  try { renderOrdersList(); } catch(e) { console.error("renderOrdersList err:", e); }
+  try { renderStats(); } catch(e) { console.error("renderStats err:", e); }
+  try { renderDebts(); } catch(e) { console.error("renderDebts err:", e); }
+  try { renderDelivery(); } catch(e) { console.error("renderDelivery err:", e); }
+  try { renderWarehouse(); } catch(e) { console.error("renderWarehouse err:", e); }
+  try { renderFavorites(); } catch(e) { console.error("renderFavorites err:", e); }
+  try { loadSettings(); updateBadges(); renderProductsSettings(); renderCouriersSettings(); populateCourierSelects(); } catch(e) { console.error("settings/badges err:", e); }
+  const partialEl = document.getElementById('partialAmount');
+  if (partialEl) partialEl.addEventListener('input', updatePartialRemaining);
+  try { renderDashboard(); } catch(e) { console.error("renderDashboard err:", e); }
+  try { if (typeof renderAiPage === 'function') renderAiPage(); } catch(e) {}
   try { updateWarehouseBadge(); renderCustomUiButtons(); } catch(e) {}
-  setupOfflineSync();
+  try { setupOfflineSync(); } catch(e) {}
   // Telegram Mini App init
   if(window.Telegram?.WebApp){window.Telegram.WebApp.ready();window.Telegram.WebApp.expand();}
   // Live dashboard refresh every 60s
-  setInterval(()=>{if(document.getElementById('page-dashboard').classList.contains('active'))renderDashboard();},60000);
+  setInterval(()=>{const pg=document.getElementById('page-dashboard');if(pg&&pg.classList.contains('active'))renderDashboard();},60000);
 }
 function init(){
   startApp();
@@ -354,7 +375,7 @@ function renderProductsGrid(){
     }
     return `
     <div class="product-card" id="pc-${p.id}">
-      <div class="product-name">${p.emoji} ${lang==='uz'?p.nameUz:p.name}</div>
+      <div class="product-name">${p.emoji || '🥗'} ${lang==='uz'?(p.nameUz||p.name||''):(p.name||p.nameUz||'')}</div>
       <div class="product-price">${fmt(price)} / ${p.unit||'кг'} ${client && client.customPrices && client.customPrices[p.id] ? '<span style="color:var(--orange)">★</span>' : ''}</div>
       ${stockBadge}
       <div class="product-qty">
@@ -369,19 +390,22 @@ function changeQty(id,delta){
   const isUnit=p&&p.unit==='шт';
   const n=isUnit?Math.max(0,Math.round((state.quantities[id]||0)+delta)):Math.max(0,Math.round(((state.quantities[id]||0)+delta)*10)/10);
   state.quantities[id]=n;
-  document.getElementById('qty-'+id).textContent=n;
-  document.getElementById('pc-'+id).classList.toggle('selected',n>0);
+  const qtyEl=document.getElementById('qty-'+id);
+  if(qtyEl)qtyEl.textContent=n;
+  const pcEl=document.getElementById('pc-'+id);
+  if(pcEl&&pcEl.classList)pcEl.classList.toggle('selected',n>0);
   updateSummary();
 }
 function updateSummary(){
   const items=getOrderItems();
   const block=document.getElementById('summaryBlock');
-  if(!items.length){block.style.display='none';return;}
-  block.style.display='block';
+  if(!items.length){if(block)block.style.display='none';return;}
+  if(block)block.style.display='block';
   let total=0,html='';
-  items.forEach(i=>{const sub=i.qty*i.price;total+=sub;const u=i.unit||'кг';html+=`<div class="summary-row"><span class="summary-name">${i.emoji} ${lang==='uz'?i.nameUz:i.name}</span><span><span class="summary-qty">${i.qty} ${u}</span><span class="summary-price"> · ${fmt(sub)}</span></span></div>`;});
+  items.forEach(i=>{const sub=i.qty*i.price;total+=sub;const u=i.unit||'кг';html+=`<div class="summary-row"><span class="summary-name">${i.emoji||'🥗'} ${lang==='uz'?(i.nameUz||i.name||''):(i.name||i.nameUz||'')}</span><span><span class="summary-qty">${i.qty} ${u}</span><span class="summary-price"> · ${fmt(sub)}</span></span></div>`;});
   html+=`<div class="total-row"><span class="total-label">${lang==='uz'?'Jami:':'Итого:'}</span><span class="total-amount">${fmt(total)} so'm</span></div>`;
-  document.getElementById('orderSummary').innerHTML=html;
+  const sumEl=document.getElementById('orderSummary');
+  if(sumEl)sumEl.innerHTML=html;
 }
 function getOrderItems(){
   const clientId = document.getElementById('clientSelect')?.value;
@@ -434,12 +458,15 @@ function commitAdminOrderAndStock(order, client, ruleCheck = {}) {
 }
 
 // SUBMIT
+let isOrderSubmitting = false;
 async function submitOrder(){
+  if (isOrderSubmitting) return;
   const clientId=document.getElementById('clientSelect').value;
   if(!clientId){showToast('⚠️ '+(lang==='uz'?'Mijozni tanlang':'Выберите клиента'),'error');return;}
   const items=getOrderItems();
   if(!items.length){showToast('⚠️ '+(lang==='uz'?'Mahsulot qo\'shing':'Добавьте продукт'),'error');return;}
   const client=state.clients.find(c=>c.id==clientId);
+  if(!client){showToast('⚠️ '+(lang==='uz'?'Mijoz topilmadi':'Клиент не найден'),'error');return;}
   const ruleCheck = typeof evaluateOrderBusinessRules === 'function'
     ? evaluateOrderBusinessRules({ clientId: client?.id, clientName: client?.name, items, payment: state.selectedPayment, rules: aiBusinessRules, orders: state.orders })
     : { blocked: false, errors: [], largeOrderAlertKg: null };
@@ -447,34 +474,43 @@ async function submitOrder(){
     showToast('🚫 ' + ruleCheck.errors[0], 'error');
     return;
   }
-  const selectedCourier = document.getElementById('orderCourier')?.value || '';
-  const order={
-    id:Date.now(),date:new Date().toISOString(),
-    client:client.name,clientId:client.id,
-    phone:document.getElementById('clientPhone').value||client.phone||'',
-    type:document.getElementById('clientType').value,
-    items,total:getTotal(),payment:state.selectedPayment,
-    note:document.getElementById('orderNote').value,
-    sent:false,sentSheets:false,
-    debtPaid:state.selectedPayment!=='консигнация',
-    partialPaid:0,
-    delivered:false,
-    courier:selectedCourier,
-    status:selectedCourier?'delivering':'new',
-    stockDeducted:true
-  };
-  
-  commitAdminOrderAndStock(order, client, ruleCheck);
-  
-  const btn=document.getElementById('submitBtn');btn.innerHTML='<div class="spinner"></div>';btn.disabled=true;
-  let tgOk=false;
-  try{tgOk=await sendToTelegram(order);}catch(e){}
-  
-  if(tgOk) { order.sent=true; db.collection('orders').doc(String(order.id)).update({sent: true}); }
-  btn.innerHTML='✅ <span class="t" data-ru="Оформить заказ" data-uz="Buyurtmani rasmiylashtirish">'+(lang==='uz'?'Buyurtmani rasmiylashtirish':'Оформить заказ')+'</span>';btn.disabled=false;
-  try { if (typeof applySavedUiRenames === 'function') applySavedUiRenames(); } catch(e) {}
-  showToast(tgOk?'✅ '+(lang==='uz'?'Yuborildi':'Отправлено'):'⚠️ Локально',tgOk?'success':'info');
-  resetOrder();updateBadges();renderFavorites();
+  isOrderSubmitting = true;
+  const btn=document.getElementById('submitBtn');
+  if(btn){btn.innerHTML='<div class="spinner"></div>';btn.disabled=true;}
+  try {
+    const selectedCourier = document.getElementById('orderCourier')?.value || '';
+    const order={
+      id:Date.now(),date:new Date().toISOString(),
+      client:client.name,clientId:client.id,
+      phone:document.getElementById('clientPhone').value||client.phone||'',
+      type:document.getElementById('clientType').value,
+      items,total:getTotal(),payment:state.selectedPayment,
+      note:document.getElementById('orderNote').value,
+      sent:false,sentSheets:false,
+      debtPaid:!['консигнация','qarz','nasiya','долг'].includes((state.selectedPayment||'').toLowerCase()),
+      partialPaid:0,
+      delivered:false,
+      courier:selectedCourier,
+      status:selectedCourier?'delivering':'new',
+      stockDeducted:true
+    };
+
+    commitAdminOrderAndStock(order, client, ruleCheck);
+
+    let tgOk=false;
+    try{tgOk=await sendToTelegram(order);}catch(e){}
+
+    if(tgOk) { order.sent=true; db.collection('orders').doc(String(order.id)).update({sent: true}).catch(()=>{}); }
+    try { if (typeof applySavedUiRenames === 'function') applySavedUiRenames(); } catch(e) {}
+    showToast(tgOk?'✅ '+(lang==='uz'?'Yuborildi':'Отправлено'):'⚠️ Локально',tgOk?'success':'info');
+    resetOrder();updateBadges();renderFavorites();
+  } finally {
+    isOrderSubmitting = false;
+    if(btn){
+      btn.innerHTML='✅ <span class="t" data-ru="Оформить заказ" data-uz="Buyurtmani rasmiylashtirish">'+(lang==='uz'?'Buyurtmani rasmiylashtirish':'Оформить заказ')+'</span>';
+      btn.disabled=false;
+    }
+  }
 }
 
 // TELEGRAM
@@ -502,12 +538,12 @@ async function sendToTelegram(order){
 function buildTgMsg(order){
   const pi={'наличные':'💵','клик':'📱','консигнация':'📝','Naqd':'💵','Karta':'📱','Qarz':'📝'};
   const d=new Date(order.date);
-  const ds=d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+  const ds=isNaN(d.getTime())?'—':(d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}));
   let l=[`🥗 <b>НОВЫЙ ЗАКАЗ</b>`,``,`👤 <b>${escapeHTML(order.client)}</b>`];
   if(order.phone)l.push(`📞 ${escapeHTML(order.phone)}`);
   l.push(``,'📦 <b>Заказ:</b>');
-  order.items.forEach((i,n)=>l.push(`  ${n+1}. ${i.emoji||''} ${escapeHTML(i.name)} — <b>${i.qty}${escapeHTML(i.unit||'кг')}</b> (${fmt(i.qty*i.price)} so'm)`));
-  l.push(``,`💰 <b>Итого: ${fmt(order.total)} so'm</b>`,`${pi[order.payment]||'💳'} ${escapeHTML(order.payment)}`);
+  (order.items||[]).forEach((i,n)=>l.push(`  ${n+1}. ${i.emoji||''} ${escapeHTML(i.name||i.nameUz||'')} — <b>${i.qty}${escapeHTML(i.unit||'кг')}</b> (${fmt((Number(i.qty)||0)*(Number(i.price)||0))} so'm)`));
+  l.push(``,`💰 <b>Итого: ${fmt(Number(order.total)||0)} so'm</b>`,`${pi[order.payment]||'💳'} ${escapeHTML(order.payment)}`);
   if(order.note)l.push(`📝 ${escapeHTML(order.note)}`);
   l.push(``,`🕐 ${ds}`);
   return l.join('\n');
@@ -606,9 +642,11 @@ async function checkAutoDailySummary() {
 setInterval(checkAutoDailySummary, 30000);
 
 // ORDERS LIST
+let ordersDisplayLimit = 60;
+function loadMoreOrders(){ ordersDisplayLimit += 60; renderOrdersList(document.getElementById('ordersSearch')?.value || '', state.dateFilter); }
 function renderOrdersList(filterText='',dateFilter=state.dateFilter){
   state.dateFilter=dateFilter;
-  let orders=[...state.orders];
+  let orders=(state.orders || []).filter(Boolean);
   if(filterText) {
     const q = filterText.toLowerCase();
     orders = orders.filter(o => 
@@ -620,14 +658,15 @@ function renderOrdersList(filterText='',dateFilter=state.dateFilter){
   }
   const now=new Date();
   if(dateFilter==='today'){
-    orders=orders.filter(o=>o.date && new Date(o.date).toDateString()===now.toDateString());
+    orders=orders.filter(o=>{if(!o.date)return false;const d=new Date(o.date);return !isNaN(d.getTime())&&d.toDateString()===now.toDateString();});
   } else if(dateFilter==='week'){
     const w=new Date(now.getTime() - 7*86400000);
-    orders=orders.filter(o=>o.date && new Date(o.date) >= w);
+    orders=orders.filter(o=>{if(!o.date)return false;const d=new Date(o.date);return !isNaN(d.getTime())&&d>=w;});
   } else if(dateFilter && dateFilter.match(/^\d{4}-\d{2}-\d{2}$/)){
     orders = orders.filter(o => {
       if(!o.date) return false;
       const d = new Date(o.date);
+      if(isNaN(d.getTime())) return false;
       const iso = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
       return iso === dateFilter;
     });
@@ -638,22 +677,25 @@ function renderOrdersList(filterText='',dateFilter=state.dateFilter){
     list.innerHTML=`<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">${T[lang]?.noOrders || 'Buyurtmalar yo\'q'}</div></div>`;
     return;
   }
+  const visibleOrders = (!filterText && dateFilter === 'all' && orders.length > ordersDisplayLimit)
+    ? orders.slice(0, ordersDisplayLimit)
+    : orders;
   const pi={'наличные':'💵','клик':'📱','консигнация':'📝','Naqd':'💵','Karta':'💳','Qarz':'📝','карта':'💳'};
   const pc={'наличные':'','клик':'click','консигнация':'consign','Naqd':'','Karta':'click','Qarz':'consign','карта':'click'};
-  list.innerHTML=orders.map(o=>{
+  const cardsHtml = visibleOrders.map(o=>{
     if(!o) return '';
     const d=new Date(o.date || 0);
-    const ds=d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+    const ds=isNaN(d.getTime())?'—':(d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}));
     let orderProfit = 0;
     try { orderProfit = calculateOrderProfit(o); } catch(e) { orderProfit = 0; }
     const orderTotal = Number(o.total) || 0;
     const orderMarginPct = orderTotal > 0 ? Math.round((orderProfit / orderTotal) * 100) : 0;
-    const oId = String(o.id || '');
-    const isDebt = (o.payment === 'консигнация' || o.payment === 'Qarz') && !o.debtPaid;
+    const oId = String(o.id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    const isDebt = isDebtOrder(o);
     const itemsListHtml = (o.items || []).map(i => {
-      const iName = lang === 'uz' ? (i.nameUz || i.name || 'Mahsulot') : (i.name || i.nameUz || 'Продукт');
+      const iName = escapeHTML(lang === 'uz' ? (i.nameUz || i.name || 'Mahsulot') : (i.name || i.nameUz || 'Продукт'));
       const iQty = i.qty !== undefined ? i.qty : 0;
-      const iUnit = i.unit || 'кг';
+      const iUnit = escapeHTML(i.unit || 'кг');
       return `${i.emoji || '🥗'} ${iName}: <b>${iQty}${iUnit}</b>`;
     }).join(' · ');
 
@@ -661,25 +703,25 @@ function renderOrdersList(filterText='',dateFilter=state.dateFilter){
       <div class="order-top">
         <div>
           <div class="order-client" style="display:flex;align-items:center;gap:6px;">
-            ${o.client || 'Noma\'lum mijoz'}
-            ${o.agent ? `<span style="font-size:10px;background:rgba(255,152,0,0.15);color:#ff9800;padding:2px 6px;border-radius:6px;border:1px solid rgba(255,152,0,0.3);font-weight:800;">👨‍💼 ${o.agent}</span>` : ''}
+            ${escapeHTML(o.client || 'Noma\'lum mijoz')}
+            ${o.agent ? `<span style="font-size:10px;background:rgba(255,152,0,0.15);color:#ff9800;padding:2px 6px;border-radius:6px;border:1px solid rgba(255,152,0,0.3);font-weight:800;">👨‍💼 ${escapeHTML(o.agent)}</span>` : ''}
           </div>
-          <div class="order-meta">${ds} · ${o.type || 'Dostavka'}</div>
+          <div class="order-meta">${ds} · ${escapeHTML(o.type || 'Dostavka')}</div>
         </div>
         <div style="text-align:right;">
-          <div class="order-badge ${pc[o.payment] || ''}">${pi[o.payment]||'💳'} ${o.payment}</div>
+          <div class="order-badge ${pc[o.payment] || ''}">${pi[o.payment]||'💳'} ${escapeHTML(o.payment || '')}</div>
           <div style="margin-top:4px; margin-bottom:4px;">${o.sent?'<span class="sent-badge">✅ TG</span>':'<span class="unsent-badge">❌ TG</span>'}</div>
           <select onchange="updateOrderStatus('${oId}', this.value)" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:2px 4px; border-radius:4px; font-size:11px; width:100%;">
-            <option value="new" ${!o.status || o.status==='new' ? 'selected' : ''}>🆕 Yangi</option>
-            <option value="preparing" ${o.status==='preparing' ? 'selected' : ''}>👨‍🍳 Tayyorlanmoqda</option>
-            <option value="delivering" ${o.status==='delivering' ? 'selected' : ''}>🛵 Yo'lda</option>
-            <option value="done" ${o.status==='done' ? 'selected' : ''}>✅ Bajarildi</option>
-            <option value="cancelled" ${o.status==='cancelled' ? 'selected' : ''}>❌ Bekor qilindi</option>
+            <option value="new" ${!o.status || o.status==='new' ? 'selected' : ''}>🆕 ${lang==='uz'?'Yangi':'Новый'}</option>
+            <option value="preparing" ${o.status==='preparing' ? 'selected' : ''}>👨‍🍳 ${lang==='uz'?'Tayyorlanmoqda':'Готовится'}</option>
+            <option value="delivering" ${o.status==='delivering' ? 'selected' : ''}>🛵 ${lang==='uz'?'Yo\'lda':'В пути'}</option>
+            <option value="done" ${o.status==='done' ? 'selected' : ''}>✅ ${lang==='uz'?'Bajarildi':'Доставлен'}</option>
+            <option value="cancelled" ${o.status==='cancelled' ? 'selected' : ''}>❌ ${lang==='uz'?'Bekor qilindi':'Отменён'}</option>
           </select>
         </div>
       </div>
       <div class="order-items">${itemsListHtml}</div>
-      ${o.note?`<div style="font-size:12px;color:var(--text3);margin-top:4px">📝 ${o.note}</div>`:''}
+      ${o.note?`<div style="font-size:12px;color:var(--text3);margin-top:4px">📝 ${escapeHTML(o.note)}</div>`:''}
       <div class="order-total" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:8px;">
         <div>${fmt(orderTotal)} so'm ${isDebt?`<span class="tag orange">${lang==='uz'?'Qarz':'Долг'} ${o.partialPaid?fmt(o.partialPaid)+' to\'landi':''}</span>`:''}</div>
         <div style="color:var(--green);font-size:12px;font-weight:700;background:rgba(86,212,160,0.12);border:1px solid rgba(86,212,160,0.25);padding:3px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:4px;">
@@ -697,35 +739,48 @@ function renderOrdersList(filterText='',dateFilter=state.dateFilter){
       </div>
     </div>`;
   }).join('');
+  const moreBtn = visibleOrders.length < orders.length
+    ? `<button class="btn btn-outline" style="width:100%;margin-top:8px" onclick="loadMoreOrders()">${lang==='uz'?`Yana ko'rsatish (${orders.length - visibleOrders.length})`:`Показать ещё (${orders.length - visibleOrders.length})`}</button>`
+    : '';
+  list.innerHTML = cardsHtml + moreBtn;
 }
 function filterOrders(v){renderOrdersList(v);}
-function filterByDate(f,el){document.querySelectorAll('#page-orders .pill, #customOrderDate').forEach(p=>p.classList.remove('selected'));if(el)el.classList.add('selected');renderOrdersList(document.getElementById('ordersSearch').value,f);}
+function filterByDate(f,el){ordersDisplayLimit=60;document.querySelectorAll('#page-orders .pill, #customOrderDate').forEach(p=>p.classList.remove('selected'));if(el)el.classList.add('selected');renderOrdersList(document.getElementById('ordersSearch')?.value||'',f);}
 
 window.updateOrderStatus = function(id, newStatus) {
   const o = state.orders.find(x => x.id == id);
-  const updatePayload = { status: newStatus };
-  if (o && Array.isArray(o.items) && o.items.length) {
-    const wasCancelled = o.status === 'cancelled';
-    const nowCancelled = newStatus === 'cancelled';
-    if (!wasCancelled && nowCancelled && !o.stockRestored) {
-      const deltas = {};
-      o.items.forEach(i => { deltas[i.id] = (deltas[i.id] || 0) + (parseFloat(i.qty) || 0); });
-      applyOrderStockDeltas(deltas, 'order_cancel', o.id, o.client);
-      o.stockRestored = true;
-      updatePayload.stockRestored = true;
-    } else if (wasCancelled && !nowCancelled && o.stockRestored) {
-      const deltas = {};
-      o.items.forEach(i => { deltas[i.id] = (deltas[i.id] || 0) - (parseFloat(i.qty) || 0); });
-      applyOrderStockDeltas(deltas, 'order_restore', o.id, o.client);
-      o.stockRestored = false;
-      updatePayload.stockRestored = false;
+  const isDone = newStatus === 'done';
+  const updatePayload = { status: newStatus, delivered: isDone };
+  if (o) {
+    if (Array.isArray(o.items) && o.items.length) {
+      const wasCancelled = o.status === 'cancelled';
+      const nowCancelled = newStatus === 'cancelled';
+      if (!wasCancelled && nowCancelled && !o.stockRestored) {
+        const deltas = {};
+        o.items.forEach(i => { deltas[i.id] = (deltas[i.id] || 0) + (parseFloat(i.qty) || 0); });
+        applyOrderStockDeltas(deltas, 'order_cancel', o.id, o.client);
+        o.stockRestored = true;
+        updatePayload.stockRestored = true;
+      } else if (wasCancelled && !nowCancelled && o.stockRestored) {
+        const deltas = {};
+        o.items.forEach(i => { deltas[i.id] = (deltas[i.id] || 0) - (parseFloat(i.qty) || 0); });
+        applyOrderStockDeltas(deltas, 'order_restore', o.id, o.client);
+        o.stockRestored = false;
+        updatePayload.stockRestored = false;
+      }
     }
     o.status = newStatus;
+    o.delivered = isDone;
   }
+  try {
+    renderOrdersList(document.getElementById('ordersSearch')?.value || '');
+    renderDelivery(); renderDebts(); renderDashboard(); updateBadges();
+    if (typeof renderDriveModeNextStop === 'function') renderDriveModeNextStop();
+  } catch (e) {}
   db.collection('orders').doc(String(id)).update(updatePayload).then(()=>{
-    showToast('Status o\'zgardi', 'success');
+    showToast(lang==='uz'?'Status o\'zgardi':'Статус обновлён', 'success');
   }).catch(e=>{
-    showToast('Xatolik', 'error');
+    showToast(lang==='uz'?'Xatolik':'Ошибка', 'error');
   });
 };
 
@@ -746,30 +801,56 @@ function deleteOrder(id){
 }
 function copyOrder(id){
   const o=state.orders.find(x=>x.id==id);if(!o)return;
-  document.getElementById('clientSelect').value=o.clientId;
+  const items = Array.isArray(o.items) ? o.items : [];
+  document.getElementById('clientSelect').value=o.clientId||'';
   state.quantities={};
-  o.items.forEach(i=>{state.quantities[i.id]=i.qty;});
+  items.forEach(i=>{state.quantities[i.id]=i.qty;});
   state.selectedPayment=o.payment||'наличные';
   document.querySelectorAll('.payment-pills .pill').forEach(p=>{p.classList.toggle('selected',p.dataset.pay===state.selectedPayment);});
   document.getElementById('orderNote').value=o.note||'';
   renderProductsGrid();
-  o.items.forEach(i=>{const el=document.getElementById('qty-'+i.id);if(el)el.textContent=i.qty;const pc=document.getElementById('pc-'+i.id);if(pc&&i.qty>0)pc.classList.add('selected');});
+  items.forEach(i=>{const el=document.getElementById('qty-'+i.id);if(el)el.textContent=i.qty;const pc=document.getElementById('pc-'+i.id);if(pc&&i.qty>0)pc.classList.add('selected');});
   updateSummary();showPage('new-order');
   showToast('📋 '+(lang==='uz'?'Nusxa olindi':'Скопировано'),'info');
+}
+function normalizeOrderPaymentForSelect(pay) {
+  const p = String(pay || '').toLowerCase();
+  if (p === 'naqd' || p === 'наличные') return 'наличные';
+  if (p === 'karta' || p === 'карта' || p === 'клик') return 'клик';
+  if (p === 'qarz' || p === 'nasiya' || p === 'долг' || p === 'консигнация') return 'консигнация';
+  return 'наличные';
 }
 function openEditOrderModal(id){
   const o=state.orders.find(x=>x.id==id);if(!o)return;
   editingOrderId=id;
-  document.getElementById('editOrderClient').value=o.clientId||'';
+  populateClientSelect();
+  populateCourierSelects();
+  const editSel=document.getElementById('editOrderClient');
+  if (editSel) {
+    const opts = editSel.options ? Array.from(editSel.options) : [];
+    if (o.clientId && !opts.some(opt => String(opt.value) === String(o.clientId)) && typeof editSel.insertAdjacentHTML === 'function') {
+      editSel.insertAdjacentHTML('beforeend', `<option value="${escapeAttr(o.clientId)}">${escapeHTML(o.client || 'Mijoz')}</option>`);
+    }
+    editSel.value = o.clientId || '';
+  }
+  const cEl = document.getElementById('editOrderCourier');
+  if (cEl) {
+    const opts = cEl.options ? Array.from(cEl.options) : [];
+    if (o.courier && !opts.some(opt => opt.value === o.courier) && typeof cEl.insertAdjacentHTML === 'function') {
+      cEl.insertAdjacentHTML('beforeend', `<option value="${escapeAttr(o.courier)}">${escapeHTML(o.courier)}</option>`);
+    }
+    cEl.value = o.courier || '';
+  }
   document.getElementById('editOrderNote').value=o.note||'';
-  document.getElementById('editOrderPayment').value=o.payment||'наличные';
+  document.getElementById('editOrderPayment').value=normalizeOrderPaymentForSelect(o.payment);
   const qWrap=document.getElementById('editOrderQtys');
+  const orderItems = Array.isArray(o.items) ? o.items : [];
   qWrap.innerHTML=PRODUCTS.map(p=>{
-    const item=o.items.find(i=>i.id===p.id);
+    const item=orderItems.find(i=>i.id===p.id);
     const qty=item?item.qty:0;
     const u=p.unit||'кг';const st=p.step||0.5;
     return`<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
-      <div><div style="font-weight:600">${p.emoji} ${p.name}</div><div style="font-size:12px;color:var(--text2)">${fmt(p.price)} / ${u}</div></div>
+      <div><div style="font-weight:600">${p.emoji || '🥗'} ${escapeHTML(p.name || p.nameUz || '')}</div><div style="font-size:12px;color:var(--text2)">${fmt(p.price)} / ${u}</div></div>
       <div style="display:flex;align-items:center;gap:8px">
         <div class="qty-btn" onclick="editQtyChange('${p.id}',${-st})">−</div>
         <div><span id="eqty-${p.id}" style="font-weight:800;font-size:15px;min-width:28px;display:inline-block;text-align:center">${qty}</span> <span style="font-size:11px;color:var(--text3)">${u}</span></div>
@@ -792,20 +873,25 @@ function saveEditOrder(){
   const oldItems = (o.items || []).map(i => ({ id: i.id, qty: parseFloat(i.qty) || 0 }));
   const clientId=document.getElementById('editOrderClient').value;
   const client=state.clients.find(c=>c.id==clientId);
-  if(clientId&&client){o.clientId=clientId;o.client=client.name;}
+  if(clientId&&client){o.clientId=client.id;o.client=client.name;}
   o.payment=document.getElementById('editOrderPayment').value;
   o.note=document.getElementById('editOrderNote').value;
   const courierName = document.getElementById('editOrderCourier').value;
   if(courierName) {
     o.courier = courierName;
-    o.status = 'delivering';
+    if (!o.status || o.status === 'new') o.status = 'delivering';
   } else {
     o.courier = '';
+    if (o.status === 'delivering') o.status = 'new';
   }
-  o.debtPaid = o.payment !== 'консигнация' && o.payment !== 'Qarz';
+  o.delivered = o.status === 'done';
+  o.debtPaid = !['консигнация','qarz','nasiya','долг'].includes((o.payment||'').toLowerCase());
   const newItems=PRODUCTS.map(p=>{
-    const qty=parseFloat(document.getElementById('eqty-'+p.id).textContent)||0;
-    return qty>0?{...p,qty}:null;
+    const eqEl=document.getElementById('eqty-'+p.id);
+    const qty=eqEl?(parseFloat(eqEl.textContent)||0):0;
+    if(qty<=0)return null;
+    const price=(client && client.customPrices && client.customPrices[p.id]) ? Number(client.customPrices[p.id]) : (Number(p.price)||0);
+    return {...p,price,qty};
   }).filter(Boolean);
   if (o.status !== 'cancelled' && !o.stockRestored) {
     const deltas = {};
@@ -815,6 +901,7 @@ function saveEditOrder(){
   }
   o.items=newItems;o.total=newItems.reduce((s,i)=>s+i.qty*i.price,0);o.sent=false;
   db.collection('orders').doc(String(o.id)).set(o); closeModal('editOrderModal');
+  try { renderOrdersList(document.getElementById('ordersSearch')?.value || ''); renderDelivery(); renderDebts(); renderDashboard(); updateBadges(); } catch(e) {}
   showToast('✅ '+(lang==='uz'?'Saqlandi':'Сохранено'),'success');
 }
 function showOrderDetail(id){
@@ -921,7 +1008,7 @@ function printInvoice(id){
 
 // DEBTS
 function renderDebts(){
-  const debtOrders=(state.orders || []).filter(o=>(o.payment==='консигнация' || o.payment==='Qarz')&&!o.debtPaid);
+  const debtOrders=(state.orders || []).filter(isDebtOrder);
   const byClient={};
   debtOrders.forEach(o=>{
     const cKey = String(o.clientId || '');
@@ -934,7 +1021,7 @@ function renderDebts(){
   const totalDebtEl = document.getElementById('totalDebtAmount');
   if (totalDebtEl) totalDebtEl.textContent=fmt(totalDebt)+' so\'m';
   const debtsCountEl = document.getElementById('debtsCount');
-  if (debtsCountEl) debtsCountEl.textContent=Object.keys(byClient).length;
+  if (debtsCountEl) debtsCountEl.textContent=Object.keys(byClient).length||'';
   const list=document.getElementById('debtsList');
   if (!list) return;
   if(!Object.keys(byClient).length){list.innerHTML=`<div class="empty"><div class="empty-icon">✅</div><div class="empty-text">${T[lang]?.noDebts || 'Qarzlar yo\'q'}</div></div>`;return;}
@@ -946,7 +1033,7 @@ function renderDebts(){
       <div class="debt-amount">${fmt(remaining)} so'm</div>
       ${data.paid>0?`<div style="font-size:12px;color:var(--green)">✅ ${lang==='uz'?'To\'langan':'Оплачено'}: ${fmt(data.paid)} so'm</div>`:''}
       <div class="debt-meta">${lang==='uz'?'Buyurtmalar':'Заказов'}: ${data.orders.length}</div>
-      <div class="debt-orders">${data.orders.map(o=>{const d=new Date(o.date);return`• ${d.toLocaleDateString('ru-RU')} — ${fmt(o.total)} so'm${o.partialPaid?` (${lang==='uz'?'qoldi':'осталось'}: ${fmt(o.total-o.partialPaid)})`:''}`}).join('<br>')}</div>
+      <div class="debt-orders">${data.orders.map(o=>{const d=new Date(o.date);const ds=isNaN(d.getTime())?'—':d.toLocaleDateString('ru-RU');return`• ${ds} — ${fmt(Number(o.total)||0)} so'm${o.partialPaid?` (${lang==='uz'?'qoldi':'осталось'}: ${fmt((Number(o.total)||0)-(Number(o.partialPaid)||0))})`:''}`}).join('<br>')}</div>
       <button class="debt-paid-btn" onclick="markDebtPaid('${safeCid}')">✅ ${lang==='uz'?"To'ladi":'Оплатил'}</button>
       <button class="debt-partial-btn" onclick="openPartialPay('${safeCid}',${remaining})">💰 ${lang==='uz'?'Qisman to\'lov':'Частично'}</button>
     </div>`;
@@ -955,8 +1042,10 @@ function renderDebts(){
 function markDebtPaid(clientId){
   if(!confirm(lang==='uz'?"To'lashni tasdiqlaysizmi?":'Отметить как оплаченный?'))return;
   const batch = db.batch();
-  (state.orders || []).forEach(o=>{if(String(o.clientId)===String(clientId)&&(o.payment==='консигнация' || o.payment==='Qarz')){ batch.update(db.collection('orders').doc(String(o.id)), {debtPaid:true}); }});
-  batch.commit(); showToast('✅ '+(lang==='uz'?"To'landi":'Оплачено'),'success');
+  (state.orders || []).forEach(o=>{if(String(o.clientId)===String(clientId)&&isDebtOrder(o)){ o.debtPaid=true; batch.update(db.collection('orders').doc(String(o.id)), {debtPaid:true}); }});
+  batch.commit().catch(()=>{});
+  try { renderDebts(); renderOrdersList(document.getElementById('ordersSearch')?.value || ''); renderDashboard(); updateBadges(); } catch(e) {}
+  showToast('✅ '+(lang==='uz'?"To'landi":'Оплачено'),'success');
 }
 function openPartialPay(clientId,remaining,name){
   partialClientId=clientId;
@@ -994,7 +1083,11 @@ function applyPartialPayment(){
 // DELIVERY
 function renderDelivery(customOrdersList){
   const today=new Date().toDateString();
-  let todayOrders=(state.orders || []).filter(o=>o.date && new Date(o.date).toDateString()===today);
+  let todayOrders=(state.orders || []).filter(o=>{
+    if(!o || o.status==='cancelled' || !o.date) return false;
+    const d=new Date(o.date);
+    return !isNaN(d.getTime()) && d.toDateString()===today;
+  });
   if (Array.isArray(customOrdersList)) {
     todayOrders = customOrdersList;
   } else if (typeof adminOptimizedRoute !== 'undefined' && adminOptimizedRoute && Array.isArray(adminOptimizedRoute.sortedOrders)) {
@@ -1049,27 +1142,40 @@ function markDelivered(id){
   try {
     renderDelivery();
     renderDashboard();
+    updateBadges();
     if (typeof renderDriveModeNextStop === 'function') renderDriveModeNextStop();
   } catch (e) {}
 }
 function resetDelivery(){
   const today=new Date().toDateString();
   const batch = db.batch();
-  (state.orders || []).filter(o=>o.date && new Date(o.date).toDateString()===today).forEach(o=>batch.update(db.collection('orders').doc(String(o.id)), {delivered:false, status:'new'}));
-  batch.commit();
+  (state.orders || []).filter(o=>o && o.date && o.status!=='cancelled' && new Date(o.date).toDateString()===today).forEach(o=>{
+    o.delivered=false; if(o.status==='done') o.status='new';
+    batch.update(db.collection('orders').doc(String(o.id)), {delivered:false, status:o.status});
+  });
+  batch.commit().catch(()=>{});
   if (typeof adminOptimizedRoute !== 'undefined') adminOptimizedRoute = null;
   const sumBox = document.getElementById('adminRouteSummaryBox');
   if (sumBox) sumBox.innerHTML = '';
+  try { renderDelivery(); updateBadges(); renderDashboard(); } catch (e) {}
 }
 
 // CLIENTS
 function populateClientSelect(){
-  const sel=document.getElementById('clientSelect');if(!sel)return;
-  sel.onchange = renderProductsGrid;
-  const cur=sel.value;
-  sel.innerHTML=`<option value="">${lang==='uz'?'— Mijozni tanlang —':'— Выберите клиента —'}</option>`+
-    (state.clients || []).map(c=>`<option value="${c.id}">${c.name || 'Mijoz'} (${c.type || 'кафе'})</option>`).join('');
-  if(cur)sel.value=cur;
+  const sel=document.getElementById('clientSelect');
+  const editSel=document.getElementById('editOrderClient');
+  const optsHtml=(state.clients || []).map(c=>`<option value="${c.id}">${escapeHTML(c.name || 'Mijoz')} (${escapeHTML(c.type || 'кафе')})</option>`).join('');
+  if(sel){
+    sel.onchange = renderProductsGrid;
+    const cur=sel.value;
+    sel.innerHTML=`<option value="">${lang==='uz'?'— Mijozni tanlang —':'— Выберите клиента —'}</option>`+optsHtml;
+    if(cur)sel.value=cur;
+  }
+  if(editSel){
+    const curEdit=editSel.value;
+    editSel.innerHTML=`<option value="">${lang==='uz'?'— Mijozni tanlang —':'— Выберите клиента —'}</option>`+optsHtml;
+    if(curEdit)editSel.value=curEdit;
+  }
 }
 function renderClientsList(filterText=''){
   try {
@@ -1088,13 +1194,13 @@ function renderClientsList(filterText=''){
     const cId = c.id !== undefined && c.id !== null ? String(c.id) : '';
     const cName = c.name || 'Noma\'lum mijoz';
     const firstLetter = (cName.trim() || '?').charAt(0).toUpperCase();
-    const orders=(state.orders || []).filter(o=>String(o.clientId)===cId);
-    const debt=(state.orders || []).filter(o=>String(o.clientId)===cId && (o.payment==='консигнация' || o.payment==='Qarz') && !o.debtPaid).reduce((s,o)=>s+((Number(o.total)||0)-(Number(o.partialPaid)||0)),0);
+    const orders=(state.orders || []).filter(o=>o && o.status!=='cancelled' && String(o.clientId)===cId);
+    const debt=(state.orders || []).filter(o=>String(o.clientId)===cId && isDebtOrder(o)).reduce((s,o)=>s+((Number(o.total)||0)-(Number(o.partialPaid)||0)),0);
     return`<div class="client-item" id="citem-${cId}">
-      <div class="client-avatar" onclick="showClientHistory('${cId}')" style="cursor:pointer">${firstLetter}</div>
+      <div class="client-avatar" onclick="showClientHistory('${cId}')" style="cursor:pointer">${escapeHTML(firstLetter)}</div>
       <div style="flex:1;min-width:0;cursor:pointer" onclick="showClientHistory('${cId}')">
-        <div class="client-name">${cName} ${debt>0?`<span class="tag orange">💰${fmt(debt)}</span>`:''}</div>
-        <div class="client-info">${ti[c.type]||'📍'} ${c.type||'кафе'}${c.phone?' · '+c.phone:''}</div>
+        <div class="client-name">${escapeHTML(cName)} ${debt>0?`<span class="tag orange">💰${fmt(debt)}</span>`:''}</div>
+        <div class="client-info">${ti[c.type]||'📍'} ${escapeHTML(c.type||'кафе')}${c.phone?' · '+escapeHTML(c.phone):''}</div>
         <div class="client-info">${lang==='uz'?'Buyurtmalar':'Заказов'}: <b>${orders.length}</b> · ${fmt(orders.reduce((s,o)=>s+(Number(o.total)||0),0))} so'm</div>
       </div>
       <div style="display:flex;gap:5px;flex-shrink:0">
@@ -1162,21 +1268,22 @@ function saveEditClient(){
 }
 function showClientHistory(clientId){
   const client=state.clients.find(c=>c.id==clientId);if(!client)return;
-  const orders=state.orders.filter(o=>o.clientId==clientId).sort((a,b)=>new Date(b.date)-new Date(a.date));
-  document.getElementById('historyTitle').textContent='📋 '+client.name;
-  const prodCount={};orders.forEach(o=>o.items.forEach(i=>{prodCount[i.id]=(prodCount[i.id]||0)+i.qty;}));
+  const orders=(state.orders||[]).filter(o=>o&&o.clientId==clientId).sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+  document.getElementById('historyTitle').textContent='📋 '+(client.name||'');
+  const prodCount={};orders.filter(o=>o.status!=='cancelled').forEach(o=>(o.items||[]).forEach(i=>{if(i)prodCount[i.id]=(prodCount[i.id]||0)+(Number(i.qty)||0);}));
   const favProds=Object.entries(prodCount).sort((a,b)=>b[1]-a[1]).slice(0,3)
-    .map(([id,qty])=>{const p=PRODUCTS.find(x=>x.id===id);return p?`<span class="fav-product-tag">${p.emoji} ${lang==='uz'?p.nameUz:p.name} ${qty}${p.unit||'кг'}`:'';}).join('');
+    .map(([id,qty])=>{const p=PRODUCTS.find(x=>x.id===id);return p?`<span class="fav-product-tag">${p.emoji||'🥗'} ${escapeHTML(lang==='uz'?(p.nameUz||p.name||''):(p.name||p.nameUz||''))} ${qty}${escapeHTML(p.unit||'кг')}</span>`:'';}).join('');
   document.getElementById('historyFavProducts').innerHTML=favProds?`<div style="font-size:12px;color:var(--text2);margin-bottom:5px">❤️ ${lang==='uz'?'Sevimli':'Любимые'}:</div><div class="fav-products">${favProds}</div>`:'';
   document.getElementById('historyContent').innerHTML=!orders.length
     ?`<div class="empty" style="padding:20px"><div class="empty-text">${T[lang].noOrders}</div></div>`
     :orders.map(o=>{
-      const d=new Date(o.date);const pi={'наличные':'💵','клик':'📱','консигнация':'📝','Naqd':'💵','Karta':'💳','Qarz':'📝','карта':'💳'};
+      const d=new Date(o.date);const ds=isNaN(d.getTime())?'—':(d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}));
+      const pi={'наличные':'💵','клик':'📱','консигнация':'📝','Naqd':'💵','Karta':'💳','Qarz':'📝','карта':'💳'};
       return`<div class="history-order">
-        <div class="history-date">${d.toLocaleDateString('ru-RU')} ${d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})} · ${pi[o.payment]||'💵'} ${o.payment||'Naqd'}</div>
-        <div class="history-items">${(o.items || []).map(i=>`${i.emoji||'🥗'} ${(lang==='uz'?(i.nameUz||i.name):i.name)||''}: ${i.qty}${i.unit||'кг'}`).join(' · ')}</div>
-        ${o.note?`<div style="font-size:11px;color:var(--text3);margin-top:3px">📝 ${o.note}</div>`:''}
-        <div class="history-total">${fmt(o.total)} so'm ${isDebtOrder(o)?`<span class="tag orange">${lang==='uz'?'Qarz':'Долг'}</span>`:''}</div>
+        <div class="history-date">${ds} · ${pi[o.payment]||'💵'} ${escapeHTML(o.payment||'Naqd')}${o.status==='cancelled'?' · ❌':''}</div>
+        <div class="history-items">${(o.items || []).map(i=>`${i.emoji||'🥗'} ${escapeHTML((lang==='uz'?(i.nameUz||i.name):i.name)||'')}: ${i.qty}${escapeHTML(i.unit||'кг')}`).join(' · ')}</div>
+        ${o.note?`<div style="font-size:11px;color:var(--text3);margin-top:3px">📝 ${escapeHTML(o.note)}</div>`:''}
+        <div class="history-total">${fmt(Number(o.total)||0)} so'm ${isDebtOrder(o)?`<span class="tag orange">${lang==='uz'?'Qarz':'Долг'}</span>`:''}</div>
       </div>`;
     }).join('');
   openModal('clientHistoryModal');
@@ -1207,12 +1314,13 @@ function saveNewClient(){
 
 // STATS
 function renderStats(){
-  let orders=state.orders;
+  let orders=(state.orders || []).filter(o => o && o.status !== 'cancelled');
   const sd = document.getElementById('statsStartDate')?.value;
   const ed = document.getElementById('statsEndDate')?.value;
   if(sd || ed) {
     orders = orders.filter(o => {
       const d = new Date(o.date);
+      if (isNaN(d.getTime())) return false;
       d.setHours(0,0,0,0);
       let ok = true;
       if(sd) { const start = new Date(sd); start.setHours(0,0,0,0); if(d < start) ok = false; }
@@ -1224,10 +1332,11 @@ function renderStats(){
   state.orders = orders;
   try {
     const today=new Date().toDateString();
-    const todayO=orders.filter(o=>new Date(o.date).toDateString()===today);
-    const totalRev=orders.reduce((s,o)=>s+o.total,0);
-    const todayRev=todayO.reduce((s,o)=>s+o.total,0);
-    document.getElementById('statsGrid').innerHTML=`
+    const todayO=orders.filter(o=>o.date&&new Date(o.date).toDateString()===today);
+    const totalRev=orders.reduce((s,o)=>s+(Number(o.total)||0),0);
+    const todayRev=todayO.reduce((s,o)=>s+(Number(o.total)||0),0);
+    const sg = document.getElementById('statsGrid');
+    if (sg) sg.innerHTML=`
       <div class="stat-card"><div class="stat-val">${orders.length}</div><div class="stat-label">${T[lang].totalOrders}</div></div>
       <div class="stat-card"><div class="stat-val">${todayO.length}</div><div class="stat-label">${T[lang].todayOrders}</div></div>
       <div class="stat-card"><div class="stat-val" style="font-size:16px">${fmt(totalRev)}</div><div class="stat-label">${T[lang].totalRev}</div></div>
@@ -1238,33 +1347,35 @@ function renderStats(){
   }
 
   const ps={};
-  PRODUCTS.forEach(p=>{
-    ps[p.id]={id:p.id,name:lang==='uz'?p.nameUz:p.name,emoji:p.emoji,qty:0,rev:0,profit:0,unit:p.unit||'кг'};
+  (PRODUCTS||[]).forEach(p=>{
+    ps[p.id]={id:p.id,name:lang==='uz'?(p.nameUz||p.name||''):(p.name||p.nameUz||''),emoji:p.emoji||'🥗',qty:0,rev:0,profit:0,unit:p.unit||'кг'};
   });
-  orders.forEach(o=>o.items.forEach(i=>{
+  orders.forEach(o=>(o.items||[]).forEach(i=>{
+    if(!i) return;
     if(!ps[i.id]){
-      ps[i.id]={id:i.id,name:i.name,emoji:i.emoji||'📦',qty:0,rev:0,profit:0,unit:i.unit||'кг'};
+      ps[i.id]={id:i.id,name:i.name||i.nameUz||'',emoji:i.emoji||'📦',qty:0,rev:0,profit:0,unit:i.unit||'кг'};
     }
     const itemProfit = calculateItemProfit(i, PRODUCTS.find(x => x.id === i.id));
-    ps[i.id].qty += (i.qty || 0);
-    ps[i.id].rev += (i.qty * i.price || 0);
+    ps[i.id].qty += (Number(i.qty) || 0);
+    ps[i.id].rev += ((Number(i.qty)||0) * (Number(i.price)||0));
     ps[i.id].profit += itemProfit;
   }));
   const sorted=Object.values(ps).sort((a,b)=>b.qty-a.qty);
-  document.getElementById('productStats').innerHTML=`<div class="card-title" style="margin-bottom:12px">📦 ${T[lang].products}</div>${sorted.map(p=>{
+  const prodStatsEl = document.getElementById('productStats');
+  if (prodStatsEl) prodStatsEl.innerHTML=`<div class="card-title" style="margin-bottom:12px">📦 ${T[lang].products}</div>${sorted.map(p=>{
     const marginPct = p.rev > 0 ? Math.round((p.profit / p.rev) * 100) : 0;
-    return`<div class="summary-row"><span>${p.emoji} ${p.name}</span><div style="text-align:right"><div><b>${p.qty}${p.unit}</b> · <span class="summary-price">${fmt(p.rev)} so'm</span></div><div style="font-size:11px;color:${p.profit>=0?'var(--green)':'var(--danger)'}">${lang==='uz'?'Foyda':'Маржа'}: <b>+${fmt(p.profit)} so'm</b> <span style="opacity:0.8">(${marginPct}%)</span></div></div></div>`;
+    return`<div class="summary-row"><span>${p.emoji} ${escapeHTML(p.name)}</span><div style="text-align:right"><div><b>${roundQty(p.qty)}${p.unit}</b> · <span class="summary-price">${fmt(p.rev)} so'm</span></div><div style="font-size:11px;color:${p.profit>=0?'var(--green)':'var(--danger)'}">${lang==='uz'?'Foyda':'Маржа'}: <b>+${fmt(p.profit)} so'm</b> <span style="opacity:0.8">(${marginPct}%)</span></div></div></div>`;
   }).join('')}`;
 
   // Product Price Stats
   const priceStats = {};
-  PRODUCTS.forEach(p => {
-    priceStats[p.id] = { name: lang==='uz'?(p.nameUz||p.name):p.name, emoji: p.emoji, unit: p.unit||'кг', prices: {} };
+  (PRODUCTS||[]).forEach(p => {
+    priceStats[p.id] = { name: lang==='uz'?(p.nameUz||p.name||''):(p.name||p.nameUz||''), emoji: p.emoji||'🥗', unit: p.unit||'кг', prices: {} };
   });
-  orders.forEach(o => o.items.forEach(i => {
-    if(priceStats[i.id]) {
+  orders.forEach(o => (o.items||[]).forEach(i => {
+    if(i && priceStats[i.id]) {
       if(!priceStats[i.id].prices[i.price]) priceStats[i.id].prices[i.price] = 0;
-      priceStats[i.id].prices[i.price] += i.qty;
+      priceStats[i.id].prices[i.price] += (Number(i.qty)||0);
     }
   }));
   
@@ -1274,11 +1385,11 @@ function renderStats(){
     const priceKeys = Object.keys(pricesObj).map(Number).sort((a,b)=>a-b);
     if(priceKeys.length > 0) {
       priceHtml += `<div style="margin-bottom:10px;">
-        <div style="font-weight:700;margin-bottom:4px;color:var(--text);">${p.emoji||''} ${p.name}</div>`;
+        <div style="font-weight:700;margin-bottom:4px;color:var(--text);">${p.emoji||''} ${escapeHTML(p.name)}</div>`;
       priceKeys.forEach(price => {
-        priceHtml += `<div class="summary-row" style="padding:4px 0;border-bottom:1px dashed rgba(255,255,255,0.05);font-size:13px;align-items:center;">
+        priceHtml += `<div class="summary-row" style="padding:4px 0;border-bottom:1px dashed var(--border);font-size:13px;align-items:center;">
           <span style="color:var(--text2);">${fmt(price)} so'm</span>
-          <span style="font-weight:bold;color:var(--accent);font-size:14px;">${pricesObj[price]} ${p.unit}</span>
+          <span style="font-weight:bold;color:var(--accent);font-size:14px;">${roundQty(pricesObj[price])} ${p.unit}</span>
         </div>`;
       });
       priceHtml += `</div>`;
@@ -1292,17 +1403,18 @@ function renderStats(){
 }
 
 function renderAvgStats(){
-  const orders=state.orders;
-  if(!orders.length){document.getElementById('avgStats').innerHTML=`<div style="color:var(--text3);font-size:13px">${T[lang].noOrders}</div>`;return;}
-  const avg=orders.reduce((s,o)=>s+o.total,0)/orders.length;
+  const avgEl = document.getElementById('avgStats'); if(!avgEl) return;
+  const orders=(state.orders||[]).filter(o=>o&&o.status!=='cancelled'&&o.date&&!isNaN(new Date(o.date).getTime()));
+  if(!orders.length){avgEl.innerHTML=`<div style="color:var(--text3);font-size:13px">${T[lang].noOrders}</div>`;return;}
+  const avg=orders.reduce((s,o)=>s+(Number(o.total)||0),0)/orders.length;
   // By day of week
   const byDay=[0,0,0,0,0,0,0],cntDay=[0,0,0,0,0,0,0];
-  orders.forEach(o=>{const wd=(new Date(o.date).getDay()+6)%7;byDay[wd]+=o.total;cntDay[wd]++;});
+  orders.forEach(o=>{const wd=(new Date(o.date).getDay()+6)%7;byDay[wd]+=(Number(o.total)||0);cntDay[wd]++;});
   const maxDay=Math.max(...byDay.map((s,i)=>cntDay[i]?s/cntDay[i]:0),1);
   // By client
-  const byC={};orders.forEach(o=>{if(!byC[o.clientId])byC[o.clientId]={name:o.client,total:0,cnt:0};byC[o.clientId].total+=o.total;byC[o.clientId].cnt++;});
+  const byC={};orders.forEach(o=>{const ck=o.clientId||o.client||'unknown';if(!byC[ck])byC[ck]={name:o.client||'Mijoz',total:0,cnt:0};byC[ck].total+=(Number(o.total)||0);byC[ck].cnt++;});
   const topC=Object.values(byC).sort((a,b)=>(b.total/b.cnt)-(a.total/a.cnt)).slice(0,3);
-  document.getElementById('avgStats').innerHTML=`
+  avgEl.innerHTML=`
     <div class="avg-chip"><span>📊</span><span style="font-weight:700">${lang==='uz'?'Umumiy o\'rtacha':'Общий средний чек'}:</span><span style="color:var(--accent);font-weight:900">${fmt(avg)} so'm</span></div>
     <div style="margin-bottom:12px">
       <div style="font-size:12px;color:var(--text2);margin-bottom:8px;font-weight:600">${lang==='uz'?'Hafta kunlari bo\'yicha':'По дням недели'}:</div>
@@ -1312,21 +1424,23 @@ function renderAvgStats(){
       }).join('')}
     </div>
     <div style="font-size:12px;color:var(--text2);margin-bottom:8px;font-weight:600">${lang==='uz'?'Mijozlar bo\'yicha top':'Топ по среднему чеку'}:</div>
-    ${topC.map((c,i)=>`<div class="top-client-row"><div class="top-rank">${['🥇','🥈','🥉'][i]}</div><div style="flex:1"><div style="font-weight:700">${c.name}</div><div style="font-size:12px;color:var(--text2)">${c.cnt} ${lang==='uz'?'buyurtma':'заказов'}</div></div><div style="font-weight:800;color:var(--accent2)">${fmt(c.total/c.cnt)} so'm</div></div>`).join('')}`;
+    ${topC.map((c,i)=>`<div class="top-client-row"><div class="top-rank">${['🥇','🥈','🥉'][i]}</div><div style="flex:1"><div style="font-weight:700">${escapeHTML(c.name)}</div><div style="font-size:12px;color:var(--text2)">${c.cnt} ${lang==='uz'?'buyurtma':'заказов'}</div></div><div style="font-weight:800;color:var(--accent2)">${fmt(c.total/c.cnt)} so'm</div></div>`).join('')}`;
 }
 
 function renderWeekCompare(){
+  const wcEl=document.getElementById('weekCompare'); if(!wcEl) return;
   const now=new Date();
   const startThisWeek=new Date(now);startThisWeek.setDate(now.getDate()-(now.getDay()+6)%7);startThisWeek.setHours(0,0,0,0);
   const startLastWeek=new Date(startThisWeek);startLastWeek.setDate(startThisWeek.getDate()-7);
-  const thisWeekO=state.orders.filter(o=>new Date(o.date)>=startThisWeek);
-  const lastWeekO=state.orders.filter(o=>new Date(o.date)>=startLastWeek&&new Date(o.date)<startThisWeek);
-  const thisRev=thisWeekO.reduce((s,o)=>s+o.total,0);
-  const lastRev=lastWeekO.reduce((s,o)=>s+o.total,0);
+  const active=(state.orders||[]).filter(o=>o&&o.status!=='cancelled'&&o.date&&!isNaN(new Date(o.date).getTime()));
+  const thisWeekO=active.filter(o=>new Date(o.date)>=startThisWeek);
+  const lastWeekO=active.filter(o=>new Date(o.date)>=startLastWeek&&new Date(o.date)<startThisWeek);
+  const thisRev=thisWeekO.reduce((s,o)=>s+(Number(o.total)||0),0);
+  const lastRev=lastWeekO.reduce((s,o)=>s+(Number(o.total)||0),0);
   const maxRev=Math.max(thisRev,lastRev,1);
   const diff=lastRev?Math.round((thisRev-lastRev)/lastRev*100):100;
   const arrow=diff>=0?'📈':'📉';
-  document.getElementById('weekCompare').innerHTML=`
+  wcEl.innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <div><div style="font-size:12px;color:var(--text2)">${lang==='uz'?'Bu hafta':'Эта неделя'}</div><div style="font-size:20px;font-weight:900;color:var(--accent)">${fmt(thisRev)} so'm</div></div>
       <div style="font-size:24px">${arrow}</div>
@@ -1381,33 +1495,34 @@ function renderChart(){
 }
 
 function renderForecast(){
+  const fb = document.getElementById('forecastBlock'); if (!fb) return;
+  const active=(state.orders||[]).filter(o=>o&&o.status!=='cancelled'&&o.date&&!isNaN(new Date(o.date).getTime()));
   const byDay=[{s:0,c:0},{s:0,c:0},{s:0,c:0},{s:0,c:0},{s:0,c:0},{s:0,c:0},{s:0,c:0}];
-  state.orders.forEach(o=>{const wd=(new Date(o.date).getDay()+6)%7;byDay[wd].s+=o.total;byDay[wd].c++;});
-  const tmrWd=(new Date().getDay()+7)%7;// tomorrow
+  active.forEach(o=>{const wd=(new Date(o.date).getDay()+6)%7;byDay[wd].s+=(Number(o.total)||0);byDay[wd].c++;});
   const tmr=new Date();tmr.setDate(tmr.getDate()+1);
   const tmrDayWd=(tmr.getDay()+6)%7;
   const forecast=byDay[tmrDayWd];
   const avgF=forecast.c?Math.round(forecast.s/forecast.c):0;
   // Product forecast
-  const prodByDay=PRODUCTS.map(p=>{
+  const prodByDay=(PRODUCTS||[]).map(p=>{
     let s=0,c=0;
-    state.orders.forEach(o=>{if((new Date(o.date).getDay()+6)%7===tmrDayWd){const it=o.items.find(i=>i.id===p.id);if(it){s+=it.qty;c++;}}});
+    active.forEach(o=>{if((new Date(o.date).getDay()+6)%7===tmrDayWd){const it=(o.items||[]).find(i=>i&&i.id===p.id);if(it){s+=(Number(it.qty)||0);c++;}}});
     return{...p,avgQty:c?Math.round(s/c*10)/10:0};
   }).filter(p=>p.avgQty>0);
-  document.getElementById('forecastBlock').innerHTML=!avgF
+  fb.innerHTML=!avgF
     ?`<div style="color:var(--text3);font-size:13px">${lang==='uz'?'Ma\'lumot yetarli emas':'Недостаточно данных'}</div>`
     :`<div class="avg-chip" style="margin-bottom:10px"><span>📅</span><span>${T[lang].tomorrow} (${T[lang].weekDays[tmrDayWd]})</span></div>
     <div style="font-size:22px;font-weight:900;color:var(--accent);margin-bottom:8px">~${fmt(avgF)} so'm</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:10px">${lang==='uz'?'Kutilayotgan buyurtmalar':'Ожид. заказов'}: ~${forecast.c}</div>
-    ${prodByDay.length?`<div style="font-size:12px;color:var(--text2);margin-bottom:6px;font-weight:600">${lang==='uz'?'Taxminiy kerak':'Примерно нужно'}:</div>${prodByDay.map(p=>`<div class="forecast-row"><div class="forecast-day">${p.emoji} ${lang==='uz'?p.nameUz:p.name}</div><div class="forecast-amt">~${p.avgQty}${p.unit||'кг'}</div></div>`).join('')}`:''}`;
+    ${prodByDay.length?`<div style="font-size:12px;color:var(--text2);margin-bottom:6px;font-weight:600">${lang==='uz'?'Taxminiy kerak':'Примерно нужно'}:</div>${prodByDay.map(p=>`<div class="forecast-row"><div class="forecast-day">${p.emoji||'🥗'} ${escapeHTML(lang==='uz'?(p.nameUz||p.name||''):(p.name||p.nameUz||''))}</div><div class="forecast-amt">~${p.avgQty}${p.unit||'кг'}</div></div>`).join('')}`:''}`;
 }
 
 function renderTopClients(){
   const byC={};
-  state.orders.forEach(o=>{
-    const cid=o.clientId||o.client;
-    if(!byC[cid])byC[cid]={name:o.client,total:0,count:0,profit:0};
-    byC[cid].total+=(o.total||0);
+  (state.orders||[]).filter(o=>o&&o.status!=='cancelled').forEach(o=>{
+    const cid=o.clientId||o.client||'unknown';
+    if(!byC[cid])byC[cid]={name:o.client||'Mijoz',total:0,count:0,profit:0};
+    byC[cid].total+=(Number(o.total)||0);
     byC[cid].profit+=calculateOrderProfit(o);
     byC[cid].count++;
   });
@@ -1422,7 +1537,7 @@ function renderTopClients(){
       return `<div class="top-client-row">
         <div class="top-rank">${ranks[i]}</div>
         <div style="flex:1;min-width:0">
-          <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.name}</div>
+          <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHTML(c.name)}</div>
           <div style="font-size:11px;color:var(--text2)">${c.count} ${lang==='uz'?'buyurtma':'заказов'} · ${lang==='uz'?'Tushum':'Выручка'}: ${fmt(c.total)} so'm</div>
         </div>
         <div style="text-align:right">
@@ -1437,14 +1552,14 @@ function renderTopClients(){
 function renderMonthlyReport(){
   const el=document.getElementById('monthlyReport');if(!el)return;
   const months={};
-  state.orders.forEach(o=>{
-    const d=new Date(o.date);
+  (state.orders||[]).filter(o=>o&&o.status!=='cancelled'&&o.date).forEach(o=>{
+    const d=new Date(o.date); if(isNaN(d.getTime())) return;
     const key=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
     if(!months[key])months[key]={label:d.toLocaleDateString(lang==='uz'?'uz-UZ':'ru-RU',{month:'long',year:'numeric'}),rev:0,profit:0,count:0,debt:0};
-    months[key].rev+=(o.total||0);
+    months[key].rev+=(Number(o.total)||0);
     months[key].profit+=calculateOrderProfit(o);
     months[key].count++;
-    if(isDebtOrder(o))months[key].debt+=(o.total-(o.partialPaid||0));
+    if(isDebtOrder(o))months[key].debt+=((Number(o.total)||0)-(Number(o.partialPaid)||0));
   });
   const entries=Object.entries(months).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,12);
   if(!entries.length){el.innerHTML=`<div style="color:var(--text3);font-size:13px">${T[lang].noOrders}</div>`;return;}
@@ -1473,7 +1588,7 @@ function renderMonthlyReport(){
 function renderSeasonality(){
   const el=document.getElementById('seasonalityBlock');if(!el)return;
   const days=[0,0,0,0,0,0,0],cnts=[0,0,0,0,0,0,0];
-  state.orders.forEach(o=>{const wd=(new Date(o.date).getDay()+6)%7;days[wd]+=o.total;cnts[wd]++;});
+  (state.orders||[]).filter(o=>o&&o.status!=='cancelled'&&o.date&&!isNaN(new Date(o.date).getTime())).forEach(o=>{const wd=(new Date(o.date).getDay()+6)%7;days[wd]+=(Number(o.total)||0);cnts[wd]++;});
   const avgs=days.map((s,i)=>cnts[i]?Math.round(s/cnts[i]):0);
   const maxAvg=Math.max(...avgs,1);
   const best=avgs.indexOf(Math.max(...avgs));
@@ -1522,21 +1637,44 @@ function renderProductsSettings(){
 }
 function updateProductPrice(idx,val){
   const newPrice=parseInt(val)||0;if(!newPrice)return;
-  const p=PRODUCTS[idx];p.price=newPrice;saveProducts();
+  const p=PRODUCTS[idx];if(!p)return;
+  p.price=newPrice;saveProducts();
   if(confirm(lang==='uz'?`Eski buyurtmalarni qayta hisoblash? (${p.name})`:`Пересчитать старые заказы по новой цене? (${p.name})`)){
-    state.orders.forEach(o=>{const item=o.items.find(i=>i.id===p.id);if(item){item.price=newPrice;o.total=o.items.reduce((s,i)=>s+i.qty*i.price,0);}});
+    const batch = db.batch();
+    let changed = 0;
+    (state.orders || []).forEach(o=>{
+      if (!o || o.status === 'cancelled') return;
+      const items = Array.isArray(o.items) ? o.items : [];
+      const item=items.find(i=>i.id===p.id);
+      if(item){
+        item.price=newPrice;
+        o.total=items.reduce((s,i)=>s+(Number(i.qty)||0)*(Number(i.price)||0),0);
+        batch.update(db.collection('orders').doc(String(o.id)), { items: o.items, total: o.total });
+        changed++;
+      }
+    });
+    if(changed > 0) batch.commit().catch(()=>{});
     save();
   }
-  renderProductsGrid();renderProductsSettings();showToast('✅ '+(lang==='uz'?'Narx yangilandi':'Цена обновлена'),'success');
+  renderProductsGrid();renderProductsSettings();
+  try { renderWarehouse(); updateWarehouseBadge(); renderDashboard(); renderOrdersList(); } catch(e) {}
+  showToast('✅ '+(lang==='uz'?'Narx yangilandi':'Цена обновлена'),'success');
 }
 function updateProductCost(idx,val){
+  if(!PRODUCTS[idx])return;
   PRODUCTS[idx].cost=parseInt(val)||0;saveProducts();renderProductsSettings();
+  try { renderDashboard(); } catch(e) {}
   showToast('✅ '+(lang==='uz'?'Tannarx saqlandi':'Себестоимость сохранена'),'success');
 }
 function deleteProduct(idx){
-  const p=PRODUCTS[idx];
+  const p=PRODUCTS[idx];if(!p)return;
   if(!confirm(lang==='uz'?`"${p.name}"ni o'chirishni tasdiqlaysizmi?`:`Удалить продукт "${p.name}"?`))return;
-  PRODUCTS.splice(idx,1);saveProducts();renderProductsGrid();renderProductsSettings();
+  PRODUCTS.splice(idx,1);
+  if (p.id !== undefined && p.id !== null) {
+    db.collection('products').doc(String(p.id)).delete().catch(()=>{});
+  }
+  saveProducts();renderProductsGrid();renderProductsSettings();
+  try { renderWarehouse(); updateWarehouseBadge(); renderDashboard(); } catch(e) {}
   showToast('🗑 '+(lang==='uz'?"O'chirildi":'Удалён'),'info');
 }
 function openAddProductModal(){
@@ -1553,16 +1691,24 @@ function saveNewProduct(){
   let stock = stockStr === '' ? '' : parseFloat(stockStr);
   PRODUCTS.push({id:'prod_'+Date.now(),name,nameUz:document.getElementById('newProdNameUz').value.trim()||name,
     price,cost:parseInt(document.getElementById('newProdCost').value)||0,
-    emoji:document.getElementById('newProdEmoji').value.trim()||'📦',unit,step:unit==='шт'?1:0.5, stock});
+    emoji:document.getElementById('newProdEmoji').value.trim()||'📦',unit,step:unit==='шт'?1:0.5, stock, order: PRODUCTS.length});
   saveProducts();closeModal('addProductModal');renderProductsGrid();renderProductsSettings();
+  try { renderWarehouse(); updateWarehouseBadge(); renderDashboard(); } catch(e) {}
   showToast('✅ '+name,'success');
 }
 function exportToExcel(){
-  const rows=[['Дата','Клиент','Телефон','Тип','Оплата','Фунчоза','Морковча','Сол огурцы','Капуста','Куксу','Итого','Примечание']];
-  state.orders.forEach(o=>{const d=new Date(o.date);const its=o.items||[];rows.push([d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}),o.client,o.phone,o.type,o.payment,its.find(i=>i.id==='funchoza')?.qty||0,its.find(i=>i.id==='morkovcha')?.qty||0,its.find(i=>i.id==='sologurc')?.qty||0,its.find(i=>i.id==='kapusta')?.qty||0,its.find(i=>i.id==='kuksi')?.qty||0,o.total,o.note||'']);});
+  const prods = PRODUCTS || [];
+  const header = ['Дата','Клиент','Телефон','Тип','Оплата','Статус',...prods.map(p=>p.name||p.nameUz||p.id),'Итого','Примечание'];
+  const rows=[header];
+  (state.orders || []).filter(o=>o&&o.status!=='cancelled').forEach(o=>{
+    const d=new Date(o.date);
+    const ds=isNaN(d.getTime())?'—':(d.toLocaleDateString('ru-RU')+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}));
+    const its=Array.isArray(o.items)?o.items:[];
+    rows.push([ds,o.client||'',o.phone||'',o.type||'',o.payment||'',o.status||'new',...prods.map(p=>its.find(i=>i.id===p.id)?.qty||0),Number(o.total)||0,o.note||'']);
+  });
   const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'}));
-  a.download='СалатПро_'+new Date().toLocaleDateString('ru-RU').replace(/\./g,'-')+'.csv';a.click();
+  a.download='TeeGuPRO_'+new Date().toLocaleDateString('ru-RU').replace(/\./g,'-')+'.csv';a.click();
   showToast('📊 '+(lang==='uz'?'Yuklandi':'Скачано'),'success');
 }
 
@@ -1859,8 +2005,8 @@ function renderDashboard(){
   const prodToday={};PRODUCTS.forEach(p=>prodToday[p.id]=0);
   todayOrders.forEach(o=>(o.items||[]).forEach(i=>{if(i && prodToday[i.id]!==undefined)prodToday[i.id]+=(Number(i.qty)||0);}));
   const prodRows=PRODUCTS.filter(p=>prodToday[p.id]>0).map(p=>`
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.08)">
-      <span style="font-size:15px">${p.emoji} ${lang==='uz'?p.nameUz:p.name}</span>
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
+      <span style="font-size:15px">${p.emoji||'🥗'} ${escapeHTML(lang==='uz'?(p.nameUz||p.name||''):(p.name||p.nameUz||''))}</span>
       <span style="font-weight:800;font-size:18px">${roundQty(prodToday[p.id])} <span style="font-size:11px;opacity:.7">${p.unit||'кг'}</span></span>
     </div>`).join('')||`<div style="opacity:.5;font-size:13px;padding:12px 0">${lang==='uz'?'Bugun buyurtma yo\'q':'Сегодня заказов нет'}</div>`;
   const timeStr=now.toLocaleTimeString(lang==='uz'?'uz':'ru-RU',{hour:'2-digit',minute:'2-digit'});
@@ -1939,10 +2085,10 @@ function renderDashboard(){
         <div>
           <div style="font-weight:700;font-size:13px">🏭 ${lang==='uz'?'Sklad qoldig\'i':'Остаток склада'}: <span style="color:var(--green)">${totalKg} kg</span></div>
           <div style="font-size:11px;color:${lowItems.length?'var(--danger)':'var(--text3)'};margin-top:2px">
-            ${lowItems.length ? '⚠️ Kam qolgan: ' + lowItems.map(p=>(p.nameUz||p.name)+' ('+roundQty(p.stock)+'kg)').slice(0,3).join(', ') : (lang==='uz'?'Barcha mahsulotlar yetarli':'Все товары в наличии')}
+            ${lowItems.length ? (lang==='uz'?'⚠️ Kam qolgan: ':'⚠️ Мало: ') + lowItems.map(p=>escapeHTML(p.nameUz||p.name||'')+' ('+roundQty(p.stock)+'kg)').slice(0,3).join(', ') : (lang==='uz'?'Barcha mahsulotlar yetarli':'Все товары в наличии')}
           </div>
         </div>
-        <span style="font-size:12px;font-weight:700;color:var(--accent)">Ochish ›</span>
+        <span style="font-size:12px;font-weight:700;color:var(--accent)">${lang==='uz'?'Ochish ›':'Открыть ›'}</span>
       </div>`;
     })()}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -1963,9 +2109,9 @@ let markersLayer=null;
 function renderMap(){
   const el=document.getElementById('mapContainer');if(!el)return;
   const today=new Date().toDateString();
-  const todayOrders=state.orders.filter(o=>new Date(o.date).toDateString()===today);
+  const todayOrders=(state.orders||[]).filter(o=>o&&o.status!=='cancelled'&&o.date&&new Date(o.date).toDateString()===today);
   const todayClientIds=new Set(todayOrders.map(o=>String(o.clientId)));
-  const clientsWithCoords=state.clients.filter(c=>c.lat&&c.lng);
+  const clientsWithCoords=(state.clients||[]).filter(c=>c&&c.lat&&c.lng);
   const routeClients=clientsWithCoords.filter(c=>todayClientIds.has(String(c.id)));
   const routeEl=document.getElementById('mapRouteList');
   if(routeEl){
@@ -1973,7 +2119,7 @@ function renderMap(){
       const ord=todayOrders.filter(o=>o.clientId==c.id);
       return`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
         <div style="width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;color:white;font-weight:900;font-size:12px;flex-shrink:0">${i+1}</div>
-        <div style="flex:1"><div style="font-weight:700;font-size:14px">${c.name}</div><div style="font-size:12px;color:var(--text2)">${ord.map(o=>o.items.map(i=>`${i.emoji}${i.qty}${i.unit||'кг'}`).join(' ')).join(' | ')}</div></div>
+        <div style="flex:1"><div style="font-weight:700;font-size:14px">${escapeHTML(c.name||'')}</div><div style="font-size:12px;color:var(--text2)">${ord.map(o=>(o.items||[]).map(i=>`${i.emoji||'🥗'}${i.qty}${i.unit||'кг'}`).join(' ')).join(' | ')}</div></div>
         <a href="https://yandex.ru/maps/?text=${c.lat},${c.lng}" target="_blank" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--accent);font-size:12px;font-weight:700;text-decoration:none">🗺️</a>
       </div>`;
     }).join(''):`<div style="color:var(--text3);font-size:13px;padding:8px 0">${lang==='uz'?'Koordinata yo\'q':'Нет координат у клиентов с заказами'}</div>`;
@@ -2095,14 +2241,19 @@ async function flushOfflineQueue(){
 
 function save(){localStorage.setItem('clients',JSON.stringify(state.clients));localStorage.setItem('orders',JSON.stringify(state.orders));}
 function updateBadges(){
-  const unsent=state.orders.filter(o=>!o.sent).length;
-  const badge=document.getElementById('pendingBadge');badge.style.display=unsent?'flex':'none';badge.textContent=unsent;
-  document.getElementById('ordersCount').textContent=state.orders.length;
-  const debtClients=new Set((state.orders || []).filter(isDebtOrder).map(o=>o.clientId)).size;
-  document.getElementById('debtsCount').textContent=debtClients||'';
+  const orders = state.orders || [];
+  const unsent=orders.filter(o=>o && o.status!=='cancelled' && !o.sent).length;
+  const badge=document.getElementById('pendingBadge');
+  if(badge){badge.style.display=unsent?'flex':'none';badge.textContent=unsent;}
+  const oc=document.getElementById('ordersCount');
+  if(oc) oc.textContent=orders.length;
+  const debtClients=new Set(orders.filter(isDebtOrder).map(o=>o.clientId)).size;
+  const dc=document.getElementById('debtsCount');
+  if(dc) dc.textContent=debtClients||'';
   const today=new Date().toDateString();
-  const pendingDelivery=state.orders.filter(o=>new Date(o.date).toDateString()===today&&!o.delivered).length;
-  document.getElementById('deliveryCount').textContent=pendingDelivery||'';
+  const pendingDelivery=orders.filter(o=>o && o.status!=='cancelled' && o.status!=='done' && !o.delivered && o.date && !isNaN(new Date(o.date).getTime()) && new Date(o.date).toDateString()===today).length;
+  const delC=document.getElementById('deliveryCount');
+  if(delC) delC.textContent=pendingDelivery||'';
   if (typeof updateWarehouseBadge === 'function') updateWarehouseBadge();
 }
 function resetOrder(){
@@ -2112,8 +2263,6 @@ function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.modal-overlay').forEach(overlay=>{overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.classList.remove('open');});});
 
-verifyAuth();
-if('serviceWorker' in navigator){navigator.serviceWorker.register('../sw.js').catch(()=>{});}
 // ==================== SWIPE NAVIGATION ====================
 const PAGE_ORDER = [
   'dashboard','new-order','orders','debts',
@@ -4040,9 +4189,12 @@ function persistUiConfig(pushSnapshotBefore) {
 
 function updateAiUiAccessButtons() {
   const enabled = aiUiConfig.aiUiAccess !== false;
+  const isUz = lang === 'uz';
   const topBtn = document.getElementById('aiUiAccessToggle');
   if (topBtn) {
-    topBtn.textContent = enabled ? '🎨 UI Dostup: ON' : '🔒 UI Dostup: OFF';
+    topBtn.textContent = enabled
+      ? (isUz ? '🎨 UI: ON' : '🎨 UI: ВКЛ')
+      : (isUz ? '🔒 UI: OFF' : '🔒 UI: ВЫКЛ');
     if (topBtn.classList) {
       topBtn.classList.toggle('enabled', enabled);
       topBtn.classList.toggle('disabled', !enabled);
@@ -4050,7 +4202,7 @@ function updateAiUiAccessButtons() {
   }
   const modalBtn = document.getElementById('uiModalToggleBtn');
   if (modalBtn) {
-    modalBtn.textContent = enabled ? 'YOQILGAN' : 'O\'CHIRILGAN';
+    modalBtn.textContent = enabled ? (isUz ? 'YOQILGAN' : 'ВКЛЮЧЕНО') : (isUz ? 'O\'CHIRILGAN' : 'ВЫКЛЮЧЕНО');
     if (modalBtn.classList) {
       modalBtn.classList.toggle('enabled', enabled);
       modalBtn.classList.toggle('disabled', !enabled);
@@ -4059,8 +4211,8 @@ function updateAiUiAccessButtons() {
   const sub = document.getElementById('uiAccessStatusSub');
   if (sub) {
     sub.textContent = enabled
-      ? 'Yoqilgan — AI sizning buyrug\'ingiz bilan tugma va dizaynlarni tahrirlay oladi'
-      : 'O\'chirilgan — AI faqat ma\'lumot beradi, tugmalarni o\'zgartira olmaydi';
+      ? (isUz ? 'Yoqilgan — AI sizning buyrug\'ingiz bilan tugma va dizaynlarni tahrirlay oladi' : 'Включено — AI может редактировать кнопки и дизайн по вашей команде')
+      : (isUz ? 'O\'chirilgan — AI faqat ma\'lumot beradi, tugmalarni o\'zgartira olmaydi' : 'Отключено — AI только отвечает на вопросы без изменения кнопок');
   }
 }
 
@@ -4068,7 +4220,9 @@ function toggleAiUiAccess() {
   aiUiConfig.aiUiAccess = !(aiUiConfig.aiUiAccess !== false);
   persistUiConfig(null);
   updateAiUiAccessButtons();
-  showToast(aiUiConfig.aiUiAccess ? '🎨 AI UI dostup yoqildi' : '🔒 AI UI dostup o\'chirildi', 'info');
+  showToast(aiUiConfig.aiUiAccess
+    ? (lang==='uz'?'🎨 AI UI dostup yoqildi':'🎨 Доступ AI к UI включён')
+    : (lang==='uz'?'🔒 AI UI dostup o\'chirildi':'🔒 Доступ AI к UI отключён'), 'info');
 }
 
 function buildUiContext() {
@@ -5645,7 +5799,9 @@ function onDriveParsedClientChange(clientId) {
   renderDriveParsedPreviewBox();
 }
 
+let isDriveOrderSubmitting = false;
 async function confirmDriveVoiceOrder(sendToForm = false) {
+  if (!sendToForm && isDriveOrderSubmitting) return false;
   const selId = document.getElementById('driveParsedClientSelect')?.value || currentDriveParsedOrder?.clientId;
   const cl = (state.clients || []).find(c => String(c.id) === String(selId));
   if (!cl) {
@@ -5695,45 +5851,50 @@ async function confirmDriveVoiceOrder(sendToForm = false) {
     return false;
   }
 
-  const order = {
-    id: Date.now(),
-    date: new Date().toISOString(),
-    client: cl.name,
-    clientId: cl.id,
-    phone: cl.phone || '',
-    type: cl.type || 'кафе',
-    items,
-    total,
-    payment,
-    note: '🎙️ Rulda ovozli buyurtma',
-    sent: false,
-    sentSheets: false,
-    debtPaid: payment !== 'консигнация',
-    partialPaid: 0,
-    delivered: false,
-    courier: '',
-    status: 'new',
-    stockDeducted: true
-  };
-
-  commitAdminOrderAndStock(order, cl, ruleCheck);
+  isDriveOrderSubmitting = true;
   try {
-    const tgOk = await sendToTelegram(order);
-    if (tgOk) {
-      order.sent = true;
-      db.collection('orders').doc(String(order.id)).update({ sent: true });
-    }
-  } catch (e) {}
+    const order = {
+      id: Date.now(),
+      date: new Date().toISOString(),
+      client: cl.name,
+      clientId: cl.id,
+      phone: cl.phone || '',
+      type: cl.type || 'кафе',
+      items,
+      total,
+      payment,
+      note: '🎙️ Rulda ovozli buyurtma',
+      sent: false,
+      sentSheets: false,
+      debtPaid: !['консигнация','qarz','nasiya','долг'].includes((payment||'').toLowerCase()),
+      partialPaid: 0,
+      delivered: false,
+      courier: '',
+      status: 'new',
+      stockDeducted: true
+    };
 
-  currentDriveParsedOrder = null;
-  const inp = document.getElementById('driveVoiceInput');
-  if (inp) inp.value = '';
-  const prevBox = document.getElementById('driveVoiceParsedPreview');
-  if (prevBox) prevBox.innerHTML = '';
-  renderDriveModeNextStop();
-  updateBadges();
-  showToast(`✅ Buyurtma saqlandi: ${cl.name} (${fmt(total)} so'm)`, 'success');
-  return order;
+    commitAdminOrderAndStock(order, cl, ruleCheck);
+    try {
+      const tgOk = await sendToTelegram(order);
+      if (tgOk) {
+        order.sent = true;
+        db.collection('orders').doc(String(order.id)).update({ sent: true }).catch(()=>{});
+      }
+    } catch (e) {}
+
+    currentDriveParsedOrder = null;
+    const inp = document.getElementById('driveVoiceInput');
+    if (inp) inp.value = '';
+    const prevBox = document.getElementById('driveVoiceParsedPreview');
+    if (prevBox) prevBox.innerHTML = '';
+    renderDriveModeNextStop();
+    updateBadges();
+    showToast(`✅ Buyurtma saqlandi: ${cl.name} (${fmt(total)} so'm)`, 'success');
+    return order;
+  } finally {
+    isDriveOrderSubmitting = false;
+  }
 }
 
 function extractVoiceOrder(rawText) {
@@ -5809,3 +5970,7 @@ async function commitVoiceOrderFromChat(msgIdx) {
   currentDriveParsedOrder = draft;
   return await confirmDriveVoiceOrder(false);
 }
+
+// ==================== BOOTSTRAP (after all declarations) ====================
+verifyAuth();
+if ('serviceWorker' in navigator) { navigator.serviceWorker.register('../sw.js').catch(() => {}); }

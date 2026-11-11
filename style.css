@@ -23,7 +23,15 @@
   .icon-btn:active{transform:scale(.92);background:var(--border);}
   .lang-btn{padding:0 8px;font-size:11px;font-weight:700;letter-spacing:.5px;width:auto;}
 
-  .tabs{display:flex;background:var(--bg2);border-bottom:1px solid var(--border);padding:0 6px;overflow-x:auto;gap:2px;scrollbar-width:none;}
+  .tabs{display:flex;background:var(--bg2);border-bottom:1px solid var(--border);padding:0 6px;overflow-x:auto;gap:2px;scrollbar-width:none;position:sticky;top:61px;z-index:95;}
+  @media (max-width:420px){
+    .header{padding:10px 10px;}
+    .header-logo{font-size:18px;}
+    .header-right{gap:4px;}
+    .icon-btn{width:32px;height:32px;font-size:14px;}
+    .lang-btn{padding:0 6px;}
+    .tabs{top:53px;}
+  }
   .tabs::-webkit-scrollbar{display:none;}
   .tab{padding:11px 12px;font-size:12px;font-weight:600;color:var(--text3);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:all .2s;flex-shrink:0;}
   .tab.active{color:var(--accent);border-bottom-color:var(--accent);}
@@ -577,7 +585,7 @@
   gap: 8px;
 }
 .drive-mic-hero.recording {
-  background: rgba(255, 75, 75, 0.22);
+  background: var(--danger);
   border-color: var(--danger);
   color: #fff;
   animation: pulseMic 1.2s infinite;

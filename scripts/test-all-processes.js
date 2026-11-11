@@ -1323,6 +1323,157 @@ try {
   assert(false, 'Drive Mode test suite 11 failed', e.stack);
 }
 
+// =========================================================================
+// 12. LOGGED-IN STARTUP (NO TDZ), NULL-SAFETY, SYNC & DELETE REGRESSIONS
+// =========================================================================
+console.log('\n--- 12. Testing Logged-In Startup (TDZ), Sync & Bug Regressions ---');
+try {
+  const deletedProdDocs = [];
+  const consoleErrs = [];
+  const loggedEnv = makeMockBrowser();
+  const origConsoleErr = console.error;
+  loggedEnv.console = {
+    ...console,
+    error: (...args) => { consoleErrs.push(args.map(String).join(' ')); },
+    warn: (...args) => {
+      const msg = args.map(String).join(' ');
+      if (msg.includes('Before initialization') || msg.includes('TDZ') || msg.includes('ReferenceError')) {
+        consoleErrs.push(msg);
+      }
+    }
+  };
+  const dIso = new Date().toISOString();
+  const mockSnapData = {
+    products: [
+      { id: 'funchoza', name: 'Фунчоза', price: 25000, stock: 12, unit: 'kg', order: 0 },
+      { id: 'morkovcha', name: 'Морковча', nameUz: 'Sabzi', price: 20000, emoji: '🥕', stock: 3, minStock: 5, order: 1 }
+    ],
+    clients: [
+      { id: 'c_ok', name: 'Baraka Cafe', phone: '+998901112233', type: 'кафе', customPrices: {} }
+    ],
+    orders: [
+      { id: 'ord_valid', date: dIso, clientId: 'c_ok', client: 'Baraka Cafe', payment: 'Qarz', items: [{ id: 'funchoza', qty: 3, price: 25000 }], total: 75000, status: 'new', delivered: false, debtPaid: false },
+      { id: 'ord_malformed', date: 'bad-date', clientId: 'c_ok', client: 'Baraka Cafe', payment: 'консигнация', total: 40000, status: 'new', debtPaid: false },
+      { id: 'ord_cancelled_today', date: dIso, clientId: 'c_ok', client: 'Baraka Cafe', payment: 'Qarz', items: [{ id: 'funchoza', qty: 5, price: 25000 }], total: 125000, status: 'cancelled', delivered: false, debtPaid: false, sent: false }
+    ],
+    couriers: [{ id: 1, name: 'Anvar', pin: '1111' }],
+    agents: [],
+    templates: []
+  };
+  const makeDocs = arr => (arr || []).map(item => ({ id: String(item.id || ''), data: () => JSON.parse(JSON.stringify(item)) }));
+
+  const baseFirestore = loggedEnv.firebase.firestore();
+  loggedEnv.firebase.firestore = Object.assign(() => ({
+    ...baseFirestore,
+    collection: coll => {
+      const c = baseFirestore.collection(coll);
+      return {
+        ...c,
+        onSnapshot: cb => {
+          if (typeof cb === 'function') {
+            if (coll === 'settings') return;
+            const list = mockSnapData[coll] || [];
+            cb({ empty: list.length === 0, docs: makeDocs(list) });
+          }
+        },
+        doc: docId => ({
+          ...c.doc(docId),
+          onSnapshot: cb => {
+            if (coll === 'settings' && docId === 'main' && typeof cb === 'function') {
+              cb({ exists: true, data: () => ({ companyName: 'TeeGu' }) });
+            }
+          },
+          delete: () => {
+            if (coll === 'products') deletedProdDocs.push(String(docId));
+            return Promise.resolve();
+          }
+        })
+      };
+    }
+  }), loggedEnv.firebase.firestore);
+
+  const ADMIN_HASH = '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9';
+  loggedEnv.localStorage.setItem('adminAuth', ADMIN_HASH);
+  loggedEnv.localStorage.setItem('lang', 'ru');
+
+  const loggedCtx = vm.createContext(loggedEnv);
+  const adminCode = fs.readFileSync('admin/app.js', 'utf8');
+  vm.runInContext(adminCode, loggedCtx);
+
+  assert(consoleErrs.length === 0, 'Logged-in Admin boot completed with 0 TDZ / startup errors', JSON.stringify(consoleErrs));
+  assert(
+    loggedEnv.dom['dashboardContent']?.innerHTML.length > 200,
+    'Logged-in Admin rendered #dashboardContent non-empty on boot'
+  );
+  assert(
+    loggedEnv.dom['productsGrid']?.innerHTML.includes('pc-funchoza') &&
+    loggedEnv.dom['warehouseList']?.innerHTML.length > 50 &&
+    loggedEnv.dom['productsSettingsList']?.innerHTML.includes('pprice-0') &&
+    loggedEnv.dom['aiChatBox']?.innerHTML.includes('ai-msg bot'),
+    'Logged-in Admin rendered #productsGrid, #warehouseList, #productsSettingsList & #aiChatBox on boot'
+  );
+  assert(
+    loggedEnv.dom['aiTtsToggleBtn']?.textContent.includes('Голос') &&
+    loggedEnv.dom['btnAiRules']?.textContent.includes('Правила') &&
+    loggedEnv.dom['aiUiAccessToggle']?.textContent.includes('ВКЛ'),
+    'Logged-in RU mode localized AI header pills (#aiTtsToggleBtn, #btnAiRules, #aiUiAccessToggle)'
+  );
+  assert(
+    loggedEnv.dom['deliveryCount']?.textContent === 1 || loggedEnv.dom['deliveryCount']?.textContent === '1',
+    'Cancelled today order excluded from #deliveryCount (only 1 pending delivery)'
+  );
+  assert(
+    loggedEnv.dom['debtsCount']?.textContent === 1 || loggedEnv.dom['debtsCount']?.textContent === '1',
+    'Debts excluded cancelled debt order cleanly'
+  );
+
+  // Test order status -> done syncs delivered=true and badge counts; saveEditOrder preserves done status
+  vm.runInContext(`
+    state.couriers = [{ id: 1, name: 'Anvar', pin: '1111' }];
+    populateClientSelect();
+    populateCourierSelects();
+    openEditOrderModal('ord_valid');
+  `, loggedCtx);
+  assert(
+    loggedEnv.dom['editOrderClient']?.innerHTML.includes('Baraka Cafe') &&
+    loggedEnv.dom['editOrderPayment']?.value === 'консигнация',
+    'openEditOrderModal populated #editOrderClient & normalized Qarz -> консигнация'
+  );
+  vm.runInContext(`
+    updateOrderStatus('ord_valid', 'done');
+    if (document.getElementById('editOrderCourier')) document.getElementById('editOrderCourier').value = 'Anvar';
+    saveEditOrder();
+  `, loggedCtx);
+  const updatedOrd = vm.runInContext(`state.orders.find(o => o.id === 'ord_valid')`, loggedCtx);
+  assert(
+    updatedOrd.status === 'done' && updatedOrd.delivered === true &&
+    (loggedEnv.dom['deliveryCount']?.textContent === '' || loggedEnv.dom['deliveryCount']?.textContent === 0),
+    'updateOrderStatus("done") synced delivered=true, cleared #deliveryCount & saveEditOrder preserved done status'
+  );
+
+  // Test deleteProduct removes Firestore doc too
+  vm.runInContext(`deleteProduct(0);`, loggedCtx);
+  assert(deletedProdDocs.includes('funchoza'), 'deleteProduct removed product document from Firestore');
+
+  // Test initial HTML pill & style.css regressions
+  const adminHtmlSrc = fs.readFileSync('admin/index.html', 'utf8');
+  const styleCssSrc = fs.readFileSync('style.css', 'utf8');
+  assert(
+    adminHtmlSrc.includes('id="pill-today"') &&
+    adminHtmlSrc.includes('class="pill selected" onclick="filterByDate(\'today\',this)" id="pill-today"') &&
+    vm.runInContext(`state.dateFilter`, loggedCtx) === 'today',
+    'admin/index.html #pill-today matches state.dateFilter === "today"'
+  );
+  assert(
+    adminHtmlSrc.includes('height:clamp(260px, 46vh, 480px)') &&
+    styleCssSrc.includes('position:sticky;top:61px') &&
+    styleCssSrc.includes('.drive-mic-hero.recording {\n  background: var(--danger);') || styleCssSrc.includes('background: var(--danger);'),
+    'Mobile AI chat height, sticky tabs & light-theme Drive Mode recording contrast fixed'
+  );
+} catch (e) {
+  assert(false, 'Logged-in Startup & Regression test suite 12 failed', e.stack);
+}
+
 (async () => {
   await runAsyncAiTests();
   if (typeof runClientCheckoutRegression === 'function') await runClientCheckoutRegression();

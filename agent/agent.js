@@ -114,7 +114,7 @@ function startListeners() {
   
   // Listen for products
   db.collection('products').onSnapshot(snap => {
-    PRODUCTS = snap.docs.map(d => d.data()).sort((a,b) => a.order - b.order);
+    PRODUCTS = snap.docs.map(d => d.data()).filter(Boolean).sort((a,b) => (a.order ?? 999) - (b.order ?? 999));
     renderProducts();
   });
   
@@ -628,17 +628,6 @@ function applySharedUiConfig(cfg, appName) {
   }
 }
 
-try {
-  const cachedUi = JSON.parse(localStorage.getItem('teegu_ui_config') || 'null');
-  if (cachedUi) applySharedUiConfig(cachedUi, 'agent');
-} catch (e) {}
-
-init();
-
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('../sw.js').catch(()=>{});
-}
-
 function getAgentProductMinStock(p) {
   if (Array.isArray(AGENT_RULES)) {
     const sp = AGENT_RULES.find(r => r && r.enabled && r.type === 'warehouse_low_alert_kg' && p && String(r.productId) === String(p.id));
@@ -687,4 +676,15 @@ function evaluateAgentOrderRules(opts = {}) {
   });
 
   return { blocked: errors.length > 0, errors, largeOrderAlertKg };
+}
+
+try {
+  const cachedUi = JSON.parse(localStorage.getItem('teegu_ui_config') || 'null');
+  if (cachedUi) applySharedUiConfig(cachedUi, 'agent');
+} catch (e) {}
+
+init();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('../sw.js').catch(()=>{});
 }

@@ -95,10 +95,11 @@ async function main() {
   // 1. Sozlamalarni olish
   let tgToken = process.env.TG_BOT_TOKEN || DEFAULT_TG_TOKEN;
   let tgChatId = process.env.TG_CHAT_ID || DEFAULT_TG_CHAT_ID;
+  let settings = {};
 
   try {
     const settingsDoc = await fetchJson(`${BASE_FIRESTORE_URL}/settings/main`);
-    const settings = parseFirestoreDoc(settingsDoc);
+    settings = parseFirestoreDoc(settingsDoc);
     if (settings.tgToken && !process.env.TG_BOT_TOKEN) tgToken = settings.tgToken;
     if (settings.tgChatId && !process.env.TG_CHAT_ID) tgChatId = String(settings.tgChatId);
   } catch (err) {
@@ -130,16 +131,11 @@ async function main() {
   // 4. Bugungi hisobotni hisoblash (Toshkent vaqti bo'yicha)
   const todayStr = getTashkentReportDate();
   const isForce = process.argv.includes('--force');
-  let settings = {};
-  try {
-    const sDoc = await fetchJson(BASE_FIRESTORE_URL + "/settings/main");
-    settings = parseFirestoreDoc(sDoc);
-  } catch(e) {}
   if (!isDryRun && !isForce && settings.lastAutoSummaryDate === todayStr) {
     console.log("ℹ️ [" + todayStr + "] sanasi uchun kunlik hisobot allaqachon yuborilgan. Takroriy yuborish bekor qilindi.");
     return;
   }
-  const todayOrders = orders.filter(o => getTashkentDateString(o.date) === todayStr);
+  const todayOrders = orders.filter(o => o && o.status !== 'cancelled' && getTashkentDateString(o.date) === todayStr);
   const totalRev = todayOrders.reduce((sum, o) => sum + (o.total || 0), 0);
 
   // Foydani hisoblash qoidasi
@@ -173,6 +169,7 @@ async function main() {
   const todayMarginPct = totalRev > 0 ? Math.round((todayProfit / totalRev) * 100) : 0;
 
   const debts = orders.filter(o => {
+    if (!o || o.status === 'cancelled') return false;
     const p = (o.payment || '').toLowerCase();
     return (p === 'консигнация' || p === 'qarz' || p === 'nasiya' || p === 'долг') && !o.debtPaid;
   });

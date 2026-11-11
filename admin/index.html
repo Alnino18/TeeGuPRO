@@ -12,7 +12,7 @@
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@600;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../style.css?v=22">
+<link rel="stylesheet" href="../style.css?v=23">
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 <style>
@@ -482,11 +482,11 @@
   </div>
 
   <!-- QUICK CHIPS -->
-  <div style="margin-bottom:10px;">
-    <div style="font-size:11px; font-weight:700; color:var(--text3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">
+  <div style="margin-bottom:6px;">
+    <div style="font-size:11px; font-weight:700; color:var(--text3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">
       ⚡ <span class="t" data-ru="Быстрый анализ и склад" data-uz="Tezkor savollar va sklad">Tezkor savollar va sklad</span>
     </div>
-    <div style="display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; scrollbar-width:none;">
+    <div style="display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none;">
       <button class="ai-chip" onclick="askAiQuick('today')">📊 <span class="t" data-ru="Сводка за сегодня" data-uz="Bugungi savdo">Bugungi savdo</span></button>
       <button class="ai-chip" onclick="askAiQuick('warehouse')">🏭 <span class="t" data-ru="Остатки склада" data-uz="Sklad qoldig'i">Sklad qoldig'i</span></button>
       <button class="ai-chip" onclick="askAiQuick('debts')">💸 <span class="t" data-ru="Должники" data-uz="Qarzdorlar">Qarzdorlar</span></button>
@@ -498,11 +498,11 @@
   </div>
 
   <!-- SMART SIMULATOR, RULES & GEO CHIPS -->
-  <div style="margin-bottom:10px;">
-    <div style="font-size:11px; font-weight:700; color:#56d4a0; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">
+  <div style="margin-bottom:6px;">
+    <div style="font-size:11px; font-weight:700; color:#56d4a0; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">
       🚀 <span class="t" data-ru="Симулятор, Бизнес-Правила и Гео-Поиск" data-uz="Simulyator, Qoidalar va Hudud Tahlili">Simulyator, Qoidalar va Hudud Tahlili</span>
     </div>
-    <div style="display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; scrollbar-width:none;">
+    <div style="display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none;">
       <button class="ai-chip" onclick="openAiSimulatorModal()" style="border-color:rgba(0,229,255,0.45);color:var(--accent2);">🧮 <span class="t" data-ru="Калькулятор «Что если»" data-uz="Narx Simulyatori">Narx Simulyatori</span></button>
       <button class="ai-chip" onclick="askAiQuick('simulator')">📊 <span class="t" data-ru="AI «Что если» сценарий" data-uz="AI Nima bo'lardi agar">AI Nima bo'lardi agar</span></button>
       <button class="ai-chip" onclick="askAiQuick('rule-demo')">🧠 <span class="t" data-ru="Создать бизнес-правило" data-uz="Qoida yaratish (demo)">Qoida yaratish (demo)</span></button>
@@ -511,11 +511,11 @@
   </div>
 
   <!-- QUICK UI & BUTTON CONTROL CHIPS -->
-  <div style="margin-bottom:12px;">
-    <div style="font-size:11px; font-weight:700; color:var(--accent2); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">
+  <div style="margin-bottom:8px;">
+    <div style="font-size:11px; font-weight:700; color:var(--accent2); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">
       🎨 <span class="t" data-ru="Управление кнопками и дизайном" data-uz="Tugmalar va dizaynni boshqarish">Tugmalar va dizaynni boshqarish</span>
     </div>
-    <div style="display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; scrollbar-width:none;">
+    <div style="display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none;">
       <button class="ai-chip" onclick="askAiQuick('ui-big-btns')">🔘 <span class="t" data-ru="Увеличить кнопки" data-uz="Tugmalarni kattalashtir">Tugmalarni kattalashtir</span></button>
       <button class="ai-chip" onclick="askAiQuick('ui-emerald')">💎 <span class="t" data-ru="Изумрудная тема" data-uz="Yashil-zumrad mavzu">Yashil-zumrad mavzu</span></button>
       <button class="ai-chip" onclick="askAiQuick('ui-warehouse-first')">🏭 <span class="t" data-ru="Склад на видное место" data-uz="Skladni boshiga chiqar">Skladni boshiga chiqar</span></button>
@@ -525,7 +525,7 @@
   </div>
 
   <!-- CHAT MESSAGES CONTAINER -->
-  <div class="card" style="height:60vh; min-height:360px; max-height:75vh; display:flex; flex-direction:column; padding:0; overflow:hidden; border-color:var(--border);">
+  <div class="card" style="height:clamp(260px, 46vh, 480px); min-height:250px; max-height:68vh; display:flex; flex-direction:column; padding:0; overflow:hidden; border-color:var(--border);">
     <div id="aiChatBox" style="flex:1; min-height:0; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:12px;">
       <!-- Welcome message generated by JS -->
     </div>
@@ -1124,6 +1124,6 @@
   </div>
 </div>
 
-<script src="app.js?v=17"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>

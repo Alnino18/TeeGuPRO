@@ -103,7 +103,7 @@ async function loadMenu() {
   document.getElementById('loading').style.display = 'flex';
   try {
     const pSnap = await db.collection('products').get();
-    products = pSnap.docs.map(d => d.data()).sort((a,b)=>a.order-b.order);
+    products = pSnap.docs.map(d => d.data()).filter(Boolean).sort((a,b)=>(a.order??999)-(b.order??999));
     
     document.getElementById('loading').style.display = 'none';
     document.getElementById('menuScreen').style.display = 'block';
@@ -429,8 +429,6 @@ async function submitOrder() {
   }
 }
 
-init();
-
 function escapeHTML(str) {
   if (!str) return '';
   return String(str)
@@ -450,7 +448,7 @@ function buildTgMsg(order){
   if(order.address)l.push(`📍 ${escapeHTML(order.address)}`);
   if(order.note)l.push(`📌 <i>${escapeHTML(order.note)}</i>`);
   l.push(``,`📦 <b>Заказ:</b>`);
-  order.items.forEach((i,idx)=>l.push(`${idx+1}. ${i.emoji||''} ${escapeHTML(i.name)} — ${i.qty}${escapeHTML(i.unit||'кг')}`));
+  (order.items || []).forEach((i,idx)=>l.push(`${idx+1}. ${i.emoji||''} ${escapeHTML(i.name)} — ${i.qty}${escapeHTML(i.unit||'кг')}`));
   l.push(``,`💰 <b>Итого: ${fmt(order.total)} сум</b>`,`💳 ${pi[order.payment]||''} ${escapeHTML(order.payment)}`);
   if(order.type==='доставка'||order.type==='Dostavka')l.push(`🛵 Доставка`);
   l.push(``,`⏱ ${ds}`);
@@ -497,11 +495,11 @@ function fetchClientOrders() {
       }
       
       el.innerHTML = orders.map(o => {
-        const itemsStr = o.items.map(i => `${i.emoji} ${i.qty}${i.unit||'кг'}`).join(', ');
+        const itemsStr = (o.items || []).map(i => `${i.emoji || '🥗'} ${i.qty}${i.unit||'кг'}`).join(', ');
         const d = new Date(o.date);
-        const dateStr = d.toLocaleDateString('ru-RU', {day:'numeric',month:'short'}) + ' ' + d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+        const dateStr = isNaN(d.getTime()) ? '—' : (d.toLocaleDateString('ru-RU', {day:'numeric',month:'short'}) + ' ' + d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}));
         
-        const safeItems = JSON.stringify(o.items).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+        const safeItems = JSON.stringify(o.items || []).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
         
         const isActive = ['new', 'preparing', 'delivering'].includes(o.status);
         let statusHtml = '';
@@ -759,5 +757,7 @@ function evaluateClientOrderRules(opts = {}) {
 
   return { blocked: errors.length > 0, errors, largeOrderAlertKg };
 }
+
+init();
 
 
