@@ -394,6 +394,45 @@ function getOrderItems(){
 function getTotal(){return getOrderItems().reduce((s,i)=>s+i.qty*i.price,0);}
 function selectPayment(el){document.querySelectorAll('.payment-pills .pill').forEach(p=>p.classList.remove('selected'));el.classList.add('selected');state.selectedPayment=el.dataset.pay;}
 
+function commitAdminOrderAndStock(order, client, ruleCheck = {}) {
+  const batch = db.batch();
+  const whLogEntries = [];
+  const tgToken = state.settings.tgToken || atob('ODc5NjU4ODA3MTpBQUc4Wl9SOGhQOUVTWlpfM0x4VWFrRDhQQ1hqNUM1WlA2WQ==');
+  const tgChatId = state.settings.tgChatId || '483325961';
+  (order.items || []).forEach(i => {
+    const p = PRODUCTS.find(x => x.id === i.id);
+    if (p && isProductTracked(p)) {
+      const prodRef = db.collection('products').doc(String(p.id));
+      const newVal = roundQty(Number(p.stock) - Number(i.qty));
+      p.stock = newVal;
+      const incVal = (firebase?.firestore?.FieldValue?.increment)
+        ? firebase.firestore.FieldValue.increment(-i.qty)
+        : newVal;
+      batch.update(prodRef, { stock: incVal });
+      whLogEntries.push({
+        productId: p.id, name: p.nameUz || p.name, emoji: p.emoji || '🥗',
+        delta: -roundQty(i.qty), newStock: newVal, unit: p.unit || 'кг',
+        reason: 'Buyurtma: ' + (client?.name || order.client || '')
+      });
+      const minTh = getProductMinStock(p);
+      if (newVal <= minTh && tgToken && tgChatId) {
+        const warning = `⚠️ Diqqat! ${p.name} zaxirasi kam qoldi! Qoldiq: ${newVal} ${p.unit || 'kg'}`;
+        fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: tgChatId, text: warning }) }).catch(() => {});
+      }
+    }
+  });
+  batch.set(db.collection('orders').doc(String(order.id)), order);
+  batch.commit();
+  if (whLogEntries.length && typeof logWarehouseMovement === 'function') {
+    logWarehouseMovement(whLogEntries);
+  }
+  if (ruleCheck && ruleCheck.largeOrderAlertKg && tgToken && tgChatId) {
+    const bigMsg = `🚨 KATTA BUYURTMA (${ruleCheck.largeOrderAlertKg} kg)!\n👤 Mijoz: ${client?.name || order.client || ''}\n💰 Summa: ${fmt(order.total)} so'm`;
+    fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: tgChatId, text: bigMsg }) }).catch(() => {});
+  }
+  try { renderWarehouse(); updateWarehouseBadge(); renderDelivery(); renderDashboard(); } catch (e) {}
+}
+
 // SUBMIT
 async function submitOrder(){
   const clientId=document.getElementById('clientSelect').value;
@@ -425,45 +464,7 @@ async function submitOrder(){
     stockDeducted:true
   };
   
-  // Decrement stock if defined
-  const batch = db.batch();
-  const whLogEntries = [];
-  const tgToken = state.settings.tgToken || atob('ODc5NjU4ODA3MTpBQUc4Wl9SOGhQOUVTWlpfM0x4VWFrRDhQQ1hqNUM1WlA2WQ==');
-  const tgChatId = state.settings.tgChatId || '483325961';
-  order.items.forEach(i => {
-    const p = PRODUCTS.find(x => x.id === i.id);
-    if(p && isProductTracked(p)) {
-      const prodRef = db.collection('products').doc(String(p.id));
-      const newVal = roundQty(Number(p.stock) - Number(i.qty));
-      p.stock = newVal;
-      const incVal = (firebase?.firestore?.FieldValue?.increment)
-        ? firebase.firestore.FieldValue.increment(-i.qty)
-        : newVal;
-      batch.update(prodRef, { stock: incVal });
-      whLogEntries.push({
-        productId: p.id, name: p.nameUz || p.name, emoji: p.emoji || '🥗',
-        delta: -roundQty(i.qty), newStock: newVal, unit: p.unit || 'кг',
-        reason: 'Buyurtma: ' + client.name
-      });
-      const minTh = getProductMinStock(p);
-      if (newVal <= minTh) {
-        const warning = `⚠️ Diqqat! ${p.name} zaxirasi kam qoldi! Qoldiq: ${newVal} ${p.unit||'kg'}`;
-        if (tgToken && tgChatId) {
-          fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:warning})}).catch(()=>{});
-        }
-      }
-    }
-  });
-  batch.set(db.collection('orders').doc(String(order.id)), order);
-  batch.commit();
-  if (whLogEntries.length && typeof logWarehouseMovement === 'function') {
-    logWarehouseMovement(whLogEntries);
-  }
-  if (ruleCheck.largeOrderAlertKg && tgToken && tgChatId) {
-    const bigMsg = `🚨 KATTA BUYURTMA (${ruleCheck.largeOrderAlertKg} kg)!\n👤 Mijoz: ${client?.name || ''}\n💰 Summa: ${fmt(order.total)} so'm`;
-    fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:tgChatId,text:bigMsg})}).catch(()=>{});
-  }
-  try { renderWarehouse(); updateWarehouseBadge(); } catch(e) {}
+  commitAdminOrderAndStock(order, client, ruleCheck);
   
   const btn=document.getElementById('submitBtn');btn.innerHTML='<div class="spinner"></div>';btn.disabled=true;
   let tgOk=false;
@@ -1018,13 +1019,23 @@ function renderDelivery(customOrdersList){
     const oId = String(o.id || '').replace(/[^a-zA-Z0-9_-]/g, '');
     const itemsText = (o.items || []).map(it=>`${it.emoji || '🥗'}${it.qty}${it.unit||'кг'}`).join(' ');
     const distInfo = (!isDone && o.stepNum && o.distKm !== undefined) ? ` · 📍 ~${o.distKm} km` : '';
+    const coords = typeof getOrderLatLng === 'function' ? getOrderLatLng(o) : null;
+    const phone = o.phone || (state.clients || []).find(c => String(c.id) === String(o.clientId))?.phone || '';
+    const etaDone = o.etaNotifiedAt ? (lang === 'uz' ? '✅ Xabar ketdi' : '✅ Отправлено') : '';
+    const miniActions = !isDone ? `
+      <div class="deliv-mini-actions">
+        <button class="deliv-mini-btn" style="border-color:rgba(123,97,255,0.45);color:var(--accent2);" onclick="sendOnMyWayNotification('${oId}')">📲 ${etaDone || (lang==='uz'?"Yo'ldaman":'В пути')}</button>
+        ${coords ? `<a class="deliv-mini-btn" href="https://yandex.ru/maps/?rtext=~${coords.lat},${coords.lng}" target="_blank">📍 ${lang==='uz'?"Yo'l":'Карта'}</a>` : ''}
+        ${phone ? `<a class="deliv-mini-btn" href="tel:${escapeAttr(phone)}">📞 ${escapeHTML(phone)}</a>` : ''}
+      </div>
+    ` : '';
     return `
     <div class="delivery-item ${isDone?'done':''}" id="ditem-${oId}">
       ${isDone?'<div class="delivery-check">✅</div>':`<div class="delivery-num">${o.stepNum || (i+1)}</div>`}
       <div class="delivery-info">
         <div class="delivery-client">${escapeHTML(o.client || 'Noma\'lum mijoz')}</div>
         <div class="delivery-details">${itemsText} · ${fmt(o.total || 0)} so'm${distInfo}</div>
-        ${o.phone?`<div class="delivery-details">📞 ${escapeHTML(o.phone)}</div>`:''}
+        ${!isDone ? miniActions : (phone ? `<div class="delivery-details">📞 ${escapeHTML(phone)}</div>` : '')}
       </div>
       ${!isDone?`<button class="delivery-done-btn" onclick="markDelivered('${oId}')">✅ ${lang==='uz'?'Yetkazildi':'Доставлено'}</button>`:`<span style="font-size:12px;color:var(--green);font-weight:700">${lang==='uz'?'Bajarildi':'Доставлено'}</span>`}
     </div>`;
@@ -1032,7 +1043,14 @@ function renderDelivery(customOrdersList){
 }
 function markDelivered(id){
   const o=(state.orders || []).find(x=>String(x.id)===String(id));if(!o)return;
-  db.collection('orders').doc(String(id)).update({delivered:true, status:'done'}); showToast('✅ '+(lang==='uz'?'Yetkazildi':'Доставлено'),'success');
+  o.delivered = true; o.status = 'done';
+  db.collection('orders').doc(String(id)).update({delivered:true, status:'done'});
+  showToast('✅ '+(lang==='uz'?'Yetkazildi':'Доставлено'),'success');
+  try {
+    renderDelivery();
+    renderDashboard();
+    if (typeof renderDriveModeNextStop === 'function') renderDriveModeNextStop();
+  } catch (e) {}
 }
 function resetDelivery(){
   const today=new Date().toDateString();
@@ -1927,10 +1945,11 @@ function renderDashboard(){
         <span style="font-size:12px;font-weight:700;color:var(--accent)">Ochish ›</span>
       </div>`;
     })()}
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-      <button id="dashQuickOrderBtn" onclick="showPage('new-order')" class="btn btn-primary" style="border-radius:14px;padding:14px 8px;font-size:13px">➕ ${lang==='uz'?'Buyurtma':'Заказ'}</button>
-      <button id="dashQuickWarehouseBtn" onclick="showPage('warehouse')" class="btn btn-outline" style="border-radius:14px;padding:14px 8px;font-size:13px;border-color:rgba(45,212,160,.45);color:var(--green)">🏭 ${lang==='uz'?'Sklad':'Склад'}</button>
-      <button id="dashQuickReportBtn" onclick="sendDaySummary()" class="btn btn-outline" style="border-radius:14px;padding:14px 8px;font-size:13px">📤 ${lang==='uz'?'Xisobot':'Отчёт'}</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <button id="dashQuickOrderBtn" onclick="showPage('new-order')" class="btn btn-primary" style="border-radius:14px;padding:13px 8px;font-size:13px">➕ ${lang==='uz'?'Buyurtma':'Заказ'}</button>
+      <button id="dashQuickDriveBtn" onclick="openDriveModeModal()" class="btn btn-success" style="border-radius:14px;padding:13px 8px;font-size:13px">🚗 ${lang==='uz'?'Rulda Rejimi':'За рулём'}</button>
+      <button id="dashQuickWarehouseBtn" onclick="showPage('warehouse')" class="btn btn-outline" style="border-radius:14px;padding:13px 8px;font-size:13px;border-color:rgba(45,212,160,.45);color:var(--green)">🏭 ${lang==='uz'?'Sklad':'Склад'}</button>
+      <button id="dashQuickReportBtn" onclick="sendDaySummary()" class="btn btn-outline" style="border-radius:14px;padding:13px 8px;font-size:13px">📤 ${lang==='uz'?'Xisobot':'Отчёт'}</button>
     </div>`;
   renderCustomUiButtons();
   applySavedUiRenames();
@@ -2582,6 +2601,9 @@ function renderAiPage() {
       const simHtml = (m.role === 'bot' && m.simScenario && typeof renderSimCardHtml === 'function')
         ? renderSimCardHtml(m.simScenario)
         : '';
+      const voiceOrderHtml = (m.role === 'bot' && m.voiceOrder && typeof renderAiVoiceOrderCard === 'function')
+        ? renderAiVoiceOrderCard(m.voiceOrder, idx)
+        : '';
       const isSpk = typeof aiSpeakingIdx !== 'undefined' && aiSpeakingIdx === idx;
       const speakBtn = m.role === 'bot'
         ? `<button class="ai-speak-btn ${isSpk ? 'speaking' : ''}" onclick="${isSpk ? 'stopAiSpeech()' : `speakAiMessage(${idx})`}">${isSpk ? '⏹ ' + (lang==='uz'?'To\'xtatish':'Стоп') : '🔊 ' + (lang==='uz'?'Tinglash':'Озвучить')}</button>`
@@ -2590,6 +2612,7 @@ function renderAiPage() {
       <div class="ai-msg ${m.role}">
         <div>${m.role === 'bot' ? renderMarkdown(m.text) : escapeHTML(m.text)}</div>
         ${simHtml}
+        ${voiceOrderHtml}
         ${ruleBadge}
         ${uiBadge}
         <div class="ai-msg-footer">
@@ -2713,7 +2736,11 @@ QOIDALAR:
 {"ops":[{"op":"add","type":"block_debt_above|min_order_kg|warehouse_low_alert_kg|large_order_alert_kg|max_order_debt_days","limit":500000,"minKg":2,"thresholdKg":3,"maxDays":10,"productId":"all","label":"Qoidaning tushunarli nomi"}]}
 <<<END_BIZ_RULES>>>
 (Qoidani o'chirish uchun {"op":"remove","id":"..."} yoki o'chirib yoqish uchun {"op":"toggle","id":"...","enabled":false} yozing).
-9. MARSHRUT VA HUDUD BO'SHLIG'I TAHLILI: Agar yangi mijoz qayerdan topish, qaysi tumanga kengayish yoki marshrut samaradorligi so'ralsa, "hududVaMarshrutTahlili" dagi faol hududlar, 1-2 mijozli bo'sh yo'nalishlar ("boshliqYonalishlar") va kirmagan tumanlar ("kirmaganTumanlar") asosida aniq amaliy reja bering.${uiContextBlock}`;
+9. MARSHRUT VA HUDUD BO'SHLIG'I TAHLILI: Agar yangi mijoz qayerdan topish, qaysi tumanga kengayish yoki marshrut samaradorligi so'ralsa, "hududVaMarshrutTahlili" dagi faol hududlar, 1-2 mijozli bo'sh yo'nalishlar ("boshliqYonalishlar") va kirmagan tumanlar ("kirmaganTumanlar") asosida aniq amaliy reja bering.
+10. OVOZ BILAN TEZKOR BUYURTMA (<<<VOICE_ORDER>>>): Agar foydalanuvchi suhbatda mijozga buyurtma yozib qo'yishni aytsa (masalan: "Alfraganusga 5 kg funchoza, 2 kg sabzi naqdga"), javob oxirida quyidagi tayyor qoralama blokini qaytaring:
+<<<VOICE_ORDER>>>
+{"clientName":"Mijoz nomi","items":[{"id":"funchoza","qty":5}],"payment":"наличные|клик|консигнация","note":""}
+<<<END_VOICE_ORDER>>>${uiContextBlock}`;
 
     const aiResponse = await callGemini(apiKey, systemPrompt, text, prevHistory);
     
@@ -2724,6 +2751,7 @@ QOIDALAR:
     let uiApplied = [];
     let ruleApplied = [];
     let simScenario = null;
+    let voiceOrder = null;
     if (typeof extractAndApplyUiActions === 'function') {
       const uiRes = extractAndApplyUiActions(cleanText);
       cleanText = uiRes.cleanText || cleanText;
@@ -2742,9 +2770,14 @@ QOIDALAR:
       cleanText = sRes.cleanText || cleanText;
       simScenario = sRes.scenario || null;
     }
+    if (typeof extractVoiceOrder === 'function') {
+      const vRes = extractVoiceOrder(cleanText);
+      cleanText = vRes.cleanText || cleanText;
+      voiceOrder = vRes.voiceOrder || null;
+    }
     
     const botTime = new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
-    aiChatHistory.push({ role: 'bot', text: cleanText, uiApplied, ruleApplied, simScenario, time: botTime });
+    aiChatHistory.push({ role: 'bot', text: cleanText, uiApplied, ruleApplied, simScenario, voiceOrder, time: botTime });
     
     if (aiChatHistory.length > 20) aiChatHistory = aiChatHistory.slice(-20);
     localStorage.setItem('aiChatHistory', JSON.stringify(aiChatHistory));
@@ -4365,6 +4398,7 @@ const ALLOWED_UI_CALLS = {
   openPriceBroadcastModal: () => typeof openBroadcastModal === 'function' && openBroadcastModal('pricelist'),
   optimizeAdminDeliveryRoute: () => typeof optimizeAdminDeliveryRoute === 'function' && optimizeAdminDeliveryRoute(),
   optimizeDeliveryOrder: () => typeof optimizeAdminDeliveryRoute === 'function' && optimizeAdminDeliveryRoute(),
+  openDriveModeModal: () => typeof openDriveModeModal === 'function' && openDriveModeModal(),
   undoLastUiChange: () => undoLastUiChange(),
   openUiInspectorModal: () => openUiInspectorModal()
 };
@@ -4524,6 +4558,7 @@ function cleanTextForSpeech(rawText) {
     .replace(/<<<UI_ACTIONS>>>[\s\S]*?(?:<<<END_UI_ACTIONS>>>|$)/g, ' ')
     .replace(/<<<BIZ_RULES>>>[\s\S]*?(?:<<<END_BIZ_RULES>>>|$)/g, ' ')
     .replace(/<<<SIM_SCENARIO>>>[\s\S]*?(?:<<<END_SIM_SCENARIO>>>|$)/g, ' ')
+    .replace(/<<<VOICE_ORDER>>>[\s\S]*?(?:<<<END_VOICE_ORDER>>>|$)/g, ' ')
     .replace(/https?:\/\/\S+/g, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/[\*#_`~|>]/g, ' ')
@@ -5220,4 +5255,557 @@ function renderAiRulesModal() {
       </div>
     </div>
   `).join('');
+}
+
+// ==================== DRIVE MODE ("RULDA REJIMI" — VOICE ORDER & "YO'LDAMAN" ETA) ====================
+let driveVoiceRec = null;
+let isDriveRecording = false;
+let currentDriveParsedOrder = null;
+
+function getOrderLatLng(o) {
+  if (!o) return null;
+  if (o.lat && o.lng && !isNaN(parseFloat(o.lat)) && !isNaN(parseFloat(o.lng))) {
+    return { lat: parseFloat(o.lat), lng: parseFloat(o.lng) };
+  }
+  const cl = (state.clients || []).find(c => String(c.id) === String(o.clientId));
+  if (cl && cl.lat && cl.lng && !isNaN(parseFloat(cl.lat)) && !isNaN(parseFloat(cl.lng))) {
+    return { lat: parseFloat(cl.lat), lng: parseFloat(cl.lng) };
+  }
+  return null;
+}
+
+function getNextPendingDeliveryOrder() {
+  const today = new Date().toDateString();
+  let pending = (state.orders || []).filter(o => o && o.date && new Date(o.date).toDateString() === today && !o.delivered && o.status !== 'done' && o.status !== 'cancelled');
+  if (!pending.length) return null;
+  if (typeof adminOptimizedRoute !== 'undefined' && adminOptimizedRoute && Array.isArray(adminOptimizedRoute.sortedOrders)) {
+    const rankMap = new Map();
+    adminOptimizedRoute.sortedOrders.forEach((so, idx) => rankMap.set(String(so.id), idx));
+    pending = pending.slice().sort((a, b) => {
+      const ra = rankMap.has(String(a.id)) ? rankMap.get(String(a.id)) : 9999;
+      const rb = rankMap.has(String(b.id)) ? rankMap.get(String(b.id)) : 9999;
+      return ra - rb;
+    });
+  }
+  return pending[0];
+}
+
+function translitCyrToLat(str) {
+  const map = {
+    'а':'a','б':'b','в':'v','г':'g','ғ':'g','д':'d','е':'e','ё':'yo','ж':'j','з':'z','и':'i','й':'y',
+    'к':'k','қ':'q','л':'l','м':'m','н':'n','о':'o','ў':'o','п':'p','р':'r','с':'s','т':'t','у':'u',
+    'ф':'f','х':'x','ҳ':'h','ц':'s','ч':'ch','ш':'sh','щ':'sh','ъ':'','ы':'i','ь':'','э':'e','ю':'yu','я':'ya'
+  };
+  return String(str || '').toLowerCase().split('').map(ch => map[ch] !== undefined ? map[ch] : ch).join('');
+}
+
+function replaceSpokenNumberWords(normText) {
+  const numWords = {
+    'nol': 0, 'ноль': 0,
+    'bir': 1, 'bitta': 1, 'odin': 1, 'odna': 1,
+    'ikki': 2, 'ikkita': 2, 'dva': 2, 'dve': 2,
+    'uch': 3, 'uchta': 3, 'tri': 3,
+    'tort': 4, 'tortta': 4, 'to\'rt': 4, 'chetyre': 4,
+    'besh': 5, 'beshta': 5, 'pyat': 5,
+    'olti': 6, 'oltita': 6, 'shest': 6,
+    'yetti': 7, 'yettita': 7, 'sem': 7,
+    'sakkiz': 8, 'sakkizta': 8, 'vosem': 8,
+    'toqqiz': 9, 'toqqizta': 9, 'to\'qqiz': 9, 'devyat': 9,
+    'on': 10, 'onta': 10, 'o\'n': 10, 'desyat': 10,
+    'yigirma': 20, 'ottiz': 30, 'o\'ttiz': 30, 'qirq': 40, 'ellik': 50
+  };
+  let out = String(normText || '').replace(/,/g, '.');
+  out = out.replace(/\bpoltora\b/g, '1.5').replace(/\bpolkilo\b|\bpol\b/g, '0.5');
+  Object.keys(numWords).forEach(w => {
+    const escaped = w.replace(/'/g, "\\'");
+    out = out.replace(new RegExp('\\b' + escaped + '\\s+yarim\\b', 'g'), String(numWords[w] + 0.5));
+    out = out.replace(new RegExp('\\b' + escaped + '\\b', 'g'), String(numWords[w]));
+  });
+  out = out.replace(/(\d+(?:\.\d+)?)\s+yarim\b/g, (_, n) => String(parseFloat(n) + 0.5));
+  out = out.replace(/\byarim\b/g, '0.5');
+  return out;
+}
+
+const VOICE_PRODUCT_SYNONYMS = {
+  funchoza: ['funchoz', 'funchuz', 'funchos', 'funchoza'],
+  morkovcha: ['morkov', 'morkovcha', 'sabzi'],
+  sologurc: ['sologurc', 'ogurts', 'ogurs', 'bodring', 'tuzlangan'],
+  kapusta: ['kapust', 'karam', 'sladkaya'],
+  kuksi: ['kuksi']
+};
+
+function parseVoiceOrderCommand(rawTranscript) {
+  const original = String(rawTranscript || '').trim();
+  const norm = replaceSpokenNumberWords(
+    translitCyrToLat(original)
+      .replace(/[ʻ’`‘]/g, "'")
+      .replace(/[^\w\s'.]/g, ' ')
+      .replace(/\s+/g, ' ')
+  );
+
+  // 1. Detect payment method
+  let payment = 'наличные';
+  if (/\b(nasiya|qarz|qarzdor|dolg|konsignats|kredit)\w*\b/i.test(norm)) {
+    payment = 'консигнация';
+  } else if (/\b(klik|click|karta|kart|plastik|perechislen)\w*\b/i.test(norm)) {
+    payment = 'клик';
+  }
+
+  // 2. Match client cleanly against state.clients
+  let matchedClient = null;
+  let bestScore = 0;
+  (state.clients || []).forEach(c => {
+    if (!c || !c.name) return;
+    const cNorm = translitCyrToLat(c.name).replace(/[ʻ’`‘]/g, "'");
+    const cWords = cNorm.split(/\s+/).filter(w => w.length >= 3 && !['cafe','kafe','oshxona','food','fast','bar'].includes(w));
+    const searchWords = cWords.length ? cWords : cNorm.split(/\s+/).filter(w => w.length >= 2);
+    let score = 0;
+    if (norm.includes(cNorm)) score += 100;
+    searchWords.forEach(w => {
+      if (norm.includes(w)) score += w.length * 3;
+      else if (w.length >= 5 && norm.includes(w.slice(0, w.length - 1))) score += (w.length - 1) * 2;
+    });
+    if (score > bestScore) {
+      bestScore = score;
+      matchedClient = c;
+    }
+  });
+
+  // 3. Match products + quantities before/near product keyword
+  const tokens = norm.split(/\s+/).filter(Boolean);
+  const foundMap = {};
+  const unitTokens = new Set(['kg', 'kilo', 'kilogram', 'kilogramm', 'sht', 'shtuk', 'dona', 'ta', 'litr', 'l']);
+  const prodList = (PRODUCTS || []).map(p => {
+    const id = String(p.id || '').toLowerCase();
+    const stems = new Set(VOICE_PRODUCT_SYNONYMS[id] || []);
+    [p.name, p.nameUz, p.id].forEach(label => {
+      translitCyrToLat(label || '').split(/\s+/).forEach(w => {
+        const cw = w.replace(/[^a-z0-9]/g, '');
+        if (cw.length >= 3) stems.add(cw);
+      });
+    });
+    return { prod: p, stems: Array.from(stems) };
+  });
+
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i].replace(/'/g, '');
+    const matchedProdEntry = prodList.find(entry => entry.stems.some(st => tok.startsWith(st) || tok.includes(st)));
+    if (!matchedProdEntry) continue;
+    const p = matchedProdEntry.prod;
+
+    // Look back 1-3 tokens for quantity number (skipping unit words like kg/sht)
+    let qty = null;
+    for (let back = 1; back <= 3 && (i - back) >= 0; back++) {
+      const prevTok = tokens[i - back];
+      if (unitTokens.has(prevTok)) continue;
+      if (/^\d+(?:\.\d+)?$/.test(prevTok)) {
+        qty = parseFloat(prevTok);
+        break;
+      }
+      break;
+    }
+    // Or look ahead 1 token if spoken like "funchoza 5 kg"
+    if (qty === null && (i + 1) < tokens.length && /^\d+(?:\.\d+)?$/.test(tokens[i + 1])) {
+      qty = parseFloat(tokens[i + 1]);
+    }
+    if (qty !== null && qty > 0) {
+      const isUnit = p.unit === 'шт';
+      const cleanQty = isUnit ? Math.max(1, Math.round(qty)) : Math.round(qty * 10) / 10;
+      const customPrice = (matchedClient && matchedClient.customPrices && matchedClient.customPrices[p.id])
+        ? Number(matchedClient.customPrices[p.id])
+        : Number(p.price) || 0;
+      foundMap[p.id] = {
+        id: p.id,
+        name: p.name || '',
+        nameUz: p.nameUz || p.name || '',
+        emoji: p.emoji || '🥗',
+        qty: (foundMap[p.id]?.qty || 0) + cleanQty,
+        price: customPrice,
+        unit: p.unit || 'кг'
+      };
+    }
+  }
+
+  const items = Object.values(foundMap);
+  const total = Math.round(items.reduce((s, it) => s + (it.qty * it.price), 0));
+  return {
+    raw: original,
+    clientId: matchedClient ? matchedClient.id : '',
+    clientName: matchedClient ? matchedClient.name : '',
+    client: matchedClient,
+    items,
+    total,
+    payment
+  };
+}
+
+function openDriveModeModal(prefillText = '') {
+  renderDriveModeNextStop();
+  const inp = document.getElementById('driveVoiceInput');
+  if (inp) {
+    if (prefillText) inp.value = prefillText;
+    previewDriveVoiceText(inp.value || '');
+  }
+  openModal('driveModeModal');
+}
+
+function renderDriveModeNextStop() {
+  const box = document.getElementById('driveNextStopCard');
+  if (!box) return;
+  const nextOrd = getNextPendingDeliveryOrder();
+  if (!nextOrd) {
+    box.innerHTML = `<div class="drive-next-card" style="text-align:center;">
+      <div style="font-size:28px;">🎉</div>
+      <div style="font-weight:800;font-size:14px;margin-top:4px;">${lang==='uz' ? 'Bugungi barcha yetkazib berishlar bajarildi!' : 'Все доставки на сегодня выполнены!'}</div>
+      <div style="font-size:12px;color:var(--text2);margin-top:3px;">${lang==='uz' ? 'Pastdan ovoz bilan yangi buyurtma qabul qilishingiz mumkin.' : 'Ниже можно создать новый заказ голосом.'}</div>
+    </div>`;
+    return;
+  }
+
+  const oId = String(nextOrd.id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  const cl = (state.clients || []).find(c => String(c.id) === String(nextOrd.clientId));
+  const phone = nextOrd.phone || cl?.phone || '';
+  const cleanPhone = String(phone).replace(/[^\d+]/g, '');
+  const coords = getOrderLatLng(nextOrd);
+  const etaMins = Number(document.getElementById('driveEtaSelect')?.value || 15) || 15;
+  const clientDebt = (state.orders || []).filter(o => o && o.status !== 'cancelled' && !o.debtPaid && String(o.clientId) === String(nextOrd.clientId) && (o.payment === 'консигнация' || o.payment === 'Qarz'))
+    .reduce((s, o) => s + Math.max(0, (Number(o.total) || 0) - (Number(o.partialPaid) || 0)), 0);
+  const itemsStr = (nextOrd.items || []).map(i => `${i.emoji || '🥗'} ${i.qty}${i.unit || 'кг'}`).join(' · ');
+  const smsBody = encodeURIComponent(lang === 'uz'
+    ? `Assalomu alaykum! TeeGu salatlari bo'yicha buyurtmangiz yo'lda — ~${etaMins} daqiqada yetib boramiz.`
+    : `Здравствуйте! Ваш заказ салатов TeeGu уже в пути — будем примерно через ${etaMins} мин.`);
+  const navUrl = coords ? `https://yandex.ru/maps/?rtext=~${coords.lat},${coords.lng}` : '#';
+  const etaSentBadge = nextOrd.etaNotifiedAt ? `<span style="color:var(--green);font-size:11px;font-weight:800;">✅ Xabar yuborildi</span>` : '';
+
+  box.innerHTML = `
+    <div class="drive-next-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+        <span style="font-size:11px;font-weight:800;color:var(--accent2);text-transform:uppercase;">🚚 ${lang==='uz'?'Keyingi manzil':'Следующая точка'} ${nextOrd.stepNum ? '#' + nextOrd.stepNum : ''}</span>
+        ${etaSentBadge}
+      </div>
+      <div style="font-size:18px;font-weight:900;margin-top:4px;">${escapeHTML(nextOrd.client || 'Mijoz')}</div>
+      <div style="font-size:12px;color:var(--text2);margin-top:3px;">${itemsStr} · <b>${fmt(nextOrd.total || 0)} so'm</b> (${escapeHTML(nextOrd.payment || 'Naqd')})</div>
+      ${clientDebt > 0 ? `<div style="font-size:11px;color:var(--orange);font-weight:700;margin-top:4px;">⚠️ Eski qarzi: ${fmt(clientDebt)} so'm</div>` : ''}
+      <div class="drive-big-grid">
+        ${coords
+          ? `<a class="drive-big-btn nav" href="${navUrl}" target="_blank">🧭 Navigator</a>`
+          : `<button class="drive-big-btn nav" onclick="openCoordModal('${escapeAttr(String(nextOrd.clientId || ''))}')">📍 Xarita belgilash</button>`}
+        <button class="drive-big-btn eta" onclick="sendOnMyWayNotification('${oId}')">📲 Yo'ldaman (~${etaMins}d)</button>
+        ${cleanPhone
+          ? `<a class="drive-big-btn sms" href="sms:${escapeAttr(cleanPhone)}?body=${smsBody}">💬 SMS</a>`
+          : `<button class="drive-big-btn sms" onclick="showToast('Telefon raqam kiritilmagan','info')">💬 SMS yo'q</button>`}
+        <button class="drive-big-btn done" onclick="markDelivered('${oId}')">✅ Yetkazildi</button>
+      </div>
+    </div>
+  `;
+}
+
+async function sendOnMyWayNotification(orderId, customEta = null) {
+  const o = (state.orders || []).find(x => String(x.id) === String(orderId));
+  if (!o) return { ok: false, reason: 'order_not_found' };
+  const cl = (state.clients || []).find(c => String(c.id) === String(o.clientId));
+  const etaMins = Number(customEta || document.getElementById('driveEtaSelect')?.value || 15) || 15;
+  const tgId = cl?.tgId || cl?.chatId || cl?.telegramId || o.tgId;
+  const phone = o.phone || cl?.phone || '';
+  const cleanPhone = String(phone).replace(/[^\d+]/g, '');
+
+  const msgText = lang === 'uz'
+    ? `🚚 Assalomu alaykum, ${o.client || 'hurmatli mijoz'}! TeeGu salatlari bo'yicha buyurtmangiz yo'lda — taxminan ${etaMins} daqiqada yetib boramiz.`
+    : `🚚 Здравствуйте, ${o.client || 'уважаемый клиент'}! Ваш заказ салатов TeeGu в пути — будем примерно через ${etaMins} мин.`;
+  const smsUri = cleanPhone ? `sms:${cleanPhone}?body=${encodeURIComponent(msgText)}` : '';
+  const tgToken = (state.settings && state.settings.tgToken) || atob('ODc5NjU4ODA3MTpBQUc4Wl9SOGhQOUVTWlpfM0x4VWFrRDhQQ1hqNUM1WlA2WQ==');
+
+  let channel = 'none';
+  if (tgId && tgToken) {
+    try {
+      const resp = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: String(tgId), text: msgText })
+      });
+      const json = resp && typeof resp.json === 'function' ? await resp.json() : { ok: true };
+      if (json && json.ok !== false) channel = 'telegram';
+    } catch (e) {}
+  }
+
+  if (channel !== 'telegram') {
+    if (smsUri) {
+      channel = 'sms';
+      try {
+        if (typeof window !== 'undefined' && typeof window.open === 'function') window.open(smsUri, '_self');
+      } catch (e) {}
+      showToast('📱 Mijozda Telegram ID yo\'q — SMS xabar ochildi', 'info');
+    } else {
+      showToast('⚠️ Mijozda Telegram ID ham, telefon raqam ham kiritilmagan', 'error');
+      return { ok: false, channel: 'none', text: msgText };
+    }
+  } else {
+    showToast(`📲 "${o.client}" ga Telegramdan "Yo'ldaman (~${etaMins} daq)" yuborildi!`, 'success');
+  }
+
+  o.etaNotifiedAt = new Date().toISOString();
+  try {
+    db.collection('orders').doc(String(o.id)).update({ etaNotifiedAt: o.etaNotifiedAt });
+  } catch (e) {}
+  try { renderDelivery(); renderDriveModeNextStop(); } catch (e) {}
+  return { ok: true, channel, text: msgText, smsUri };
+}
+
+function toggleDriveVoiceOrder() {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) {
+    showToast(lang === 'uz' ? 'Brauzerda ovozli kiritish qo\'llanmaydi — pastdagi qatorga yozing' : 'Голосовой ввод не поддерживается', 'info');
+    return;
+  }
+  const btn = document.getElementById('driveVoiceOrderBtn');
+  if (isDriveRecording && driveVoiceRec) {
+    driveVoiceRec.stop();
+    isDriveRecording = false;
+    if (btn) btn.classList.remove('recording');
+    return;
+  }
+  try {
+    driveVoiceRec = new SpeechRec();
+    driveVoiceRec.lang = lang === 'uz' ? 'uz-UZ' : 'ru-RU';
+    driveVoiceRec.interimResults = false;
+    driveVoiceRec.maxAlternatives = 1;
+    driveVoiceRec.onstart = () => {
+      isDriveRecording = true;
+      if (btn) btn.classList.add('recording');
+      showToast('🎤 Buyurtmani ayting...', 'info');
+    };
+    driveVoiceRec.onresult = event => {
+      const txt = event?.results?.[0]?.[0]?.transcript || '';
+      const inp = document.getElementById('driveVoiceInput');
+      if (inp) inp.value = txt;
+      previewDriveVoiceText(txt);
+    };
+    driveVoiceRec.onerror = () => { isDriveRecording = false; if (btn) btn.classList.remove('recording'); };
+    driveVoiceRec.onend = () => { isDriveRecording = false; if (btn) btn.classList.remove('recording'); };
+    driveVoiceRec.start();
+  } catch (e) {
+    isDriveRecording = false;
+    if (btn) btn.classList.remove('recording');
+  }
+}
+
+function renderDriveParsedPreviewBox() {
+  const box = document.getElementById('driveVoiceParsedPreview');
+  const parsed = currentDriveParsedOrder;
+  if (!box) return;
+  if (!parsed) {
+    box.innerHTML = '';
+    return;
+  }
+  const clientOpts = `<option value="">— Mijozni tanlang —</option>` +
+    (state.clients || []).map(c => `<option value="${escapeAttr(String(c.id))}" ${String(c.id) === String(parsed.clientId) ? 'selected' : ''}>${escapeHTML(c.name)}</option>`).join('');
+  const payLabel = { 'наличные': '💵 Naqd', 'клик': '📱 Click', 'консигнация': '📝 Nasiya' }[parsed.payment] || parsed.payment;
+  const itemsHtml = parsed.items.length
+    ? parsed.items.map(i => `<div>${i.emoji} <b>${escapeHTML(i.nameUz || i.name)}</b>: ${i.qty} ${escapeHTML(i.unit)} · ${fmt(i.qty * i.price)} so'm</div>`).join('')
+    : `<div style="color:var(--danger);font-size:12px;">⚠️ Mahsulot va miqdor aniqlanmadi (masalan: "5 kg funchoza")</div>`;
+
+  box.innerHTML = `
+    <div class="drive-parsed-box">
+      <div style="font-size:11px;font-weight:800;color:var(--accent2);margin-bottom:6px;">📋 ANIQLANGAN BUYURTMA:</div>
+      <select id="driveParsedClientSelect" class="form-input" style="padding:7px 10px;font-size:13px;margin-bottom:8px;" onchange="onDriveParsedClientChange(this.value)">${clientOpts}</select>
+      <div style="line-height:1.6;">${itemsHtml}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-weight:800;">
+        <span>${payLabel}</span>
+        <span style="color:var(--green);font-size:15px;">Jami: ${fmt(parsed.total)} so'm</span>
+      </div>
+      <div class="row" style="gap:8px;margin-top:10px;">
+        <button class="btn btn-outline" style="padding:10px;font-size:12px;" onclick="confirmDriveVoiceOrder(true)">✏️ Formaga</button>
+        <button class="btn btn-success" style="padding:10px;font-size:13px;" onclick="confirmDriveVoiceOrder(false)">✅ Darhol Saqlash</button>
+      </div>
+    </div>
+  `;
+}
+
+function previewDriveVoiceText(rawText) {
+  if (!String(rawText || '').trim()) {
+    currentDriveParsedOrder = null;
+    renderDriveParsedPreviewBox();
+    return;
+  }
+  currentDriveParsedOrder = parseVoiceOrderCommand(rawText);
+  renderDriveParsedPreviewBox();
+}
+
+function onDriveParsedClientChange(clientId) {
+  if (!currentDriveParsedOrder) return;
+  const cl = (state.clients || []).find(c => String(c.id) === String(clientId)) || null;
+  currentDriveParsedOrder.clientId = cl ? cl.id : '';
+  currentDriveParsedOrder.clientName = cl ? cl.name : '';
+  currentDriveParsedOrder.client = cl;
+  currentDriveParsedOrder.items.forEach(it => {
+    const p = (PRODUCTS || []).find(x => String(x.id) === String(it.id));
+    it.price = (cl && cl.customPrices && cl.customPrices[it.id]) ? Number(cl.customPrices[it.id]) : (Number(p?.price) || it.price);
+  });
+  currentDriveParsedOrder.total = Math.round(currentDriveParsedOrder.items.reduce((s, i) => s + i.qty * i.price, 0));
+  renderDriveParsedPreviewBox();
+}
+
+async function confirmDriveVoiceOrder(sendToForm = false) {
+  const selId = document.getElementById('driveParsedClientSelect')?.value || currentDriveParsedOrder?.clientId;
+  const cl = (state.clients || []).find(c => String(c.id) === String(selId));
+  if (!cl) {
+    showToast('⚠️ Avval mijozni tanlang', 'error');
+    return false;
+  }
+  if (!currentDriveParsedOrder || !currentDriveParsedOrder.items || !currentDriveParsedOrder.items.length) {
+    showToast('⚠️ Kamida bitta mahsulot va miqdor kiriting', 'error');
+    return false;
+  }
+
+  // Re-sync item prices to selected client customPrices
+  const items = currentDriveParsedOrder.items.map(it => {
+    const p = (PRODUCTS || []).find(x => String(x.id) === String(it.id));
+    const price = (cl.customPrices && cl.customPrices[it.id]) ? Number(cl.customPrices[it.id]) : (Number(p?.price) || Number(it.price) || 0);
+    return { ...it, price };
+  });
+  const total = Math.round(items.reduce((s, i) => s + i.qty * i.price, 0));
+  const payment = currentDriveParsedOrder.payment || 'наличные';
+
+  if (sendToForm) {
+    closeModal('driveModeModal');
+    showPage('new-order');
+    const cSel = document.getElementById('clientSelect');
+    if (cSel) cSel.value = cl.id;
+    state.quantities = {};
+    items.forEach(i => { state.quantities[i.id] = i.qty; });
+    renderProductsGrid();
+    items.forEach(i => {
+      const qEl = document.getElementById('qty-' + i.id);
+      const pEl = document.getElementById('pc-' + i.id);
+      if (qEl) qEl.textContent = i.qty;
+      if (pEl && pEl.classList) pEl.classList.toggle('selected', i.qty > 0);
+    });
+    const payPill = Array.from(document.querySelectorAll('.payment-pills .pill')).find(el => el.dataset?.pay === payment);
+    if (payPill && typeof selectPayment === 'function') selectPayment(payPill);
+    updateSummary();
+    showToast('✏️ Buyurtma formaga o\'tkazildi', 'info');
+    return true;
+  }
+
+  const ruleCheck = typeof evaluateOrderBusinessRules === 'function'
+    ? evaluateOrderBusinessRules({ clientId: cl.id, clientName: cl.name, items, payment, rules: aiBusinessRules, orders: state.orders })
+    : { blocked: false, errors: [], largeOrderAlertKg: null };
+  if (ruleCheck.blocked) {
+    showToast('🚫 ' + ruleCheck.errors[0], 'error');
+    return false;
+  }
+
+  const order = {
+    id: Date.now(),
+    date: new Date().toISOString(),
+    client: cl.name,
+    clientId: cl.id,
+    phone: cl.phone || '',
+    type: cl.type || 'кафе',
+    items,
+    total,
+    payment,
+    note: '🎙️ Rulda ovozli buyurtma',
+    sent: false,
+    sentSheets: false,
+    debtPaid: payment !== 'консигнация',
+    partialPaid: 0,
+    delivered: false,
+    courier: '',
+    status: 'new',
+    stockDeducted: true
+  };
+
+  commitAdminOrderAndStock(order, cl, ruleCheck);
+  try {
+    const tgOk = await sendToTelegram(order);
+    if (tgOk) {
+      order.sent = true;
+      db.collection('orders').doc(String(order.id)).update({ sent: true });
+    }
+  } catch (e) {}
+
+  currentDriveParsedOrder = null;
+  const inp = document.getElementById('driveVoiceInput');
+  if (inp) inp.value = '';
+  const prevBox = document.getElementById('driveVoiceParsedPreview');
+  if (prevBox) prevBox.innerHTML = '';
+  renderDriveModeNextStop();
+  updateBadges();
+  showToast(`✅ Buyurtma saqlandi: ${cl.name} (${fmt(total)} so'm)`, 'success');
+  return order;
+}
+
+function extractVoiceOrder(rawText) {
+  if (!rawText || typeof rawText !== 'string') return { cleanText: rawText || '', voiceOrder: null };
+  const match = rawText.match(/<<<VOICE_ORDER>>>([\s\S]*?)<<<END_VOICE_ORDER>>>/);
+  if (!match) return { cleanText: rawText, voiceOrder: null };
+  const cleanText = rawText.replace(/<<<VOICE_ORDER>>>[\s\S]*?<<<END_VOICE_ORDER>>>/g, '').trim();
+  try {
+    const parsed = JSON.parse(match[1].trim());
+    if (parsed && Array.isArray(parsed.items) && parsed.items.length) {
+      return { cleanText, voiceOrder: parsed };
+    }
+  } catch (e) {}
+  return { cleanText, voiceOrder: null };
+}
+
+function renderAiVoiceOrderCard(vo, msgIdx) {
+  if (!vo || !Array.isArray(vo.items) || !vo.items.length) return '';
+  const itemsDesc = vo.items.map(it => {
+    const p = (PRODUCTS || []).find(x => String(x.id) === String(it.id));
+    return `${p?.emoji || '🥗'} ${escapeHTML(p?.nameUz || p?.name || it.id)}: <b>${Number(it.qty)} ${escapeHTML(p?.unit || 'kg')}</b>`;
+  }).join(' · ');
+  return `
+    <div class="drive-parsed-box">
+      <div style="font-size:11px;font-weight:800;color:var(--accent2);">🎙️ TAYYOR BUYURTMA QORALAMASI</div>
+      <div style="font-weight:800;margin-top:3px;">👤 ${escapeHTML(vo.clientName || 'Mijoz')}</div>
+      <div style="font-size:12px;margin-top:2px;">${itemsDesc}</div>
+      <div class="row" style="gap:6px;margin-top:8px;">
+        <button class="chip" style="margin:0;padding:6px 10px;font-size:11px;" onclick="fillOrderFormFromVoiceChat(${msgIdx})">🚗 Rulda oynasida ochish</button>
+        <button class="chip" style="margin:0;padding:6px 10px;font-size:11px;background:rgba(86,212,160,0.2);color:#56d4a0;border-color:rgba(86,212,160,0.4);" onclick="commitVoiceOrderFromChat(${msgIdx})">✅ Darhol Saqlash</button>
+      </div>
+    </div>
+  `;
+}
+
+function resolveChatVoiceOrderDraft(msgIdx) {
+  const m = Array.isArray(aiChatHistory) ? aiChatHistory[msgIdx] : null;
+  if (!m || !m.voiceOrder) return null;
+  const vo = m.voiceOrder;
+  const cl = (state.clients || []).find(c =>
+    (vo.clientId && String(c.id) === String(vo.clientId)) ||
+    (vo.clientName && translitCyrToLat(c.name).includes(translitCyrToLat(vo.clientName)))
+  ) || null;
+  const items = (vo.items || []).map(it => {
+    const p = (PRODUCTS || []).find(x => String(x.id) === String(it.id) || translitCyrToLat(x.name).includes(translitCyrToLat(it.id || '')));
+    if (!p) return null;
+    const price = (cl && cl.customPrices && cl.customPrices[p.id]) ? Number(cl.customPrices[p.id]) : (Number(p.price) || 0);
+    return {
+      id: p.id, name: p.name || '', nameUz: p.nameUz || p.name || '',
+      emoji: p.emoji || '🥗', qty: Number(it.qty) || 0, price, unit: p.unit || 'кг'
+    };
+  }).filter(i => i && i.qty > 0);
+  const total = Math.round(items.reduce((s, i) => s + i.qty * i.price, 0));
+  return { client: cl, clientId: cl ? cl.id : '', clientName: cl ? cl.name : (vo.clientName || ''), items, total, payment: vo.payment || 'наличные' };
+}
+
+function fillOrderFormFromVoiceChat(msgIdx) {
+  const draft = resolveChatVoiceOrderDraft(msgIdx);
+  if (!draft) return;
+  openDriveModeModal();
+  currentDriveParsedOrder = draft;
+  const inp = document.getElementById('driveVoiceInput');
+  if (inp) inp.value = `${draft.clientName}: ${draft.items.map(i => `${i.qty} ${i.unit} ${i.nameUz || i.name}`).join(', ')}`;
+  renderDriveParsedPreviewBox();
+}
+
+async function commitVoiceOrderFromChat(msgIdx) {
+  const draft = resolveChatVoiceOrderDraft(msgIdx);
+  if (!draft || !draft.client || !draft.items.length) {
+    fillOrderFormFromVoiceChat(msgIdx);
+    return false;
+  }
+  currentDriveParsedOrder = draft;
+  return await confirmDriveVoiceOrder(false);
 }

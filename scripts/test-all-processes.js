@@ -1220,11 +1220,115 @@ try {
   assert(false, 'New AI Features test suite 10 failed', e.stack);
 }
 
+// =========================================================================
+// 11. TESTING DRIVE MODE ("RULDA REJIMI" — VOICE ORDER & "YO'LDAMAN" ETA)
+// =========================================================================
+console.log('\n--- 11. Testing Drive Mode (Voice Order Parser, Delivery Cards & "Yo\'ldaman" ETA) ---');
+try {
+  runAdmin(`(() => {
+    const prevClients = state.clients;
+    const prevProds = PRODUCTS;
+    state.clients = [
+      { id: 'v_c1', name: 'Alfraganus Cafe', phone: '+998901234567', tgId: '777888999', lat: 41.31, lng: 69.28, customPrices: { funchoza: 22000 } },
+      { id: 'v_c2', name: 'Burger Boss', phone: '+998939876543', lat: 41.29, lng: 69.24 }
+    ];
+    PRODUCTS = [
+      { id: 'funchoza', name: 'Фунчоза', nameUz: 'Funchoza', price: 25000, emoji: '🍜', unit: 'kg', stock: 50, minStock: 5 },
+      { id: 'morkovcha', name: 'Морковча', nameUz: 'Sabzi', price: 25000, emoji: '🥕', unit: 'kg', stock: 30, minStock: 5 }
+    ];
+    globalThis.__vParsed1 = parseVoiceOrderCommand('Алфраганусга беш кило фунчоза ва икки ярим кило сабзи нақдга');
+    globalThis.__vParsed2 = parseVoiceOrderCommand('Burger Bossga 3.5 kg funchoza nasiyaga');
+    globalThis.__vExtracted = extractVoiceOrder('Buyurtma tayyor:\\n<<<VOICE_ORDER>>>{"clientName":"Alfraganus Cafe","items":[{"id":"funchoza","qty":4}],"payment":"наличные"}<<<END_VOICE_ORDER>>>');
+    state.clients = prevClients;
+    PRODUCTS = prevProds;
+  })()`);
+  assert(
+    adminEnv.__vParsed1.clientId === 'v_c1' &&
+    adminEnv.__vParsed1.items.length === 2 &&
+    adminEnv.__vParsed1.items.find(i => i.id === 'funchoza')?.qty === 5 &&
+    adminEnv.__vParsed1.items.find(i => i.id === 'funchoza')?.price === 22000 &&
+    adminEnv.__vParsed1.items.find(i => i.id === 'morkovcha')?.qty === 2.5 &&
+    adminEnv.__vParsed1.payment === 'наличные',
+    'parseVoiceOrderCommand parsed Cyrillic/Latin Uzbek numbers, custom client pricing & multiple items'
+  );
+  assert(
+    adminEnv.__vParsed2.clientId === 'v_c2' &&
+    adminEnv.__vParsed2.items[0]?.qty === 3.5 &&
+    adminEnv.__vParsed2.payment === 'консигнация',
+    'parseVoiceOrderCommand parsed Latin client, decimal qty & nasiya payment'
+  );
+  assert(
+    adminEnv.__vExtracted.cleanText === 'Buyurtma tayyor:' &&
+    adminEnv.__vExtracted.voiceOrder?.clientName === 'Alfraganus Cafe' &&
+    adminEnv.__vExtracted.voiceOrder?.items?.[0]?.qty === 4,
+    'extractVoiceOrder stripped <<<VOICE_ORDER>>> tag and extracted draft cleanly'
+  );
+
+  // Delivery cards + Drive Mode modal preview + Direct TG & SMS fallback ETA notifications
+  globalThis.__runDriveModeAsyncTests = async () => {
+    runAdmin(`(() => {
+      clearBusinessRules();
+      state.clients = [
+        { id: 'v_c1', name: 'Alfraganus Cafe', phone: '+998901234567', tgId: '777888999', lat: 41.31, lng: 69.28, customPrices: { funchoza: 22000 } },
+        { id: 'v_c2', name: 'Burger Boss', phone: '+998939876543', lat: 41.29, lng: 69.24 }
+      ];
+      PRODUCTS = [
+        { id: 'funchoza', name: 'Фунчоза', nameUz: 'Funchoza', price: 25000, emoji: '🍜', unit: 'kg', stock: 50, minStock: 5 },
+        { id: 'morkovcha', name: 'Морковча', nameUz: 'Sabzi', price: 25000, emoji: '🥕', unit: 'kg', stock: 30, minStock: 5 }
+      ];
+      const dIso = new Date().toISOString();
+      state.orders = [
+        { id: 'd_eta_tg', date: dIso, clientId: 'v_c1', client: 'Alfraganus Cafe', phone: '+998901234567', payment: 'наличные', total: 110000, items: [{ id: 'funchoza', emoji: '🍜', qty: 5, unit: 'kg', price: 22000 }], delivered: false, status: 'new' },
+        { id: 'd_eta_sms', date: dIso, clientId: 'v_c2', client: 'Burger Boss', phone: '+998939876543', payment: 'наличные', total: 50000, items: [{ id: 'funchoza', emoji: '🍜', qty: 2, unit: 'kg', price: 25000 }], delivered: false, status: 'new' }
+      ];
+      renderDelivery();
+      openDriveModeModal('Alfraganusga 5 kg funchoza naqdga');
+      globalThis.__deliveryHtml = document.getElementById('deliveryList').innerHTML;
+      globalThis.__driveStopHtml = document.getElementById('driveNextStopCard').innerHTML;
+      globalThis.__drivePreviewHtml = document.getElementById('driveVoiceParsedPreview').innerHTML;
+    })()`);
+    assert(
+      adminEnv.__deliveryHtml.includes('sendOnMyWayNotification') &&
+      adminEnv.__deliveryHtml.includes('yandex.ru/maps/?rtext=~41.31,69.28'),
+      'renderDelivery included Yo\'ldaman notification button & Yandex Navigator link'
+    );
+    assert(
+      adminEnv.__driveStopHtml.includes('Alfraganus Cafe') &&
+      adminEnv.__drivePreviewHtml.includes('110 000') || adminEnv.__drivePreviewHtml.includes('110'),
+      'openDriveModeModal rendered active next stop focus card & voice order preview'
+    );
+
+    const tgEtaRes = await vm.runInContext(`sendOnMyWayNotification('d_eta_tg', 15)`, adminContext);
+    const smsEtaRes = await vm.runInContext(`sendOnMyWayNotification('d_eta_sms', 20)`, adminContext);
+    assert(
+      tgEtaRes.ok === true && tgEtaRes.channel === 'telegram' && tgEtaRes.text.includes('15'),
+      'sendOnMyWayNotification sent Telegram ETA message when client has tgId'
+    );
+    assert(
+      smsEtaRes.ok === true && smsEtaRes.channel === 'sms' && smsEtaRes.smsUri.startsWith('sms:+998939876543?body='),
+      'sendOnMyWayNotification prepared SMS URI fallback when client lacks tgId'
+    );
+
+    // markDelivered advances Drive Mode to Burger Boss; confirmDriveVoiceOrder respects Business Rules & deducts stock
+    runAdmin(`markDelivered('d_eta_tg');`);
+    assert(runAdmin('getNextPendingDeliveryOrder()?.id') === 'd_eta_sms', 'markDelivered advanced Drive Mode next stop to Burger Boss');
+
+    await vm.runInContext(`
+      previewDriveVoiceText('Alfraganusga 5 kg funchoza naqdga');
+      confirmDriveVoiceOrder(false);
+    `, adminContext);
+    assert(runAdmin('PRODUCTS[0].stock') === 45, 'confirmDriveVoiceOrder committed voice order and deducted 5 kg funchoza (50 -> 45)');
+  };
+} catch (e) {
+  assert(false, 'Drive Mode test suite 11 failed', e.stack);
+}
+
 (async () => {
   await runAsyncAiTests();
   if (typeof runClientCheckoutRegression === 'function') await runClientCheckoutRegression();
   if (typeof globalThis.__runAdminRulesTest === 'function') await globalThis.__runAdminRulesTest();
   if (typeof globalThis.__runClientRulesTest === 'function') await globalThis.__runClientRulesTest();
+  if (typeof globalThis.__runDriveModeAsyncTests === 'function') await globalThis.__runDriveModeAsyncTests();
   console.log('\n====================================================');
   console.log(`📊 FINAL RESULT: ${testsPassed} PASSED, ${testsFailed} FAILED`);
   console.log('====================================================');

@@ -525,3 +525,88 @@
   border-radius: 12px;
   font-size: 12px;
 }
+
+/* DRIVE MODE ("RULDA REJIMI") & VOICE ORDER */
+.drive-next-card {
+  background: linear-gradient(135deg, rgba(124, 106, 247, 0.15), rgba(86, 212, 160, 0.1));
+  border: 1.5px solid var(--accent);
+  border-radius: 16px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.drive-big-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+.drive-big-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 13px 10px;
+  border-radius: 14px;
+  font-size: 13px;
+  font-weight: 800;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  color: var(--text);
+  cursor: pointer;
+  text-decoration: none;
+  transition: transform 0.15s;
+}
+.drive-big-btn:active { transform: scale(0.96); }
+.drive-big-btn.nav { background: rgba(90, 180, 247, 0.18); border-color: var(--blue); color: var(--blue); }
+.drive-big-btn.eta { background: rgba(123, 97, 255, 0.2); border-color: var(--accent); color: var(--accent2); }
+.drive-big-btn.sms { background: rgba(247, 168, 74, 0.16); border-color: var(--orange); color: var(--orange); }
+.drive-big-btn.done { background: var(--green); border-color: var(--green); color: #0b1612; }
+.drive-mic-hero {
+  width: 100%;
+  padding: 15px 14px;
+  border-radius: 16px;
+  border: 1.5px solid rgba(0, 229, 255, 0.45);
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.16), rgba(123, 97, 255, 0.14));
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 900;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.drive-mic-hero.recording {
+  background: rgba(255, 75, 75, 0.22);
+  border-color: var(--danger);
+  color: #fff;
+  animation: pulseMic 1.2s infinite;
+}
+.drive-parsed-box {
+  margin-top: 10px;
+  padding: 11px 12px;
+  border-radius: 14px;
+  background: var(--bg2);
+  border: 1px solid rgba(86, 212, 160, 0.45);
+  font-size: 13px;
+}
+.deliv-mini-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.deliv-mini-btn {
+  padding: 5px 9px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

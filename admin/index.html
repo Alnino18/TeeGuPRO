@@ -12,7 +12,7 @@
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@600;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../style.css?v=21">
+<link rel="stylesheet" href="../style.css?v=22">
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 <style>
@@ -135,6 +135,7 @@
     <div class="header-sub" id="headerSub">Система управления заказами</div>
   </div>
   <div class="header-right">
+    <div class="icon-btn" id="btnHeaderDrive" onclick="openDriveModeModal()" title="Rulda Rejimi (Ovoz + Yo'ldaman)" style="background:rgba(86,212,160,0.18);color:var(--green);border-color:rgba(86,212,160,0.5);font-size:15px;">🚗</div>
     <div class="icon-btn" id="btnHeaderAi" onclick="showPage('ai')" title="AI Agent" style="background:rgba(123,97,255,0.2);color:var(--accent2);border-color:var(--accent);font-size:15px;font-weight:bold;">✨</div>
     <div class="icon-btn lang-btn" onclick="toggleLang()" id="langBtn">UZ</div>
     <div class="icon-btn" onclick="toggleTheme()" id="themeBtn">🌙</div>
@@ -166,6 +167,9 @@
 <!-- PAGE: NEW ORDER -->
 <div class="page" id="page-new-order">
   <div id="customBtns-new-order" class="ai-custom-buttons-wrap"></div>
+  <button id="btnNewOrderVoice" class="drive-mic-hero" onclick="openDriveModeModal()" style="margin-bottom:12px;padding:12px 14px;font-size:14px;">
+    🎙️ <span class="t" data-ru="Голосовой заказ (Режим за рулём)" data-uz="Ovoz bilan tezkor buyurtma (Rulda Rejimi)">Ovoz bilan tezkor buyurtma (Rulda Rejimi)</span>
+  </button>
   <div id="favStrip" style="display:none">
     <div style="font-size:11px;color:var(--text3);margin-bottom:5px">⭐ <span class="t" data-ru="Быстрый выбор" data-uz="Tezkor tanlash">Быстрый выбор</span></div>
     <div class="favorites-strip" id="favoritesStrip"></div>
@@ -270,6 +274,7 @@
       <button class="btn btn-outline btn-sm" id="btnResetDelivery" onclick="resetDelivery()">🔄</button>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-success btn-sm" id="btnDeliveryDriveMode" style="width:auto;padding:8px 14px" onclick="openDriveModeModal()">🚗 <span class="t" data-ru="Режим за рулём" data-uz="Rulda Rejimi">Rulda Rejimi</span></button>
       <button class="btn btn-primary btn-sm" id="btnOptimizeDelivery" style="width:auto;padding:8px 16px" onclick="optimizeAdminDeliveryRoute()">🧭 <span class="t" data-ru="Умный маршрут" data-uz="Aqlli marshrut">Aqlli marshrut</span></button>
       <button class="btn btn-primary btn-sm" id="btnSendDaySummary" style="width:auto;padding:8px 16px" onclick="sendDaySummary()">📤 <span class="t" data-ru="Сводка дня в Telegram" data-uz="Kun xulosasini Telegramga">Сводка в Telegram</span></button>
     </div>
@@ -1092,6 +1097,33 @@
   </div>
 </div>
 
-<script src="app.js?v=16"></script>
+<!-- MODAL: DRIVE MODE ("RULDA REJIMI" — VOICE ORDER + ON MY WAY) -->
+<div class="modal-overlay" id="driveModeModal">
+  <div class="modal" style="max-width:540px;">
+    <div class="modal-handle"></div>
+    <div class="modal-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <span>🚗 <span class="t" data-ru="Режим за рулём" data-uz="Rulda Rejimi (Tezkor yordamchi)">Rulda Rejimi (Tezkor yordamchi)</span></span>
+      <select id="driveEtaSelect" class="form-input" onchange="renderDriveModeNextStop()" style="width:auto;padding:5px 10px;font-size:12px;border-radius:10px;">
+        <option value="10">⏱ 10 daq</option>
+        <option value="15" selected>⏱ 15 daq</option>
+        <option value="20">⏱ 20 daq</option>
+        <option value="30">⏱ 30 daq</option>
+      </select>
+    </div>
+
+    <div id="driveNextStopCard"></div>
+
+    <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:6px;">
+      <div style="font-size:12px;font-weight:800;color:var(--accent2);margin-bottom:8px;">🎙️ <span class="t" data-ru="Голосовой ввод заказа" data-uz="Ovoz bilan yangi buyurtma yozish">Ovoz bilan yangi buyurtma yozish</span></div>
+      <button id="driveVoiceOrderBtn" class="drive-mic-hero" onclick="toggleDriveVoiceOrder()">🎤 <span class="t" data-ru="Нажмите и скажите заказ" data-uz="Bosing va buyurtmani ayting">Bosing va buyurtmani ayting</span></button>
+      <input type="text" id="driveVoiceInput" class="form-input" style="margin-top:8px;font-size:13px;" placeholder="Masalan: Alfraganusga 5 kg funchoza, 2 kg sabzi naqdga" oninput="previewDriveVoiceText(this.value)">
+      <div id="driveVoiceParsedPreview"></div>
+    </div>
+
+    <button class="btn btn-outline" style="margin-top:12px;" onclick="closeModal('driveModeModal')"><span class="t" data-ru="Закрыть" data-uz="Yopish">Yopish</span></button>
+  </div>
+</div>
+
+<script src="app.js?v=17"></script>
 </body>
 </html>
