@@ -966,6 +966,38 @@ try {
     `, strictClientCtx);
     assert(strictClientEnv.dom['checkoutSubmitBtn'] && strictClientEnv.dom['checkoutSubmitBtn'].disabled === false, 'Client submitOrder updates #checkoutSubmitBtn safely without accessing nonexistent #submitBtn');
   };
+
+  // 9E. Dashboard SVG chart renders without Chart.js CDN, skips cancelled/invalid orders, and supports day selection
+  const adminHtmlSrc = fs.readFileSync('admin/index.html', 'utf8');
+  assert(adminHtmlSrc.includes('<div class="tab active" data-page="dashboard"') && adminHtmlSrc.includes('<div class="page active" id="page-dashboard">'), 'admin/index.html active tab matches active #page-dashboard on load');
+  assert(!adminHtmlSrc.includes('cdn.jsdelivr.net/npm/chart.js'), 'admin/index.html does not block load on external chart.js CDN');
+
+  runAdmin(`
+    const prevOrders = state.orders;
+    const prevChartGlobal = window.Chart;
+    delete window.Chart;
+    const nowIso = new Date().toISOString();
+    const yestIso = new Date(Date.now() - 86400000).toISOString();
+    state.orders = [
+      { id: 'd_ok_1', date: nowIso, total: '150000', status: 'done', items: [{ id: 'funchoza', qty: 2 }] },
+      { id: 'd_cancel', date: nowIso, total: 999000, status: 'cancelled', items: [] },
+      { id: 'd_bad_date', date: 'invalid-date', total: 500000, status: 'new' },
+      { id: 'd_yest', date: yestIso, total: 200000, status: 'new' }
+    ];
+    renderDashboard();
+    selectDashboardChartDay(5);
+    globalThis.__dashHtml = document.getElementById('dashboardContent').innerHTML;
+    globalThis.__dashChartInfo = document.getElementById('dashChartSelectedInfo').textContent;
+    globalThis.__dashChartDaysCount = lastDashboardChartDays.length;
+    globalThis.__dashTodaySum = lastDashboardChartDays[6]?.value;
+    globalThis.__dashYestSum = lastDashboardChartDays[5]?.value;
+    window.Chart = prevChartGlobal;
+    state.orders = prevOrders;
+  `);
+  assert(adminEnv.__dashHtml.includes('<svg viewBox="0 0 340 148"') && adminEnv.__dashHtml.includes('dash-chart-dot'), 'renderDashboard renders built-in responsive SVG chart even when window.Chart is undefined');
+  assert(adminEnv.__dashChartDaysCount === 7 && adminEnv.__dashTodaySum === 150000 && adminEnv.__dashYestSum === 200000, 'Dashboard chart excluded cancelled/invalid orders and summed string totals accurately');
+  assert(!adminEnv.__dashHtml.includes('NaN'), 'Dashboard HTML contains no NaN values');
+  assert(adminEnv.__dashChartInfo.includes('200') && adminEnv.__dashChartInfo.includes("so'm"), 'selectDashboardChartDay updated selected day details');
 } catch (e) {
   assert(false, 'Regression suite 9 failed', e.stack);
 }

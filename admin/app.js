@@ -1319,12 +1319,15 @@ function renderChart(){
     const k2=d2.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});prev[k2]=0;
   }
   state.orders.forEach(o=>{
-    const d=new Date(o.date);d.setHours(0,0,0,0);
+    if(!o || o.status === 'cancelled' || !o.date) return;
+    const d=new Date(o.date);if(isNaN(d.getTime())) return;
+    d.setHours(0,0,0,0);
+    const rev = Number(o.total) || 0;
     const k=d.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});
-    if(cur[k]!==undefined)cur[k]+=o.total;
+    if(cur[k]!==undefined)cur[k]+=rev;
     const d2=new Date(d);d2.setDate(d2.getDate()+days);
     const k2=d2.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});
-    if(prev[k2]!==undefined)prev[k2]+=o.total;
+    if(prev[k2]!==undefined)prev[k2]+=rev;
   });
   const curE=Object.entries(cur);const prevE=Object.entries(prev);
   const maxV=Math.max(...curE.map(e=>e[1]),...prevE.map(e=>e[1]),1);
@@ -1674,12 +1677,129 @@ function calculateOrderProfit(order) {
 }
 
 // ==================== DASHBOARD ====================
+let lastDashboardChartDays = [];
+let selectedDashboardDayIdx = 6;
+
+function formatShortSum(val) {
+  const n = Number(val) || 0;
+  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1000) return Math.round(n / 1000) + 'k';
+  return String(Math.round(n));
+}
+
+function selectDashboardChartDay(idx) {
+  if (!Array.isArray(lastDashboardChartDays) || !lastDashboardChartDays[idx]) return;
+  selectedDashboardDayIdx = idx;
+  const d = lastDashboardChartDays[idx];
+  const infoEl = document.getElementById('dashChartSelectedInfo');
+  if (infoEl) {
+    infoEl.textContent = `${d.fullLabel}: ${fmt(d.value)} so'm (${d.count} ${lang === 'uz' ? 'ta' : 'зак.'})`;
+  }
+  const dots = document.querySelectorAll('.dash-chart-dot');
+  dots.forEach((el, i) => {
+    el.setAttribute('r', i === idx ? '5.5' : '3.8');
+    el.setAttribute('stroke-width', i === idx ? '2.5' : '1.5');
+  });
+}
+
+function buildDashboardRevenueChart(daysData) {
+  lastDashboardChartDays = daysData;
+  if (selectedDashboardDayIdx >= daysData.length) selectedDashboardDayIdx = daysData.length - 1;
+
+  const w = 340, h = 148;
+  const padL = 36, padR = 14, padT = 18, padB = 26;
+  const plotW = w - padL - padR;
+  const plotH = h - padT - padB;
+  const plotBottom = padT + plotH;
+
+  const total7 = daysData.reduce((s, d) => s + d.value, 0);
+  const rawMax = Math.max(...daysData.map(d => d.value), 0);
+  const scaleMax = rawMax > 0 ? rawMax * 1.15 : 100000;
+
+  const points = daysData.map((d, i) => {
+    const x = padL + (daysData.length > 1 ? (i * plotW) / (daysData.length - 1) : plotW / 2);
+    const ratio = Math.max(0, Math.min(1, d.value / scaleMax));
+    const y = plotBottom - ratio * plotH;
+    return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, ...d, idx: i };
+  });
+
+  // Smooth curve strictly within Y bounds using midpoint quadratic Bezier
+  let linePath = '';
+  let areaPath = '';
+  if (points.length >= 2) {
+    linePath = `M ${points[0].x} ${points[0].y}`;
+    for (let i = 1; i < points.length - 1; i++) {
+      const mx = (points[i].x + points[i + 1].x) / 2;
+      const my = (points[i].y + points[i + 1].y) / 2;
+      linePath += ` Q ${points[i].x} ${points[i].y} ${mx.toFixed(1)} ${my.toFixed(1)}`;
+    }
+    const last = points[points.length - 1];
+    linePath += ` T ${last.x} ${last.y}`;
+    areaPath = `${linePath} L ${last.x} ${plotBottom} L ${points[0].x} ${plotBottom} Z`;
+  }
+
+  const gridLevels = [1, 0.5, 0].map(f => {
+    const y = Math.round((plotBottom - f * plotH) * 10) / 10;
+    const val = f * scaleMax;
+    return `
+      <line x1="${padL}" y1="${y}" x2="${w - padR}" y2="${y}" stroke="var(--border)" stroke-width="1" ${f > 0 ? 'stroke-dasharray="3 3"' : ''}/>
+      <text x="${padL - 5}" y="${y + 3}" text-anchor="end" fill="var(--text3)" font-size="9.5" font-weight="600">${f === 0 ? '0' : (rawMax > 0 ? formatShortSum(val) : '')}</text>`;
+  }).join('');
+
+  const dotsAndLabels = points.map((p, i) => {
+    const isSel = i === selectedDashboardDayIdx;
+    const valTag = p.value > 0
+      ? `<text x="${p.x}" y="${Math.max(10, p.y - 7)}" text-anchor="middle" fill="var(--text2)" font-size="8.5" font-weight="700">${formatShortSum(p.value)}</text>`
+      : '';
+    return `
+      ${valTag}
+      <circle class="dash-chart-dot" cx="${p.x}" cy="${p.y}" r="${isSel ? '5.5' : '3.8'}" fill="var(--accent2)" stroke="var(--card)" stroke-width="${isSel ? '2.5' : '1.5'}" style="cursor:pointer" onclick="selectDashboardChartDay(${i})">
+        <title>${p.fullLabel}: ${fmt(p.value)} so'm</title>
+      </circle>
+      <circle cx="${p.x}" cy="${p.y}" r="13" fill="transparent" style="cursor:pointer" onclick="selectDashboardChartDay(${i})"></circle>
+      <text x="${p.x}" y="${h - 6}" text-anchor="middle" fill="${isSel ? 'var(--text)' : 'var(--text3)'}" font-size="9.5" font-weight="${isSel ? '800' : '600'}" style="cursor:pointer" onclick="selectDashboardChartDay(${i})">${p.label}</text>`;
+  }).join('');
+
+  const selDay = daysData[selectedDashboardDayIdx] || daysData[daysData.length - 1];
+  return `
+    <div id="revenueChart" style="background:var(--card);border:1px solid var(--border);border-radius:16px;padding:12px 12px 8px;margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px;">
+        <div style="font-weight:800;font-size:13px;display:flex;align-items:center;gap:5px;">📈 ${lang === 'uz' ? '7 kunlik tushum' : 'Выручка за 7 дней'}</div>
+        <div style="font-size:12px;font-weight:800;color:var(--accent2);">${fmt(total7)} so'm</div>
+      </div>
+      <div id="dashChartSelectedInfo" style="font-size:11px;color:var(--text3);margin-bottom:4px;">${selDay.fullLabel}: ${fmt(selDay.value)} so'm (${selDay.count} ${lang === 'uz' ? 'ta' : 'зак.'})</div>
+      <div id="revenueChartWrap" style="width:100%;height:148px;position:relative;">
+        <svg viewBox="0 0 ${w} ${h}" width="100%" height="148" style="width:100%;height:148px;display:block;overflow:visible;" role="img" aria-label="7 kunlik tushum grafigi">
+          <defs>
+            <linearGradient id="dashAreaGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#7b61ff" stop-opacity="0.38"/>
+              <stop offset="100%" stop-color="#00e5ff" stop-opacity="0.02"/>
+            </linearGradient>
+            <linearGradient id="dashLineGrad" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stop-color="#7b61ff"/>
+              <stop offset="100%" stop-color="#00e5ff"/>
+            </linearGradient>
+          </defs>
+          ${gridLevels}
+          ${areaPath ? `<path d="${areaPath}" fill="url(#dashAreaGrad)"/>` : ''}
+          ${linePath ? `<path d="${linePath}" fill="none" stroke="url(#dashLineGrad)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>` : ''}
+          ${dotsAndLabels}
+        </svg>
+      </div>
+    </div>`;
+}
+
 function renderDashboard(){
   const el=document.getElementById('dashboardContent');if(!el)return;
   const now=new Date();
   const todayStr=now.toDateString();
-  const todayOrders=state.orders.filter(o=>new Date(o.date).toDateString()===todayStr);
-  const todayRev=todayOrders.reduce((s,o)=>s+o.total,0);
+  const activeOrders=(state.orders || []).filter(o => {
+    if (!o || o.status === 'cancelled' || !o.date) return false;
+    const d = new Date(o.date);
+    return !isNaN(d.getTime());
+  });
+  const todayOrders=activeOrders.filter(o=>new Date(o.date).toDateString()===todayStr);
+  const todayRev=todayOrders.reduce((s,o)=>s+(Number(o.total)||0),0);
   const todayCount=todayOrders.length;
   
   let todayProfit = 0;
@@ -1688,14 +1808,14 @@ function renderDashboard(){
   });
   const todayMarginPct = todayRev > 0 ? Math.round((todayProfit / todayRev) * 100) : 0;
 
-  const todayDelivered=todayOrders.filter(o=>o.delivered).length;
-  const allDebts=(state.orders || []).filter(isDebtOrder);
-  const totalDebt=allDebts.reduce((s,o)=>s+(o.total-(o.partialPaid||0)),0);
+  const todayDelivered=todayOrders.filter(o=>o.delivered || o.status === 'done').length;
+  const allDebts=activeOrders.filter(isDebtOrder);
+  const totalDebt=allDebts.reduce((s,o)=>s+((Number(o.total)||0)-(Number(o.partialPaid)||0)),0);
   const debtClients=new Set(allDebts.map(o=>o.clientId)).size;
-  const unsent=state.orders.filter(o=>!o.sent).length;
+  const unsent=activeOrders.filter(o=>!o.sent).length;
   const weekStart=new Date(now);weekStart.setDate(now.getDate()-(now.getDay()+6)%7);weekStart.setHours(0,0,0,0);
-  const weekOrders=state.orders.filter(o=>new Date(o.date)>=weekStart);
-  const weekRev=weekOrders.reduce((s,o)=>s+o.total,0);
+  const weekOrders=activeOrders.filter(o=>new Date(o.date)>=weekStart);
+  const weekRev=weekOrders.reduce((s,o)=>s+(Number(o.total)||0),0);
   
   let weekProfit = 0;
   weekOrders.forEach(o => {
@@ -1704,14 +1824,31 @@ function renderDashboard(){
   const weekMarginPct = weekRev > 0 ? Math.round((weekProfit / weekRev) * 100) : 0;
   
   const prodToday={};PRODUCTS.forEach(p=>prodToday[p.id]=0);
-  todayOrders.forEach(o=>o.items.forEach(i=>{if(prodToday[i.id]!==undefined)prodToday[i.id]+=i.qty;}));
+  todayOrders.forEach(o=>(o.items||[]).forEach(i=>{if(i && prodToday[i.id]!==undefined)prodToday[i.id]+=(Number(i.qty)||0);}));
   const prodRows=PRODUCTS.filter(p=>prodToday[p.id]>0).map(p=>`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.08)">
       <span style="font-size:15px">${p.emoji} ${lang==='uz'?p.nameUz:p.name}</span>
-      <span style="font-weight:800;font-size:18px">${prodToday[p.id]} <span style="font-size:11px;opacity:.7">${p.unit||'кг'}</span></span>
+      <span style="font-weight:800;font-size:18px">${roundQty(prodToday[p.id])} <span style="font-size:11px;opacity:.7">${p.unit||'кг'}</span></span>
     </div>`).join('')||`<div style="opacity:.5;font-size:13px;padding:12px 0">${lang==='uz'?'Bugun buyurtma yo\'q':'Сегодня заказов нет'}</div>`;
   const timeStr=now.toLocaleTimeString(lang==='uz'?'uz':'ru-RU',{hour:'2-digit',minute:'2-digit'});
   const dateStr=now.toLocaleDateString(lang==='uz'?'uz':'ru-RU',{weekday:'long',day:'numeric',month:'long'});
+
+  const chartDays = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(now.getDate() - i);
+    const dayStr = d.toDateString();
+    const dayOrders = activeOrders.filter(o => new Date(o.date).toDateString() === dayStr);
+    const rev = dayOrders.reduce((s, o) => s + (Number(o.total) || 0), 0);
+    chartDays.push({
+      label: d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }),
+      fullLabel: d.toLocaleDateString(lang === 'uz' ? 'uz-UZ' : 'ru-RU', { day: 'numeric', month: 'short' }),
+      value: rev,
+      count: dayOrders.length
+    });
+  }
+  const chartCardHtml = buildDashboardRevenueChart(chartDays);
+
   el.innerHTML=`
     <div style="text-align:center;margin-bottom:20px">
       <div style="font-size:56px;font-weight:900;letter-spacing:-2px;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1">${timeStr}</div>
@@ -1738,11 +1875,9 @@ function renderDashboard(){
         </div>
       </div>
     </div>
-    <div style="background:var(--card);border:1px solid var(--border);border-radius:16px;padding:10px;margin-bottom:12px;height:200px">
-      <canvas id="revenueChart"></canvas>
-    </div>
+    ${chartCardHtml}
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
-      <div onclick="showPage('delivery')" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;text-align:center;cursor:pointer" active>
+      <div onclick="showPage('delivery')" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;text-align:center;cursor:pointer">
         <div style="font-size:22px">🚚</div>
         <div style="font-size:20px;font-weight:900;margin:2px 0">${todayDelivered}/${todayCount}</div>
         <div style="font-size:10px;color:var(--text3)">${lang==='uz'?'Yetkazildi':'Доставлено'}</div>
@@ -1785,43 +1920,6 @@ function renderDashboard(){
   renderCustomUiButtons();
   applySavedUiRenames();
   updateOnlineIndicator();
-  
-  // Initialize Chart
-  const ctx = document.getElementById('revenueChart');
-  if(ctx && window.Chart) {
-    const dates = [];
-    const revenues = [];
-    for(let i=6; i>=0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      dates.push(d.toLocaleDateString('ru-RU', {day:'numeric', month:'short'}));
-      const dayStr = d.toDateString();
-      const rev = state.orders.filter(o => new Date(o.date).toDateString() === dayStr).reduce((s,o) => s+o.total, 0);
-      revenues.push(rev);
-    }
-    new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: dates,
-        datasets: [{
-          label: lang==='uz'?'Tushum':'Выручка',
-          data: revenues,
-          borderColor: '#7b61ff',
-          backgroundColor: 'rgba(123, 97, 255, 0.2)',
-          tension: 0.4,
-          fill: true
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: { 
-          y: { beginAtZero: true, ticks: { callback: v => v/1000 + 'k' } }
-        }
-      }
-    });
-  }
 }
 
 // ==================== MAP ====================
