@@ -729,6 +729,66 @@ try {
 }
 
 // =========================================================================
+// 6B. TEST AI CHAT CALLGEMINI & SEND FLOW REGRESSION CHECKS
+// =========================================================================
+async function runAsyncAiTests() {
+  console.log('\n--- 6B. Testing AI Chat Payload, History Cleanup & Key Fallback ---');
+  try {
+    const fetchCalls = [];
+    adminEnv.fetch = async (url, opts) => {
+      const body = opts && opts.body ? JSON.parse(opts.body) : {};
+      fetchCalls.push({ url, body });
+      if (url.includes('BAD_CUSTOM_KEY')) {
+        return { ok: false, status: 400, json: async () => ({ error: { message: 'API key not valid. Please pass a valid API key.' } }) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{
+            content: {
+              parts: [
+                { thought: true, text: 'Internal thinking...' },
+                { text: 'Yangi javob tayyor! <<<UI_ACTIONS>>>\n```json\n{"actions":[{"type":"style_element","selector":"#submitBtn","styles":{"borderRadius":"22px"}}]}\n```\n<<<END_UI_ACTIONS>>>' }
+              ]
+            }
+          }]
+        })
+      };
+    };
+
+    runAdmin(`
+      aiChatHistory = [
+        { role: 'bot', text: 'Boshlangich xabar', time: '09:00' },
+        { role: 'user', text: 'Oldingi savol', time: '09:01' },
+        { role: 'bot', text: 'Yaxshi', time: '09:01' },
+        { role: 'bot', text: 'Xato javob', isError: true, time: '09:01' },
+        { role: 'user', text: '   ', time: '09:02' }
+      ];
+      state.settings.geminiApiKey = 'BAD_CUSTOM_KEY';
+      document.getElementById('aiInput').value = 'Tugmani yumaloq qil';
+    `);
+
+    await runAdmin(`sendAiUserMessage()`);
+
+    const hist = runAdmin('aiChatHistory');
+    const firstPayload = fetchCalls[0] ? fetchCalls[0].body : {};
+    const contents = firstPayload.contents || [];
+    assert(contents.length === 3 && contents[0].role === 'user' && contents[1].role === 'model' && contents[2].role === 'user', 'callGemini built clean alternating user->model->user turns');
+    assert(!contents.some(c => (c.parts[0]?.text || '').includes('Xato javob')), 'callGemini excluded isError messages from history');
+    assert(contents.filter(c => (c.parts[0]?.text || '').trim() === 'Tugmani yumaloq qil').length === 1, 'callGemini did not duplicate the current user message');
+    assert(fetchCalls.some(c => !c.url.includes('BAD_CUSTOM_KEY')), 'callGemini fell back to DEFAULT_GEMINI_API_KEY when custom key failed');
+    const lastBot = hist[hist.length - 1];
+    assert(lastBot && lastBot.role === 'bot' && lastBot.text === 'Yangi javob tayyor!' && !lastBot.text.includes('Internal thinking'), 'callGemini ignored thought part and stripped fenced UI_ACTIONS');
+    assert(adminEnv.dom['teeguAiCustomStyles'].textContent.includes('border-radius: 22px'), 'sendAiUserMessage applied style action from fenced UI_ACTIONS block');
+    assert(adminEnv.dom['aiSendBtn'].disabled === false, 'sendAiUserMessage re-enabled #aiSendBtn after completion');
+    runAdmin('state.settings.geminiApiKey = ""; resetUiConfig();');
+  } catch (e) {
+    assert(false, 'Async AI chat regression test failed', e.stack);
+  }
+}
+
+// =========================================================================
 // 7. TEST AGENT STOCK DECREMENT & SHARED UI SYNC
 // =========================================================================
 console.log('\n--- 7. Testing Agent Stock Decrement & Shared UI Config ---');
@@ -762,10 +822,13 @@ try {
   assert(false, 'Agent stock & shared UI config test failed', e.stack);
 }
 
-console.log('\n====================================================');
-console.log(`📊 FINAL RESULT: ${testsPassed} PASSED, ${testsFailed} FAILED`);
-console.log('====================================================');
+(async () => {
+  await runAsyncAiTests();
+  console.log('\n====================================================');
+  console.log(`📊 FINAL RESULT: ${testsPassed} PASSED, ${testsFailed} FAILED`);
+  console.log('====================================================');
 
-if (testsFailed > 0) {
-  process.exit(1);
-}
+  if (testsFailed > 0) {
+    process.exit(1);
+  }
+})();

@@ -2070,14 +2070,23 @@ window.confirmAdminMapPicker = function() {
 // TEEGU AI AGENT (GOOGLE GEMINI AI)
 // ==========================================
 
-let aiChatHistory = JSON.parse(localStorage.getItem('aiChatHistory') || '[]');
+let aiChatHistory = (() => {
+  try {
+    const raw = JSON.parse(localStorage.getItem('aiChatHistory') || '[]');
+    return Array.isArray(raw) ? raw.filter(m => m && typeof m.text === 'string' && m.text.trim()) : [];
+  } catch (e) {
+    return [];
+  }
+})();
 let aiRecognition = null;
 let isAiRecording = false;
+let isAiSending = false;
 
 const DEFAULT_GEMINI_API_KEY = atob('QVEuQWI4Uk42SjNYaGJzdHRxYnVzd0lRMXdZNE9idm9UTlpicU1ONDdRcTE5QTZITXh2bFE=');
 
 function getGeminiApiKey() {
-  return (state.settings && state.settings.geminiApiKey) || localStorage.getItem('geminiApiKey') || DEFAULT_GEMINI_API_KEY;
+  const k = (state.settings && state.settings.geminiApiKey) || localStorage.getItem('geminiApiKey') || DEFAULT_GEMINI_API_KEY;
+  return String(k || '').trim() || DEFAULT_GEMINI_API_KEY;
 }
 
 function checkAiKeyStatus() {
@@ -2281,20 +2290,40 @@ function buildBusinessContext() {
 
 async function callGemini(apiKey, systemPrompt, userMessage, chatHistory = []) {
   const contents = [];
-  
-  // Oxirgi 6 ta xabar kontekst uchun
-  (chatHistory || []).slice(-6).forEach(msg => {
+
+  // Faqat yaroqli, xatosiz oxirgi 6 ta xabarni ketma-ketlikni buzmasdan tayyorlash
+  const cleanHist = (chatHistory || [])
+    .filter(m => m && !m.isError && typeof m.text === 'string' && m.text.trim())
+    .slice(-6);
+
+  // Suhbat har doim 'user' rolidan boshlanishi shart
+  while (cleanHist.length && cleanHist[0].role !== 'user') {
+    cleanHist.shift();
+  }
+
+  cleanHist.forEach(msg => {
+    const role = msg.role === 'user' ? 'user' : 'model';
+    const last = contents[contents.length - 1];
+    if (last && last.role === role) {
+      last.parts[0].text += '\n' + msg.text;
+    } else {
+      contents.push({ role, parts: [{ text: msg.text }] });
+    }
+  });
+
+  // Agar history oxiri ham 'user' bo'lsa (masalan oldingi javob kelmay qolgan), dublikat bo'lmasligi uchun moslash
+  const lastTurn = contents[contents.length - 1];
+  if (lastTurn && lastTurn.role === 'user') {
+    if (lastTurn.parts[0].text.trim() !== String(userMessage).trim()) {
+      lastTurn.parts[0].text += '\n' + userMessage;
+    }
+  } else {
     contents.push({
-      role: msg.role === 'user' ? 'user' : 'model',
-      parts: [{ text: msg.text }]
+      role: 'user',
+      parts: [{ text: userMessage }]
     });
-  });
-  
-  contents.push({
-    role: 'user',
-    parts: [{ text: userMessage }]
-  });
-  
+  }
+
   const payload = {
     system_instruction: {
       parts: [{ text: systemPrompt }]
@@ -2302,31 +2331,65 @@ async function callGemini(apiKey, systemPrompt, userMessage, chatHistory = []) {
     contents: contents,
     generationConfig: {
       temperature: 0.35,
-      maxOutputTokens: 2048
+      maxOutputTokens: 4096
     }
   };
 
-  const models = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+  const models = ['gemini-3-flash-preview', 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.5-flash'];
+  const keysToTry = (apiKey && DEFAULT_GEMINI_API_KEY && apiKey !== DEFAULT_GEMINI_API_KEY)
+    ? [apiKey, DEFAULT_GEMINI_API_KEY]
+    : [apiKey || DEFAULT_GEMINI_API_KEY];
+
   let lastError = null;
 
-  for (const model of models) {
-    try {
-      const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + apiKey;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      
-      const data = await res.json();
-      if (res.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
-        return data.candidates[0].content.parts[0].text;
+  for (const activeKey of keysToTry) {
+    let authInvalid = false;
+    for (const model of models) {
+      let timerId = null;
+      try {
+        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        if (ctrl) {
+          timerId = setTimeout(() => ctrl.abort(), 14000);
+        }
+        const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(activeKey);
+        const fetchOpts = {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        };
+        if (ctrl) fetchOpts.signal = ctrl.signal;
+
+        const res = await fetch(url, fetchOpts);
+        if (timerId) clearTimeout(timerId);
+
+        const data = await res.json();
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        const replyText = parts
+          .filter(p => !p.thought && typeof p.text === 'string' && p.text.trim())
+          .map(p => p.text)
+          .join('\n')
+          .trim()
+          || parts.filter(p => typeof p.text === 'string').map(p => p.text).join('\n').trim();
+
+        if (res.ok && replyText) {
+          return replyText;
+        }
+        if (data?.error) {
+          lastError = data.error.message || JSON.stringify(data.error);
+          if (res.status === 400 && /api key|expired|invalid/i.test(lastError) || res.status === 401 || res.status === 403) {
+            authInvalid = true;
+            break;
+          }
+        } else if (data?.candidates?.[0]?.finishReason) {
+          lastError = 'AI javob qaytarmadi (' + data.candidates[0].finishReason + ')';
+        }
+      } catch (err) {
+        if (timerId) clearTimeout(timerId);
+        lastError = err && err.name === 'AbortError' ? (model + ' timeout') : (err.message || String(err));
       }
-      if (data.error) {
-        lastError = data.error.message || JSON.stringify(data.error);
-      }
-    } catch (err) {
-      lastError = err.message;
+    }
+    if (!authInvalid && lastError && !/api key|invalid|expired|permission/i.test(lastError)) {
+      break;
     }
   }
 
@@ -2381,22 +2444,34 @@ function renderAiPage() {
 }
 
 async function sendAiUserMessage(customText = null) {
+  if (isAiSending) return;
   const inputEl = document.getElementById('aiInput');
+  const sendBtn = document.getElementById('aiSendBtn');
   const text = (customText || (inputEl ? inputEl.value : '')).trim();
   if (!text) return;
   
   const apiKey = getGeminiApiKey();
   if (!apiKey) {
     showToast(lang === 'uz' ? 'Avval Gemini API kalitini kiriting' : 'Сначала введите ключ Gemini API', 'error');
-    document.getElementById('aiKeyWarning').style.display = 'block';
-    document.getElementById('aiKeyQuickInput').focus();
+    const warn = document.getElementById('aiKeyWarning');
+    if (warn) warn.style.display = 'block';
+    const qIn = document.getElementById('aiKeyQuickInput');
+    if (qIn) qIn.focus();
     return;
   }
   
-  if (inputEl) inputEl.value = '';
+  isAiSending = true;
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.textContent = '⏳';
+  }
+  if (inputEl && !customText) inputEl.value = '';
+  else if (inputEl) inputEl.value = '';
   
   const timeStr = new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
+  const prevHistory = aiChatHistory.slice();
   aiChatHistory.push({ role: 'user', text: text, time: timeStr });
+  try { localStorage.setItem('aiChatHistory', JSON.stringify(aiChatHistory.slice(-20))); } catch (e) {}
   renderAiPage();
   
   const box = document.getElementById('aiChatBox');
@@ -2414,8 +2489,10 @@ async function sendAiUserMessage(customText = null) {
       </div>
     </div>
   `;
-  box.appendChild(typingDiv);
-  box.scrollTop = box.scrollHeight;
+  if (box) {
+    box.appendChild(typingDiv);
+    box.scrollTop = box.scrollHeight;
+  }
   
   try {
     const businessContext = buildBusinessContext();
@@ -2467,7 +2544,7 @@ QOIDALAR:
 5. Qarzlar bo'yicha gap ketganda, eng katta qarzdorlarni va telefon raqamlarini ko'rsating.
 6. Agar foydalanuvchi UI o'zgartirishini so'ramagan bo'lsa, <<<UI_ACTIONS>>> blokini ISHLATMANG. Faqat UI o'zgarishi so'ralganda aniq va xavfsiz <<<UI_ACTIONS>>> JSON qaytaring va nima o'zgarganini qisqa tushuntiring.${uiContextBlock}`;
 
-    const aiResponse = await callGemini(apiKey, systemPrompt, text, aiChatHistory);
+    const aiResponse = await callGemini(apiKey, systemPrompt, text, prevHistory);
     
     const typingEl = document.getElementById(typingId);
     if (typingEl) typingEl.remove();
@@ -2478,6 +2555,9 @@ QOIDALAR:
       const uiRes = extractAndApplyUiActions(aiResponse);
       cleanText = uiRes.cleanText || aiResponse;
       uiApplied = uiRes.applied || [];
+      if (uiRes.blocked) {
+        cleanText += (lang === 'uz' ? '\n\n🔒 _Eslatma: UI Dostup o\'chirilgan. Tepadagi "🎨 UI: OFF" tugmasini yoqing._' : '\n\n🔒 _Доступ к UI отключен. Нажмите "🎨 UI: OFF" сверху._');
+      }
     }
     
     const botTime = new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
@@ -2494,12 +2574,19 @@ QOIDALAR:
     const errTime = new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
     const isUz = lang === 'uz';
     const errText = isUz 
-      ? ('❌ Xatolik yuz berdi: ' + err.message + '. Iltimos, Gemini API kalitini tekshiring.')
-      : ('❌ Произошла ошибка: ' + err.message + '. Пожалуйста, проверьте ключ Gemini API.');
+      ? ('❌ Xatolik yuz berdi: ' + err.message + '. Qaytadan urinib ko\'ring yoki 🔑 kalitni tekshiring.')
+      : ('❌ Произошла ошибка: ' + err.message + '. Попробуйте снова или проверьте ключ 🔑.');
       
-    aiChatHistory.push({ role: 'bot', text: errText, time: errTime });
+    aiChatHistory.push({ role: 'bot', text: errText, isError: true, time: errTime });
+    try { localStorage.setItem('aiChatHistory', JSON.stringify(aiChatHistory.slice(-20))); } catch (e) {}
     renderAiPage();
     showToast(isUz ? 'AI xatolik berdi' : 'Ошибка AI', 'error');
+  } finally {
+    isAiSending = false;
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.textContent = '➤';
+    }
   }
 }
 
@@ -3925,12 +4012,13 @@ function extractAndApplyUiActions(rawText) {
   let cleanText = rawText;
   let parsedActions = null;
 
-  const tagRe = /<<<UI_ACTIONS>>>([\s\S]*?)<<<END_UI_ACTIONS>>>/i;
+  const tagRe = /<<<UI_ACTIONS>>>([\s\S]*?)(?:<<<END_UI_ACTIONS>>>|$)/i;
   const m = rawText.match(tagRe);
   if (m && m[1]) {
     cleanText = rawText.replace(tagRe, '').trim();
+    const cleanedJson = m[1].trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     try {
-      const obj = JSON.parse(m[1].trim());
+      const obj = JSON.parse(cleanedJson);
       if (obj && Array.isArray(obj.actions)) parsedActions = obj.actions;
     } catch (e) {}
   } else {
