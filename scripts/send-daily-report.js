@@ -77,7 +77,110 @@ function getTashkentReportDisplayDate(d = new Date()) {
 }
 
 function getTashkentDateString(d = new Date()) {
-  return new Date(d).toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
+  if (!d) return '';
+  const dateObj = new Date(d);
+  if (isNaN(dateObj.getTime())) return String(d).slice(0, 10);
+  return dateObj.toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
+}
+
+function isConsignmentPayment(p) {
+  if (!p) return false;
+  const s = String(p).toLowerCase().trim();
+  return s === 'консигнация' || s === 'qarz' || s === 'nasiya' || s === 'долг';
+}
+
+function getItemProfit(item, prodFallback) {
+  const id = (item.id || '').toLowerCase();
+  const name = (item.name || '').toLowerCase();
+  const price = Math.round(item.price || 0);
+  const qty = parseFloat(item.qty || 0) || 0;
+  if (qty <= 0) return 0;
+  if (id === 'funchoza' || id === 'morkovcha' || name.includes('фунчоз') || name.includes('морков') || name.includes('sabzi')) {
+    if (price <= 20000) return 3000 * qty;
+    if (price <= 22000) return 4000 * qty;
+    return 5000 * qty;
+  }
+  if (id === 'sologurc' || name.includes('сол') || name.includes('огурц') || name.includes('tuzlangan')) {
+    if (price <= 15000) return 3000 * qty;
+    return 5000 * qty;
+  }
+  const cost = item.cost > 0 ? item.cost : (prodFallback?.cost > 0 ? prodFallback.cost : 0);
+  if (cost > 0 && price > cost) return (price - cost) * qty;
+  return 0;
+}
+
+function getDebtRepaymentsOnDate(orders = [], targetDateStr) {
+  let collected = 0;
+  (orders || []).forEach(o => {
+    if (!o || o.status === 'cancelled') return;
+    if (!isConsignmentPayment(o.payment)) return;
+
+    let hasHistoryOnDate = false;
+    if (Array.isArray(o.paymentHistory) && o.paymentHistory.length > 0) {
+      o.paymentHistory.forEach(entry => {
+        if (entry && entry.date && getTashkentDateString(entry.date) === targetDateStr) {
+          collected += (Number(entry.amount) || 0);
+          hasHistoryOnDate = true;
+        }
+      });
+    }
+
+    if (!hasHistoryOnDate && o.debtPaid && o.debtPaidAt && getTashkentDateString(o.debtPaidAt) === targetDateStr) {
+      const alreadyPaid = Array.isArray(o.paymentHistory)
+        ? o.paymentHistory.reduce((s, h) => s + (Number(h.amount) || 0), 0)
+        : (Number(o.partialPaid) || 0);
+      const remaining = Math.max(0, (Number(o.total) || 0) - alreadyPaid);
+      collected += (remaining > 0 ? remaining : (Number(o.total) || 0));
+    }
+  });
+  return collected;
+}
+
+function calculateDailyReportMetrics(orders = [], products = [], todayStr = getTashkentReportDate()) {
+  const todayOrders = (orders || []).filter(o => o && o.status !== 'cancelled' && getTashkentDateString(o.date) === todayStr);
+
+  // Cash / Click immediate revenue today (excluding consignment)
+  const todayCashOrders = todayOrders.filter(o => !isConsignmentPayment(o.payment));
+  const todayCashRev = todayCashOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+
+  // Consignment orders given today (alohida hisob)
+  const consignmentOrdersToday = todayOrders.filter(o => isConsignmentPayment(o.payment));
+  const consignmentGivenToday = consignmentOrdersToday.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+
+  // Debt repayments collected on todayStr from consignment orders
+  const debtsCollectedToday = getDebtRepaymentsOnDate(orders, todayStr);
+
+  // Total realized cash revenue collected today
+  const totalRealizedRev = todayCashRev + debtsCollectedToday;
+
+  // Profit calculation
+  let todayProfit = 0;
+  todayOrders.forEach(o => {
+    (o.items || []).forEach(i => {
+      const p = (products || []).find(x => x.id === i.id);
+      todayProfit += getItemProfit(i, p);
+    });
+  });
+  const todayMarginPct = totalRealizedRev > 0 ? Math.round((todayProfit / totalRealizedRev) * 100) : 0;
+
+  // Overall outstanding debt
+  const debts = (orders || []).filter(o => {
+    if (!o || o.status === 'cancelled') return false;
+    return isConsignmentPayment(o.payment) && !o.debtPaid;
+  });
+  const totalDebt = debts.reduce((sum, o) => sum + (Number(o.total) || 0) - (Number(o.partialPaid) || 0), 0);
+
+  return {
+    todayOrders,
+    todayCashRev,
+    consignmentGivenToday,
+    debtsCollectedToday,
+    totalRealizedRev,
+    todayProfit,
+    todayMarginPct,
+    debts,
+    totalDebt
+  };
 }
 
 async function fetchJson(url) {
@@ -135,45 +238,18 @@ async function main() {
     console.log("ℹ️ [" + todayStr + "] sanasi uchun kunlik hisobot allaqachon yuborilgan. Takroriy yuborish bekor qilindi.");
     return;
   }
-  const todayOrders = orders.filter(o => o && o.status !== 'cancelled' && getTashkentDateString(o.date) === todayStr);
-  const totalRev = todayOrders.reduce((sum, o) => sum + (o.total || 0), 0);
-
-  // Foydani hisoblash qoidasi
-  function getItemProfit(item, prodFallback) {
-    const id = (item.id || '').toLowerCase();
-    const name = (item.name || '').toLowerCase();
-    const price = Math.round(item.price || 0);
-    const qty = parseFloat(item.qty || 0) || 0;
-    if (qty <= 0) return 0;
-    if (id === 'funchoza' || id === 'morkovcha' || name.includes('фунчоз') || name.includes('морков') || name.includes('sabzi')) {
-      if (price <= 20000) return 3000 * qty;
-      if (price <= 22000) return 4000 * qty;
-      return 5000 * qty;
-    }
-    if (id === 'sologurc' || name.includes('сол') || name.includes('огурц') || name.includes('tuzlangan')) {
-      if (price <= 15000) return 3000 * qty;
-      return 5000 * qty;
-    }
-    const cost = item.cost > 0 ? item.cost : (prodFallback?.cost > 0 ? prodFallback.cost : 0);
-    if (cost > 0 && price > cost) return (price - cost) * qty;
-    return 0;
-  }
-
-  let todayProfit = 0;
-  todayOrders.forEach(o => {
-    (o.items || []).forEach(i => {
-      const p = products.find(x => x.id === i.id);
-      todayProfit += getItemProfit(i, p);
-    });
-  });
-  const todayMarginPct = totalRev > 0 ? Math.round((todayProfit / totalRev) * 100) : 0;
-
-  const debts = orders.filter(o => {
-    if (!o || o.status === 'cancelled') return false;
-    const p = (o.payment || '').toLowerCase();
-    return (p === 'консигнация' || p === 'qarz' || p === 'nasiya' || p === 'долг') && !o.debtPaid;
-  });
-  const totalDebt = debts.reduce((sum, o) => sum + (o.total || 0) - (o.partialPaid || 0), 0);
+  const metrics = calculateDailyReportMetrics(orders, products, todayStr);
+  const {
+    todayOrders,
+    todayCashRev,
+    consignmentGivenToday,
+    debtsCollectedToday,
+    totalRealizedRev,
+    todayProfit,
+    todayMarginPct,
+    debts,
+    totalDebt
+  } = metrics;
 
   const prodTotals = {};
   products.forEach(p => { prodTotals[p.id] = 0; });
@@ -202,8 +278,11 @@ async function main() {
     `📊 <b>СВОДКА ЗА ДЕНЬ — ${displayDate}</b>`,
     ``,
     `📦 <b>Заказов:</b> ${todayOrders.length}`,
-    `💰 <b>Выручка (Тушум):</b> ${fmt(totalRev)} so'm`,
-    `💵 <b>Чистая прибыль (Фойда):</b> ${fmt(todayProfit)} so'm (${todayMarginPct}%)`,
+    `💵 <b>Naqd / Klik tushum:</b> ${fmt(todayCashRev)} so'm`,
+    `🤝 <b>Undirilgan qarzlar (to'langan konsignatsiya):</b> ${fmt(debtsCollectedToday)} so'm`,
+    `💰 <b>JAMI KELIB TUSHGAN TUSHUM:</b> ${fmt(totalRealizedRev)} so'm`,
+    `⏳ <b>Bugun konsignatsiyaga berildi (nasiya):</b> ${fmt(consignmentGivenToday)} so'm (alohida hisob)`,
+    `📈 <b>Чистая прибыль (Фойда):</b> ${fmt(todayProfit)} so'm (${todayMarginPct}%)`,
     ``,
     `📦 <b>Продано:</b>`,
     ...prodLines,
@@ -232,7 +311,7 @@ async function main() {
     try {
       console.log('AI xulosasi olinmoqda...');
       const soldSummary = prodLines.map(l => l.replace(/<[^>]*>/g, '').trim()).join(', ');
-      const aiPrompt = `Siz TeeGu.PRO salat biznesi AI maslahatchisisiz. Bugungi natijalar: Jami buyurtmalar: ${todayOrders.length} ta, Tushum: ${fmt(totalRev)} so'm, Sotilgan: ${soldSummary || 'mahsulot sotilmadi'}, Qarzlar: ${fmt(totalDebt)} so'm. Shu ma'lumotlar asosida biznes egasi uchun 2-3 jumlada qisqa, professional xulosa va ertangi kun uchun amaliy maslahat yozing (o'zbek tilida).`;
+      const aiPrompt = `Siz TeeGu.PRO salat biznesi AI maslahatchisisiz. Bugungi natijalar: Jami buyurtmalar: ${todayOrders.length} ta, Kelib tushgan tushum: ${fmt(totalRealizedRev)} so'm (Naqd/Klik: ${fmt(todayCashRev)} so'm, Undirilgan qarzlar: ${fmt(debtsCollectedToday)} so'm), Bugun konsignatsiyaga berildi: ${fmt(consignmentGivenToday)} so'm, Sotilgan: ${soldSummary || 'mahsulot sotilmadi'}, Umumiy qarzlar: ${fmt(totalDebt)} so'm. Shu ma'lumotlar asosida biznes egasi uchun 2-3 jumlada qisqa, professional xulosa va ertangi kun uchun amaliy maslahat yozing (o'zbek tilida).`;
       
       const aiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${geminiKey}`, {
         method: 'POST',
@@ -294,8 +373,25 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error('❌ Xatolik yuz berdi:', err);
-  process.exit(1);
-});
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    isConsignmentPayment,
+    getItemProfit,
+    getDebtRepaymentsOnDate,
+    calculateDailyReportMetrics,
+    getTashkentReportDate,
+    getTashkentReportDisplayDate,
+    getTashkentDateString,
+    parseFirestoreDoc,
+    parseFirestoreValue,
+    main
+  };
+}
+
+if (require.main === module) {
+  main().catch(err => {
+    console.error('❌ Xatolik yuz berdi:', err);
+    process.exit(1);
+  });
+}
 

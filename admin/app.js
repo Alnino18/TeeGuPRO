@@ -5,6 +5,78 @@ function isDebtOrder(o) {
   return (p === 'консигнация' || p === 'qarz' || p === 'nasiya' || p === 'долг') && !o.debtPaid;
 }
 
+function isConsignmentPayment(payment) {
+  const p = String(payment || '').toLowerCase().trim();
+  return p === 'консигнация' || p === 'qarz' || p === 'nasiya' || p === 'долг';
+}
+
+function getDailyCashBreakdown(ordersList, targetDate = new Date()) {
+  const dObj = targetDate instanceof Date ? targetDate : new Date(targetDate);
+  const targetDayStr = isNaN(dObj.getTime()) ? new Date().toDateString() : dObj.toDateString();
+  const allOrders = Array.isArray(ordersList) ? ordersList : (state.orders || []);
+  
+  let immediateCashRev = 0;
+  let consignmentGivenToday = 0;
+  let todayOrdersCount = 0;
+  let todayOrdersDelivered = 0;
+
+  allOrders.forEach(o => {
+    if (!o || o.status === 'cancelled' || !o.date) return;
+    const d = new Date(o.date);
+    if (isNaN(d.getTime())) return;
+    if (d.toDateString() === targetDayStr) {
+      todayOrdersCount++;
+      if (o.delivered || o.status === 'done') todayOrdersDelivered++;
+      const total = Number(o.total) || 0;
+      if (isConsignmentPayment(o.payment)) {
+        consignmentGivenToday += total;
+      } else {
+        immediateCashRev += total;
+      }
+    }
+  });
+
+  let repaidDebtRev = 0;
+  allOrders.forEach(o => {
+    if (!o || o.status === 'cancelled') return;
+    if (Array.isArray(o.paymentHistory) && o.paymentHistory.length) {
+      o.paymentHistory.forEach(h => {
+        if (!h || !h.date) return;
+        const hd = new Date(h.date);
+        if (!isNaN(hd.getTime()) && hd.toDateString() === targetDayStr) {
+          repaidDebtRev += (Number(h.amount) || 0);
+        }
+      });
+    } else if (o.debtPaid && o.debtPaidAt) {
+      const pd = new Date(o.debtPaidAt);
+      if (!isNaN(pd.getTime()) && pd.toDateString() === targetDayStr) {
+        repaidDebtRev += Math.max(0, (Number(o.total) || 0));
+      }
+    } else if (o.debtPaid && isConsignmentPayment(o.payment) && o.date) {
+      const od = new Date(o.date);
+      if (!isNaN(od.getTime()) && od.toDateString() === targetDayStr) {
+        repaidDebtRev += Math.max(0, (Number(o.total) || 0));
+      }
+    }
+  });
+
+  const totalRealizedRev = immediateCashRev + repaidDebtRev;
+
+  return {
+    immediateCashRev,
+    consignmentGivenToday,
+    repaidDebtRev,
+    totalRealizedRev,
+    todayOrdersCount,
+    todayOrdersDelivered
+  };
+}
+
+if (typeof window !== 'undefined') {
+  window.isConsignmentPayment = isConsignmentPayment;
+  window.getDailyCashBreakdown = getDailyCashBreakdown;
+}
+
 
 // --- AUTHENTICATION LOGIC ---
 const ADMIN_HASH = "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9"; // admin123
@@ -560,7 +632,7 @@ async function sendDaySummary(){
   if(!tgToken||!tgChatId){showToast('⚠️ ' + (lang === 'uz' ? 'Telegram sozlanmagan' : 'Настройте Telegram'),'error');return false;}
   const today=new Date().toDateString();
   const todayOrders=(state.orders || []).filter(o=>new Date(o.date).toDateString()===today);
-  const totalRev=todayOrders.reduce((s,o)=>s+(o.total||0),0);
+  const breakdown=getDailyCashBreakdown(state.orders, new Date());
   const debts=(state.orders || []).filter(isDebtOrder);
   const totalDebt=debts.reduce((s,o)=>s+(o.total||0)-(o.partialPaid||0),0);
   const prodTotals={};(PRODUCTS || []).forEach(p=>{prodTotals[p.id]=0;});
@@ -577,7 +649,10 @@ async function sendDaySummary(){
   const lines=[
     '📊 <b>' + (isUz ? 'KUNLIK HISOBOT' : 'СВОДКА ЗА ДЕНЬ') + ' — ' + d.toLocaleDateString('ru-RU') + '</b>', '',
     '📦 <b>' + (isUz ? 'Buyurtmalar' : 'Заказов') + ':</b> ' + todayOrders.length,
-    '💰 <b>' + (isUz ? 'Tushum' : 'Выручка') + ':</b> ' + fmt(totalRev) + ' so\'m', '',
+    '💵 <b>' + (isUz ? 'Naqd / Klik tushum' : 'Наличные / Клик') + ':</b> ' + fmt(breakdown.immediateCashRev) + ' so\'m',
+    '🤝 <b>' + (isUz ? 'Bugun undirilgan qarzlar' : 'Взыскано долгов (сегодня)') + ':</b> ' + fmt(breakdown.repaidDebtRev) + ' so\'m',
+    '💰 <b>' + (isUz ? 'JAMI KELIB TUSHGAN TUSHUM' : 'ИТОГО ПОСТУПИЛО (ВЫРУЧКА)') + ':</b> ' + fmt(breakdown.totalRealizedRev) + ' so\'m',
+    '⏳ <b>' + (isUz ? 'Bugun konsignatsiyaga berildi (nasiya)' : 'Отдано под реализацию сегодня') + ':</b> ' + fmt(breakdown.consignmentGivenToday) + ' so\'m (alohida hisob)', '',
     '📦 <b>' + (isUz ? 'Sotildi' : 'Продано') + ':</b>',
     ...prodLines, '',
     '💸 <b>' + (isUz ? 'Umumiy qarz (konsignatsiya)' : 'Общий долг (консигнация)') + ':</b> ' + fmt(totalDebt) + ' so\'m',
@@ -1046,10 +1121,30 @@ function renderDebts(){
 }
 function markDebtPaid(clientId){
   if(!confirm(lang==='uz'?"To'lashni tasdiqlaysizmi?":'Отметить как оплаченный?'))return;
+  const nowIso = new Date().toISOString();
   const batch = db.batch();
-  (state.orders || []).forEach(o=>{if(String(o.clientId)===String(clientId)&&isDebtOrder(o)){ o.debtPaid=true; batch.update(db.collection('orders').doc(String(o.id)), {debtPaid:true}); }});
+  (state.orders || []).forEach(o=>{
+    if(String(o.clientId)===String(clientId) && isDebtOrder(o)){
+      const unpaidAmount = Math.max(0, (Number(o.total) || 0) - (Number(o.partialPaid) || 0));
+      o.debtPaid = true;
+      o.debtPaidAt = nowIso;
+      if (!Array.isArray(o.paymentHistory)) o.paymentHistory = [];
+      if (unpaidAmount > 0) {
+        o.paymentHistory.push({
+          amount: unpaidAmount,
+          date: nowIso,
+          method: 'qarz_tolash'
+        });
+      }
+      batch.update(db.collection('orders').doc(String(o.id)), {
+        debtPaid: true,
+        debtPaidAt: o.debtPaidAt,
+        paymentHistory: o.paymentHistory
+      });
+    }
+  });
   batch.commit().catch(()=>{});
-  try { renderDebts(); renderOrdersList(document.getElementById('ordersSearch')?.value || ''); renderDashboard(); updateBadges(); } catch(e) {}
+  try { renderDebts(); renderOrdersList(document.getElementById('ordersSearch')?.value || ''); renderDashboard(); renderStats(); updateBadges(); } catch(e) {}
   showToast('✅ '+(lang==='uz'?"To'landi":'Оплачено'),'success');
 }
 function openPartialPay(clientId,remaining,name){
@@ -1073,19 +1168,44 @@ function applyPartialPayment(){
   const paid=parseFloat(document.getElementById('partialAmount').value)||0;
   if(paid<=0){showToast('⚠️ '+(lang==='uz'?'Summani kiriting':'Введите сумму'),'error');return;}
   let rem=paid;
+  const nowIso = new Date().toISOString();
   // FIFO: Sort unpaid debt orders by date ascending (oldest debt first)
   const debtOrders=(state.orders || []).filter(o=>String(o.clientId)==String(partialClientId) && isDebtOrder(o))
     .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
   debtOrders.forEach(o=>{
-    const owed=(Number(o.total)||0)-(Number(o.partialPaid)||0);
-    if(rem>=owed){o.debtPaid=true;rem-=owed;}
-    else{o.partialPaid=(Number(o.partialPaid)||0)+rem;rem=0;}
+    if (rem <= 0) return;
+    const owed=Math.max(0, (Number(o.total)||0)-(Number(o.partialPaid)||0));
+    if (owed <= 0) return;
+    if (!Array.isArray(o.paymentHistory)) o.paymentHistory = [];
+    const alloc = Math.min(rem, owed);
+    o.paymentHistory.push({
+      amount: alloc,
+      date: nowIso,
+      method: 'qisman_tolov'
+    });
+    if(rem>=owed){
+      o.debtPaid=true;
+      o.debtPaidAt=nowIso;
+      o.partialPaid=Number(o.total)||0;
+      rem-=owed;
+    } else {
+      o.partialPaid=(Number(o.partialPaid)||0)+rem;
+      rem=0;
+    }
   });
   const batch = db.batch();
-  debtOrders.forEach(o => batch.update(db.collection('orders').doc(String(o.id)), {debtPaid: !!o.debtPaid, partialPaid: Number(o.partialPaid)||0}));
+  debtOrders.forEach(o => {
+    const payload = {
+      debtPaid: !!o.debtPaid,
+      partialPaid: Number(o.partialPaid)||0,
+      paymentHistory: Array.isArray(o.paymentHistory) ? o.paymentHistory : []
+    };
+    if (o.debtPaidAt) payload.debtPaidAt = o.debtPaidAt;
+    batch.update(db.collection('orders').doc(String(o.id)), payload);
+  });
   batch.commit().catch(()=>{});
   closeModal('partialPayModal');
-  try { renderDebts(); renderOrdersList(document.getElementById('ordersSearch')?.value || ''); renderDashboard(); updateBadges(); } catch(e) {}
+  try { renderDebts(); renderOrdersList(document.getElementById('ordersSearch')?.value || ''); renderDashboard(); renderStats(); updateBadges(); } catch(e) {}
   showToast('✅ '+fmt(paid)+' so\'m '+( lang==='uz'?'qo\'shildi':'зачислено'),'success');
 }
 
@@ -1342,8 +1462,14 @@ function renderStats(){
   try {
     const today=new Date().toDateString();
     const todayO=orders.filter(o=>o.date&&new Date(o.date).toDateString()===today);
-    const totalRev=orders.reduce((s,o)=>s+(Number(o.total)||0),0);
-    const todayRev=todayO.reduce((s,o)=>s+(Number(o.total)||0),0);
+    const todayBreakdown = getDailyCashBreakdown(orders, new Date());
+    const todayRev = todayBreakdown.totalRealizedRev;
+    const totalRev = orders.reduce((s,o)=>{
+      if (isConsignmentPayment(o.payment)) {
+        return s + (Number(o.partialPaid) || (o.debtPaid ? (Number(o.total) || 0) : 0));
+      }
+      return s + (Number(o.total) || 0);
+    }, 0);
     const sg = document.getElementById('statsGrid');
     if (sg) sg.innerHTML=`
       <div class="stat-card"><div class="stat-val">${orders.length}</div><div class="stat-label">${T[lang].totalOrders}</div></div>
@@ -2000,7 +2126,8 @@ function renderDashboard(){
     return !isNaN(d.getTime());
   });
   const todayOrders=activeOrders.filter(o=>new Date(o.date).toDateString()===todayStr);
-  const todayRev=todayOrders.reduce((s,o)=>s+(Number(o.total)||0),0);
+  const todayBreakdown=getDailyCashBreakdown(activeOrders, now);
+  const todayRev=todayBreakdown.totalRealizedRev;
   const todayCount=todayOrders.length;
   
   let todayProfit = 0;
@@ -2016,7 +2143,14 @@ function renderDashboard(){
   const unsent=activeOrders.filter(o=>!o.sent).length;
   const weekStart=new Date(now);weekStart.setDate(now.getDate()-(now.getDay()+6)%7);weekStart.setHours(0,0,0,0);
   const weekOrders=activeOrders.filter(o=>new Date(o.date)>=weekStart);
-  const weekRev=weekOrders.reduce((s,o)=>s+(Number(o.total)||0),0);
+  let weekRev = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(now);
+    d.setDate(now.getDate() - i);
+    if (d >= weekStart) {
+      weekRev += getDailyCashBreakdown(activeOrders, d).totalRealizedRev;
+    }
+  }
   
   let weekProfit = 0;
   weekOrders.forEach(o => {
@@ -2040,11 +2174,11 @@ function renderDashboard(){
     d.setDate(now.getDate() - i);
     const dayStr = d.toDateString();
     const dayOrders = activeOrders.filter(o => new Date(o.date).toDateString() === dayStr);
-    const rev = dayOrders.reduce((s, o) => s + (Number(o.total) || 0), 0);
+    const dayBreakdown = getDailyCashBreakdown(activeOrders, d);
     chartDays.push({
       label: d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }),
       fullLabel: d.toLocaleDateString(lang === 'uz' ? 'uz-UZ' : 'ru-RU', { day: 'numeric', month: 'short' }),
-      value: rev,
+      value: dayBreakdown.totalRealizedRev,
       count: dayOrders.length
     });
   }
@@ -2056,9 +2190,9 @@ function renderDashboard(){
       <div style="font-size:13px;color:var(--text2);margin-top:4px;text-transform:capitalize">${dateStr}</div>
       <div style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;font-size:11px;color:var(--text3)"><div id="onlineIndicator" style="width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0"></div>${lang==='uz'?'Onlayn':'Онлайн'}</div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
       <div style="background:linear-gradient(135deg,rgba(124,106,247,.2),rgba(86,212,160,.1));border:1px solid rgba(124,106,247,.3);border-radius:16px;padding:12px;text-align:center">
-        <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">${lang==='uz'?'Bugun tushum':'Сегодня'}</div>
+        <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">${lang==='uz'?'Bugun tushum (Kassa)':'Сегодня (Касса)'}</div>
         <div style="font-size:22px;font-weight:900;color:var(--accent2)">${fmt(todayRev)}</div>
         <div style="font-size:10px;color:var(--text3);margin-top:2px;margin-bottom:6px">so'm · ${todayCount} ${lang==='uz'?'ta':'шт'}</div>
         <div style="background:rgba(86,212,160,.15);border-radius:8px;padding:6px;margin-top:4px">
@@ -2074,6 +2208,21 @@ function renderDashboard(){
             <div style="font-size:9px;color:var(--text2);text-transform:uppercase">${lang==='uz'?'Sof foyda (Marja)':'Чистая прибыль (Маржа)'}</div>
             <div style="font-size:16px;font-weight:900;color:var(--green)">+${fmt(weekProfit)} <span style="font-size:11px;font-weight:600">(${weekMarginPct}%)</span></div>
         </div>
+      </div>
+    </div>
+    <!-- CASH-BASIS CONSIGNMENT ACCOUNTING BREAKDOWN -->
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:10px 14px;margin-bottom:12px;display:flex;flex-direction:column;gap:6px;font-size:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="color:var(--orange);font-weight:700">⏳ ${lang==='uz'?'Bugun konsignatsiyaga berildi':'Отдано под реализацию (сегодня)'}:</span>
+        <b style="color:var(--orange);font-size:13px">${fmt(todayBreakdown.consignmentGivenToday)} so'm</b>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px dashed var(--border);padding-top:6px">
+        <span style="color:var(--green);font-weight:700">🤝 ${lang==='uz'?'Bugun undirilgan qarzlar':'Взыскано долгов (сегодня)'}:</span>
+        <b style="color:var(--green);font-size:13px">+${fmt(todayBreakdown.repaidDebtRev)} so'm</b>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:6px;font-size:11px;color:var(--text2)">
+        <span>💵 ${lang==='uz'?'Naqd / Klik tushum':'Наличные / Клик'}: ${fmt(todayBreakdown.immediateCashRev)} so'm</span>
+        <span>💰 ${lang==='uz'?'Jami kassa':'Итого касса'}: <b style="color:var(--accent2)">${fmt(todayBreakdown.totalRealizedRev)} so'm</b></span>
       </div>
     </div>
     ${chartCardHtml}

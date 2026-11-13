@@ -1825,6 +1825,174 @@ try {
   assert(false, 'Quality fixes and expansions suite 14 failed', e.stack);
 }
 
+
+// =========================================================================
+// 15. CASH-BASIS CONSIGNMENT ACCOUNTING & DEBT REALIZATION
+// =========================================================================
+console.log('\n--- 15. Testing Cash-Basis Consignment Accounting & Debt Realization ---');
+try {
+  // 15A. Today's consignment orders excluded from realized cash revenue & tracked separately
+  runAdmin(`
+    const cbClient = { id: 'cl_cb_test', name: 'Cash Basis Kafe' };
+    state.clients.push(cbClient);
+    
+    const cbImmediateCash = {
+      id: 'ord_cb_cash',
+      clientId: 'cl_cb_test',
+      date: new Date().toISOString(),
+      total: 60000,
+      payment: 'Naqd',
+      debtPaid: true,
+      status: 'done'
+    };
+    const cbImmediateClick = {
+      id: 'ord_cb_click',
+      clientId: 'cl_cb_test',
+      date: new Date().toISOString(),
+      total: 40000,
+      payment: 'клик',
+      debtPaid: true,
+      status: 'done'
+    };
+    const cbConsignmentToday = {
+      id: 'ord_cb_cons',
+      clientId: 'cl_cb_test',
+      date: new Date().toISOString(),
+      total: 90000,
+      payment: 'консигнация',
+      debtPaid: false,
+      status: 'delivering'
+    };
+    const pastDebtDate = new Date();
+    pastDebtDate.setDate(pastDebtDate.getDate() - 3);
+    const cbPastConsignment = {
+      id: 'ord_cb_past',
+      clientId: 'cl_cb_test',
+      date: pastDebtDate.toISOString(),
+      total: 70000,
+      payment: 'qarz',
+      debtPaid: false,
+      status: 'delivering'
+    };
+
+    const isolatedOrders = [cbImmediateCash, cbImmediateClick, cbConsignmentToday, cbPastConsignment];
+    globalThis.__cbBreakdown1 = getDailyCashBreakdown(isolatedOrders);
+  `);
+
+  const b1 = adminEnv.__cbBreakdown1;
+  assert(
+    b1.immediateCashRev === 100000 &&
+    b1.consignmentGivenToday === 90000 &&
+    b1.repaidDebtRev === 0 &&
+    b1.totalRealizedRev === 100000,
+    `Today's consignment orders (90,000) excluded from realized cash revenue (100,000) and tracked separately`
+  );
+
+  // 15B. markDebtPaid records debtPaidAt, paymentHistory and realizes collected debt in today's revenue
+  runAdmin(`
+    state.orders.push(
+      state.orders.find(o => o.id === 'ord_cb_past') || {
+        id: 'ord_cb_past',
+        clientId: 'cl_cb_test',
+        date: new Date(Date.now() - 3 * 86400000).toISOString(),
+        total: 70000,
+        payment: 'qarz',
+        debtPaid: false,
+        status: 'delivering'
+      }
+    );
+    markDebtPaid('cl_cb_test');
+    globalThis.__cbRepaidPastOrd = state.orders.find(o => o.id === 'ord_cb_past');
+    globalThis.__cbBreakdown2 = getDailyCashBreakdown(state.orders);
+    renderDashboard();
+  `);
+
+  const repaidPastOrd = adminEnv.__cbRepaidPastOrd;
+  const b2 = adminEnv.__cbBreakdown2;
+  const dashHtml = adminEnv.dom['dashboardContent']?.innerHTML || '';
+
+  assert(
+    repaidPastOrd && repaidPastOrd.debtPaid === true &&
+    !!repaidPastOrd.debtPaidAt &&
+    Array.isArray(repaidPastOrd.paymentHistory) &&
+    repaidPastOrd.paymentHistory.some(h => h.amount === 70000 && h.method === 'qarz_tolash'),
+    'markDebtPaid recorded debtPaid=true, debtPaidAt ISO timestamp, and paymentHistory audit entry'
+  );
+
+  assert(
+    b2.repaidDebtRev >= 70000 && b2.totalRealizedRev > b2.immediateCashRev &&
+    (dashHtml.includes('konsignatsiyaga berildi') || dashHtml.includes('undirilgan qarzlar') || dashHtml.includes('реализацию') || dashHtml.includes('Взыскано долгов')),
+    'Collected debt repayment realized in today\'s cash revenue and reflected in Dashboard cash-basis breakdown'
+  );
+
+  // 15C. applyPartialPayment records partial repayment entry in paymentHistory and realizes partial cash
+  runAdmin(`
+    const partialPastOrd = {
+      id: 'ord_cb_partial_past',
+      clientId: 'cl_cb_partial_client',
+      date: new Date(Date.now() - 2 * 86400000).toISOString(),
+      total: 50000,
+      partialPaid: 0,
+      debtPaid: false,
+      payment: 'консигнация',
+      status: 'delivering'
+    };
+    state.orders.push(partialPastOrd);
+    partialClientId = 'cl_cb_partial_client';
+    document.getElementById('partialAmount').value = '25000';
+    applyPartialPayment();
+    globalThis.__cbPartialResultOrd = state.orders.find(o => o.id === 'ord_cb_partial_past');
+  `);
+
+  const partialResOrd = adminEnv.__cbPartialResultOrd;
+  assert(
+    partialResOrd && partialResOrd.partialPaid === 25000 &&
+    Array.isArray(partialResOrd.paymentHistory) &&
+    partialResOrd.paymentHistory.some(h => h.amount === 25000 && h.method === 'qisman_tolov'),
+    'applyPartialPayment appended partial repayment record to paymentHistory and updated partialPaid'
+  );
+
+  // 15D. send-daily-report.js calculateDailyReportMetrics and Telegram line formatting
+  const path = require('path');
+  const reportModule = require(path.join(process.cwd(), 'scripts/send-daily-report.js'));
+  const testTashkentToday = '2026-11-13';
+  const reportTestOrders = [
+    { id: 'r1', date: '2026-11-13T10:00:00Z', total: 60000, payment: 'Naqd', status: 'new', debtPaid: true },
+    { id: 'r2', date: '2026-11-13T11:00:00Z', total: 40000, payment: 'клик', status: 'new', debtPaid: true },
+    { id: 'r3', date: '2026-11-13T12:00:00Z', total: 90000, payment: 'консигнация', status: 'new', debtPaid: false },
+    {
+      id: 'r4',
+      date: '2026-11-08T10:00:00Z',
+      total: 75000,
+      payment: 'консигнация',
+      debtPaid: true,
+      debtPaidAt: '2026-11-13T14:00:00Z',
+      paymentHistory: [{ amount: 75000, date: '2026-11-13T14:00:00Z', method: 'qarz_tolash' }]
+    }
+  ];
+
+  const reportMetrics = reportModule.calculateDailyReportMetrics(reportTestOrders, [], testTashkentToday);
+  assert(
+    reportMetrics.todayCashRev === 100000 &&
+    reportMetrics.consignmentGivenToday === 90000 &&
+    reportMetrics.debtsCollectedToday === 75000 &&
+    reportMetrics.totalRealizedRev === 175000 &&
+    reportMetrics.totalDebt === 90000,
+    `calculateDailyReportMetrics separated cash (100k), consignment given (90k), collected debt (75k) and realized rev (175k)`
+  );
+
+  const reportCode = fs.readFileSync('scripts/send-daily-report.js', 'utf8');
+  assert(
+    reportCode.includes('Naqd / Klik tushum') &&
+    reportCode.includes('Undirilgan qarzlar') &&
+    reportCode.includes('JAMI KELIB TUSHGAN TUSHUM') &&
+    reportCode.includes('Bugun konsignatsiyaga berildi'),
+    'send-daily-report.js defines all 4 standardized Cash-Basis consignment reporting lines'
+  );
+} catch (e) {
+  assert(false, 'Cash-Basis consignment accounting suite 15 failed', e.stack);
+}
+
 (async () => {
   await runAsyncAiTests();
   if (typeof runClientCheckoutRegression === 'function') await runClientCheckoutRegression();
