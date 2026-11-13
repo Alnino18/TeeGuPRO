@@ -184,8 +184,8 @@ function getProductPrice(p) {
       const s = c.name + (c.phone ? ' — ' + c.phone : '');
       return s === clientInput || c.name === clientInput;
     });
-    if (found && found.customPrices && found.customPrices[p.id]) {
-      return found.customPrices[p.id];
+    if (found && found.customPrices && found.customPrices[p.id] !== undefined && found.customPrices[p.id] !== null) {
+      return Number(found.customPrices[p.id]);
     }
   }
   return p.price || 0;

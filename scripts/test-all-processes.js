@@ -1634,6 +1634,197 @@ globalThis.__runUzbekVoiceAsyncTests = async () => {
   }
 };
 
+
+// =========================================================================
+// 14. VERIFICATION OF QUALITY FIXES & EXPANSIONS
+// =========================================================================
+console.log('\n--- 14. Testing Quality Fixes & Expansions ---');
+try {
+  // 14A. Sales Chart Prev Period Comparison
+  runAdmin(`
+    chartPeriod = 'week';
+    const chartPastDate = new Date();
+    chartPastDate.setDate(chartPastDate.getDate() - 7);
+    chartPastDate.setHours(12, 0, 0, 0);
+    state.orders.push({
+      id: 'chart_prev_test_ord',
+      date: chartPastDate.toISOString(),
+      total: 80000,
+      status: 'done'
+    });
+    renderChart();
+  `);
+  const chartHtml = adminEnv.dom['chartBars'].innerHTML;
+  const hasPrevBar = /class="chart-bar prev"\s+style="height:\s*[1-9]\d*px"/.test(chartHtml);
+  assert(hasPrevBar, 'renderChart calculated previous period revenue and rendered non-zero prev comparison bar');
+
+  // 14B. FIFO Partial Debt Repayment
+  runAdmin(`
+    partialClientId = 'client_fifo_test';
+    const oldDebtDate = new Date(Date.now() - 5 * 86400000).toISOString();
+    const newDebtDate = new Date().toISOString();
+    const orderOld = {
+      id: 'ord_fifo_old',
+      clientId: 'client_fifo_test',
+      date: oldDebtDate,
+      total: 100000,
+      partialPaid: 0,
+      debtPaid: false,
+      payment: 'консигнация',
+      status: 'delivering'
+    };
+    const orderNew = {
+      id: 'ord_fifo_new',
+      clientId: 'client_fifo_test',
+      date: newDebtDate,
+      total: 100000,
+      partialPaid: 0,
+      debtPaid: false,
+      payment: 'консигнация',
+      status: 'delivering'
+    };
+    state.orders.unshift(orderNew);
+    state.orders.push(orderOld);
+    document.getElementById('partialAmount').value = '40000';
+    applyPartialPayment();
+  `);
+  const oldOrderState = runAdmin(`state.orders.find(o => o.id === 'ord_fifo_old')`);
+  const newOrderState = runAdmin(`state.orders.find(o => o.id === 'ord_fifo_new')`);
+  assert(
+    oldOrderState.partialPaid === 40000 && !oldOrderState.debtPaid &&
+    newOrderState.partialPaid === 0 && !newOrderState.debtPaid,
+    'applyPartialPayment strictly allocates partial payment to the oldest outstanding debt order first (FIFO)'
+  );
+
+  // 14C. Composite Spoken Numbers in Voice Order Parser
+  const uzb15 = runAdmin(`parseVoiceOrderCommand("Alfraganus Kafega o'n besh kilo funchoza")`);
+  const uzb25 = runAdmin(`parseVoiceOrderCommand("Alfraganus Kafega yigirma besh kilo funchoza")`);
+  const uzb32 = runAdmin(`parseVoiceOrderCommand("Alfraganus Kafega o'ttiz ikki kilo funchoza")`);
+  const uzbHalf = runAdmin(`parseVoiceOrderCommand("Alfraganus Kafega bir yarim kilo funchoza")`);
+
+  assert(
+    uzb15?.items?.[0]?.qty === 15 &&
+    uzb25?.items?.[0]?.qty === 25 &&
+    uzb32?.items?.[0]?.qty === 32 &&
+    uzbHalf?.items?.[0]?.qty === 1.5,
+    "parseVoiceOrderCommand parsed Uzbek composite numbers: o'n besh -> 15, yigirma besh -> 25, o'ttiz ikki -> 32, bir yarim -> 1.5"
+  );
+
+  const ru15 = runAdmin(`parseVoiceOrderCommand("Кафе Альфраганус пятнадцать килограмм фунчозы")`);
+  const ru25 = runAdmin(`parseVoiceOrderCommand("Кафе Альфраганус двадцать пять килограмм фунчозы")`);
+  const ruHalf = runAdmin(`parseVoiceOrderCommand("Кафе Альфраганус полтора килограмма фунчозы")`);
+
+  assert(
+    ru15?.items?.[0]?.qty === 15 &&
+    ru25?.items?.[0]?.qty === 25 &&
+    ruHalf?.items?.[0]?.qty === 1.5,
+    'parseVoiceOrderCommand parsed Russian composite numbers: пятнадцать -> 15, двадцать пять -> 25, полтора -> 1.5'
+  );
+
+  // 14D. Zero-Price Promotional Custom Prices Preservation
+  runAdmin(`
+    state.clients.push({ id: 'c_promo_free', name: 'Promo Cafe', customPrices: { funchoza: 0 } });
+    document.getElementById('clientSelect').value = 'Promo Cafe';
+    renderProductsGrid();
+  `);
+  const adminZeroPrice = runAdmin(`
+    const cp = state.clients.find(c => c.id === 'c_promo_free')?.customPrices?.['funchoza'];
+    (cp !== undefined && cp !== null && cp !== '') ? Number(cp) : 25000
+  `);
+  assert(adminZeroPrice === 0, 'Admin preserves custom promotional price of 0 so\'m without fallback to standard price');
+
+  runAgent(`
+    CLIENTS.push({ id: 'c_promo_agent', name: 'Agent Promo', customPrices: { funchoza: 0 } });
+    document.getElementById('orderClient').value = 'Agent Promo';
+  `);
+  const agentZeroPrice = runAgent(`getProductPrice({ id: 'funchoza', price: 25000 })`);
+  assert(agentZeroPrice === 0, 'Agent getProductPrice preserves custom promotional price of 0 so\'m');
+
+  runClient(`
+    currentClient.customPrices = { funchoza: 0 };
+  `);
+  const clientZeroPrice = runClient(`getPrice({ id: 'funchoza', price: 25000 })`);
+  assert(clientZeroPrice === 0, 'Client getPrice preserves custom promotional price of 0 so\'m');
+
+  // 14E. Courier Yandex Navigator Intent, Status 'delivering' & Cash Handover Summary
+  runCourier(`
+    myOrders.push({
+      id: 'ord_c_nav',
+      clientId: '101',
+      client: 'Alfraganus Cafe',
+      total: 50000,
+      payment: 'Naqd',
+      items: [{ id: 'funchoza', nameUz: 'Funchoza', qty: 2, unit: 'kg' }],
+      delivered: false,
+      status: 'new',
+      lat: 41.2995,
+      lng: 69.2401,
+      date: new Date().toISOString()
+    });
+    renderOrders();
+  `);
+  const courierListHtml = courierEnv.dom['ordersList'].innerHTML;
+  assert(
+    courierListHtml.includes('yandexnavi://build_route_on_map?lat_to=41.2995&lon_to=69.2401'),
+    'Courier renderOrders generates native Yandex Navigator deep-link URL (yandexnavi://)'
+  );
+
+  runCourier(`sendOnMyWayNotification('ord_c_nav', 15);`);
+  const updatedOrder = runCourier(`myOrders.find(o => o.id === 'ord_c_nav')`);
+  assert(
+    updatedOrder.status === 'delivering' && !!updatedOrder.etaNotifiedAt,
+    'sendOnMyWayNotification updated order status to "delivering" and recorded etaNotifiedAt timestamp'
+  );
+
+  runCourier(`
+    deliveredOrders = [
+      { id: 'c_rec_1', client: 'Cash Shop 1', payment: 'Naqd', total: 75000, delivered: true, date: new Date().toISOString() },
+      { id: 'c_rec_2', client: 'Cash Shop 2', payment: 'наличные', total: 25000, delivered: true, date: new Date().toISOString() },
+      { id: 'c_rec_3', client: 'Debt Shop', payment: 'Qarz', total: 60000, delivered: true, date: new Date().toISOString() }
+    ];
+    renderCashReconciliation();
+  `);
+  const cashRec = runCourier(`getCashReconciliation()`);
+  const cashDrawerHtml = courierEnv.dom['cashReconciliationBox']?.innerHTML || '';
+  assert(
+    cashRec.count === 3 && cashRec.cashTotal === 100000 && cashDrawerHtml.includes('100'),
+    `getCashReconciliation correctly calculated shift-end cash total: expected 100000, got ${cashRec.cashTotal}`
+  );
+
+  // 14F. Client Cart LocalStorage Persistence & Stock Bounding
+  runClient(`
+    cart = { funchoza: 3.5, sologurc: 2.0 };
+    saveCartToStorage();
+  `);
+  const storedCart = JSON.parse(clientEnv.localStorage.getItem('teegu_client_cart') || '{}');
+  assert(storedCart['funchoza'] === 3.5 && storedCart['sologurc'] === 2.0, 'saveCartToStorage serialized cart into localStorage');
+
+  runClient(`
+    products = [
+      { id: 'funchoza', stock: 2.0 },
+      { id: 'sologurc', stock: 0 }
+    ];
+    validateCartStock();
+  `);
+  const boundedFunchoza = runClient(`cart['funchoza']`);
+  const removedSologurc = runClient(`cart['sologurc']`);
+  assert(
+    boundedFunchoza === 2.0 && removedSologurc === undefined,
+    'validateCartStock bounded cart quantity to available stock (3.5 -> 2.0) and removed out-of-stock item'
+  );
+
+  // 14G. Service Worker Cache IgnoreSearch & Filter
+  const swCodeStr = fs.readFileSync('sw.js', 'utf8');
+  assert(
+    swCodeStr.includes("CACHE = 'salat-v26'") &&
+    swCodeStr.includes('ignoreSearch: true') &&
+    swCodeStr.includes("request.method !== 'GET'"),
+    'sw.js bumped to salat-v26, added { ignoreSearch: true } and filtered non-GET requests'
+  );
+} catch (e) {
+  assert(false, 'Quality fixes and expansions suite 14 failed', e.stack);
+}
+
 (async () => {
   await runAsyncAiTests();
   if (typeof runClientCheckoutRegression === 'function') await runClientCheckoutRegression();

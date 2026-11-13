@@ -13,15 +13,17 @@ const db = firebase.firestore();
 let allCouriers = [];
 let allClientsMap = {};
 let myOrders = [];
+let deliveredOrders = [];
+let SETTINGS = {};
 let loggedCourierName = localStorage.getItem('courierAuth') || null;
 let routeSummary = null;
 
 // Listen to settings / shared UI config
 db.collection('settings').doc('main').onSnapshot(snap => {
   if (snap.exists) {
-    const data = snap.data() || {};
-    if (data.uiConfig && typeof applySharedUiConfig === 'function') {
-      applySharedUiConfig(data.uiConfig, 'courier');
+    SETTINGS = snap.data() || {};
+    if (SETTINGS.uiConfig && typeof applySharedUiConfig === 'function') {
+      applySharedUiConfig(SETTINGS.uiConfig, 'courier');
     }
   }
 });
@@ -99,7 +101,17 @@ function startOrdersListener() {
   db.collection('orders')
     .where('courier', '==', loggedCourierName)
     .onSnapshot(snap => {
-      myOrders = snap.docs.map(d => d.data())
+      const allDocs = snap.docs.map(d => d.data());
+      const today = new Date().toISOString().slice(0, 10);
+
+      deliveredOrders = allDocs.filter(o => {
+        const isDone = o.delivered || o.status === 'done';
+        if (!isDone) return false;
+        const dStr = (o.deliveredAt || o.date || '').slice(0, 10);
+        return dStr === today || !dStr;
+      });
+
+      myOrders = allDocs
         .filter(o => !o.delivered && o.status !== 'done' && o.status !== 'cancelled')
         .sort((a,b) => new Date(b.date) - new Date(a.date));
       routeSummary = null;
@@ -205,6 +217,8 @@ function optimizeCourierRoute() {
 }
 
 function renderOrders() {
+  renderCashReconciliation();
+
   const container = document.getElementById('ordersList');
   const summaryBox = document.getElementById('routeSummaryBox');
 
@@ -244,7 +258,7 @@ function renderOrders() {
     
     let mapBtn = '';
     if (coords) {
-      mapBtn = `<a href="https://yandex.ru/maps/?rtext=~${coords.lat},${coords.lng}" target="_blank" class="btn btn-outline" style="padding:10px; flex:1">📍 Xaritada ochish</a>`;
+      mapBtn = `<a href="yandexnavi://build_route_on_map?lat_to=${coords.lat}&lon_to=${coords.lng}" data-web-fallback="https://yandex.ru/maps/?rtext=~${coords.lat},${coords.lng}" onclick="openNavigator(event, ${coords.lat}, ${coords.lng})" target="_blank" class="btn btn-outline" style="padding:10px; flex:1" title="Yandex Navigator">🧭 Navigator</a>`;
     }
     
     let stepBadge = '';
@@ -254,11 +268,17 @@ function renderOrders() {
         📍 ${o.stepNum}-manzil (${distText})
       </div>`;
     }
+
+    const isDelivering = o.status === 'delivering';
+    const statusPill = isDelivering
+      ? `<div style="background:rgba(255,152,0,0.18); color:#ff9800; font-weight:800; font-size:12px; padding:3px 8px; border-radius:6px; display:inline-block; margin-bottom:6px;">🛵 Yo'lda</div>`
+      : '';
     
     const oId = String(o.id || '');
     return `
       <div class="order-card" style="${o.stepNum ? 'border-color:rgba(124,106,247,0.4);' : ''}">
         ${stepBadge}
+        ${statusPill}
         <div class="order-header">
           <div class="order-id">#${oId.slice(-4)}</div>
           <div class="order-date">${dateStr}</div>
@@ -278,23 +298,165 @@ function renderOrders() {
           <div class="order-total">${(Number(o.total) || 0).toLocaleString('ru-RU')} so'm</div>
         </div>
         
-        <div style="display:flex; gap:8px;">
-          ${mapBtn}
-          <button class="btn btn-success" style="padding:10px; flex:1" onclick="markDelivered('${oId}')">✅ Topshirdim</button>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <div style="display:flex; gap:8px;">
+            ${mapBtn}
+            <button class="btn btn-primary" style="padding:10px; flex:1; font-size:13px; background:linear-gradient(135deg, #7c6af7, #ff9800);" onclick="sendOnMyWayNotification('${oId}')">
+              📲 Yo'ldaman (~15 daq)
+            </button>
+          </div>
+          <button class="btn btn-success" style="padding:11px; width:100%;" onclick="markDelivered('${oId}')">✅ Topshirdim</button>
         </div>
       </div>
     `;
   }).join('');
 }
 
+function openNavigator(e, lat, lng) {
+  if (e && typeof e.preventDefault === 'function') {
+    // If mobile browser blocks custom scheme without user gesture, allow default
+  }
+  const naviUrl = `yandexnavi://build_route_on_map?lat_to=${lat}&lon_to=${lng}`;
+  const webUrl = `https://yandex.ru/maps/?rtext=~${lat},${lng}`;
+  try {
+    if (typeof window !== 'undefined' && window.location) {
+      window.location.href = naviUrl;
+      setTimeout(() => {
+        if (typeof document !== 'undefined' && document.hasFocus && document.hasFocus()) {
+          window.open(webUrl, '_blank');
+        }
+      }, 1200);
+    }
+  } catch(err) {
+    if (typeof window !== 'undefined') window.open(webUrl, '_blank');
+  }
+}
+if (typeof window !== 'undefined') window.openNavigator = openNavigator;
+
+async function sendOnMyWayNotification(orderId, customEta = 15) {
+  const o = myOrders.find(x => String(x.id) === String(orderId));
+  if (!o) return { ok: false, reason: 'not_found' };
+
+  const etaMins = Number(customEta) || 15;
+  const clientInfo = allClientsMap[o.clientId] || {};
+  const tgId = clientInfo.tgId || o.tgId;
+  const phone = o.phone || clientInfo.phone || '';
+  const cleanPhone = String(phone).replace(/[^\d+]/g, '');
+
+  o.status = 'delivering';
+  o.etaNotifiedAt = new Date().toISOString();
+
+  db.collection('orders').doc(String(o.id)).update({
+    status: 'delivering',
+    etaNotifiedAt: o.etaNotifiedAt
+  }).catch(e => console.error("Error updating order status:", e));
+
+  const msgText = `🚚 Assalomu alaykum, ${o.client || 'hurmatli mijoz'}! TeeGu buyurtmangiz yo'lda — taxminan ${etaMins} daqiqada yetib boramiz.`;
+  const smsUri = cleanPhone ? `sms:${cleanPhone}?body=${encodeURIComponent(msgText)}` : '';
+  const defaultTgToken = '8796588071:AAG8Z_R8hP9ESZZ_3LxUakD8PCXj5C5ZP6Y';
+  const tgToken = (SETTINGS && SETTINGS.tgToken) || (typeof atob === 'function' ? atob('ODc5NjU4ODA3MTpBQUc4Wl9SOGhQOUVTWlpfM0x4VWFrRDhQQ1hqNUM1WlA2WQ==') : defaultTgToken);
+
+  let sentTg = false;
+  if (tgId && tgToken) {
+    try {
+      const resp = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: String(tgId), text: msgText })
+      });
+      const data = await resp.json();
+      if (data && data.ok) sentTg = true;
+    } catch (e) {}
+  }
+
+  if (sentTg) {
+    showToast(`📲 "${o.client}" ga Telegramdan "Yo'ldaman (~${etaMins} daq)" yuborildi!`, 'success');
+  } else if (smsUri) {
+    try {
+      if (typeof window !== 'undefined' && typeof window.open === 'function') {
+        window.open(smsUri, '_self');
+      }
+    } catch (e) {}
+    showToast(`📱 SMS xabar tayyorlandi: "${o.client}"`, 'info');
+  } else {
+    showToast(`🛵 Buyurtma "Yo'lda" holatiga o'tkazildi!`, 'success');
+  }
+
+  renderOrders();
+  return { ok: true, status: 'delivering', msgText, smsUri };
+}
+if (typeof window !== 'undefined') {
+  window.sendOnMyWayNotification = sendOnMyWayNotification;
+  window.notifyOnMyWay = sendOnMyWayNotification;
+}
+
+function getCashReconciliation() {
+  const count = deliveredOrders.length;
+  const cashTotal = deliveredOrders
+    .filter(o => o.payment === 'Naqd' || o.payment === 'наличные' || !o.payment)
+    .reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+  const grandTotal = deliveredOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+  return {
+    count,
+    cashTotal,
+    grandTotal,
+    orders: deliveredOrders
+  };
+}
+if (typeof window !== 'undefined') window.getCashReconciliation = getCashReconciliation;
+
+function toggleCashDetails() {
+  const d = document.getElementById('cashOrdersDetails');
+  if (d) d.style.display = d.style.display === 'none' ? 'block' : 'none';
+}
+if (typeof window !== 'undefined') window.toggleCashDetails = toggleCashDetails;
+
+function renderCashReconciliation() {
+  const box = document.getElementById('cashReconciliationBox');
+  if (!box) return;
+  const rec = getCashReconciliation();
+  box.innerHTML = `
+    <div id="cashDrawer" class="cash-drawer" style="background:var(--bg2); border:1px solid var(--border); border-radius:14px; padding:14px; margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleCashDetails()">
+        <div>
+          <div style="font-size:12px; color:var(--text2); font-weight:700;">💼 Bugungi hisobot</div>
+          <div style="font-size:15px; font-weight:900; color:var(--green); margin-top:2px;">
+            Kassaga topshiriladigan summa: ${rec.cashTotal.toLocaleString('ru-RU')} so'm
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <span class="tag" style="background:rgba(86,212,160,0.15); color:var(--green); font-size:12px;">✅ ${rec.count} ta yetkazildi</span>
+        </div>
+      </div>
+      <div id="cashOrdersDetails" style="display:none; margin-top:12px; padding-top:10px; border-top:1px dashed var(--border); font-size:12px;">
+        ${rec.orders.length === 0 ? '<div style="color:var(--text2)">Bugun hali buyurtma topshirilmadi</div>' :
+          rec.orders.map(o => `
+            <div style="display:flex; justify-content:space-between; margin-bottom:6px; color:var(--text2)">
+              <span>#${String(o.id).slice(-4)} ${o.client || 'Mijoz'} (${o.payment || 'Naqd'})</span>
+              <b style="color:var(--text)">${(Number(o.total)||0).toLocaleString('ru-RU')} so'm</b>
+            </div>
+          `).join('')}
+      </div>
+    </div>
+  `;
+}
+
 function markDelivered(id) {
   if(confirm("Buyurtmani topshirganingizni tasdiqlaysizmi?")) {
-    db.collection('orders').doc(String(id)).update({
+    const oIdStr = String(id);
+    const orderIndex = myOrders.findIndex(x => String(x.id) === oIdStr);
+    if (orderIndex !== -1) {
+      const deliveredOrder = { ...myOrders[orderIndex], status: 'done', delivered: true, deliveredAt: new Date().toISOString() };
+      deliveredOrders.unshift(deliveredOrder);
+      myOrders.splice(orderIndex, 1);
+    }
+    db.collection('orders').doc(oIdStr).update({
       status: 'done',
       delivered: true,
       deliveredAt: new Date().toISOString()
-    });
+    }).catch(err => console.error("Error updating delivered:", err));
     showToast('Buyurtma topshirildi!', 'success');
+    renderOrders();
   }
 }
 

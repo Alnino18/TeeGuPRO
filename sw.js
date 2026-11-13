@@ -1,4 +1,4 @@
-const CACHE = 'salat-v25';
+const CACHE = 'salat-v26';
 const ASSETS = [
   './',
   './admin/index.html',
@@ -41,7 +41,8 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
   e.respondWith(
-    fetch(e.request).catch(() => caches.match(e.request))
+    fetch(e.request).catch(() => caches.match(e.request, { ignoreSearch: true }))
   );
 });

@@ -365,7 +365,9 @@ function renderProductsGrid(){
   const client = state.clients.find(c => c.id == clientId);
   
   document.getElementById('productsGrid').innerHTML=PRODUCTS.map(p=>{
-    const price = (client && client.customPrices && client.customPrices[p.id]) ? client.customPrices[p.id] : p.price;
+    const cp = client?.customPrices?.[p.id];
+    const hasCustom = (cp !== undefined && cp !== null && cp !== '');
+    const price = hasCustom ? Number(cp) : Number(p.price || 0);
     const isTracked = typeof isProductTracked === 'function' && isProductTracked(p);
     let stockBadge = '';
     if (isTracked) {
@@ -377,7 +379,7 @@ function renderProductsGrid(){
     return `
     <div class="product-card" id="pc-${p.id}">
       <div class="product-name">${p.emoji || '🥗'} ${lang==='uz'?(p.nameUz||p.name||''):(p.name||p.nameUz||'')}</div>
-      <div class="product-price">${fmt(price)} / ${p.unit||'кг'} ${client && client.customPrices && client.customPrices[p.id] ? '<span style="color:var(--orange)">★</span>' : ''}</div>
+      <div class="product-price">${fmt(price)} / ${p.unit||'кг'} ${hasCustom ? '<span style="color:var(--orange)">★</span>' : ''}</div>
       ${stockBadge}
       <div class="product-qty">
         <div class="qty-btn" onclick="changeQty('${p.id}',${-(p.step||0.5)})">−</div>
@@ -412,7 +414,8 @@ function getOrderItems(){
   const clientId = document.getElementById('clientSelect')?.value;
   const client = state.clients.find(c => c.id == clientId);
   return PRODUCTS.filter(p=>(state.quantities[p.id]||0)>0).map(p=>{
-    const price = (client && client.customPrices && client.customPrices[p.id]) ? client.customPrices[p.id] : p.price;
+    const cp = client?.customPrices?.[p.id];
+    const price = (cp !== undefined && cp !== null && cp !== '') ? Number(cp) : Number(p.price || 0);
     return {...p, price, qty:state.quantities[p.id]};
   });
 }
@@ -891,7 +894,8 @@ function saveEditOrder(){
     const eqEl=document.getElementById('eqty-'+p.id);
     const qty=eqEl?(parseFloat(eqEl.textContent)||0):0;
     if(qty<=0)return null;
-    const price=(client && client.customPrices && client.customPrices[p.id]) ? Number(client.customPrices[p.id]) : (Number(p.price)||0);
+    const cp = client?.customPrices?.[p.id];
+    const price = (cp !== undefined && cp !== null && cp !== '') ? Number(cp) : (Number(p.price)||0);
     return {...p,price,qty};
   }).filter(Boolean);
   if (o.status !== 'cancelled' && !o.stockRestored) {
@@ -1067,17 +1071,21 @@ function updatePartialRemaining(){
 function applyPartialPayment(){
   if(!partialClientId)return;
   const paid=parseFloat(document.getElementById('partialAmount').value)||0;
-  if(paid<=0){showToast('⚠️ Введите сумму','error');return;}
+  if(paid<=0){showToast('⚠️ '+(lang==='uz'?'Summani kiriting':'Введите сумму'),'error');return;}
   let rem=paid;
-  const debtOrders=(state.orders || []).filter(o=>String(o.clientId)==String(partialClientId) && isDebtOrder(o));
+  // FIFO: Sort unpaid debt orders by date ascending (oldest debt first)
+  const debtOrders=(state.orders || []).filter(o=>String(o.clientId)==String(partialClientId) && isDebtOrder(o))
+    .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
   debtOrders.forEach(o=>{
-    const owed=o.total-(o.partialPaid||0);
+    const owed=(Number(o.total)||0)-(Number(o.partialPaid)||0);
     if(rem>=owed){o.debtPaid=true;rem-=owed;}
-    else{o.partialPaid=(o.partialPaid||0)+rem;rem=0;}
+    else{o.partialPaid=(Number(o.partialPaid)||0)+rem;rem=0;}
   });
   const batch = db.batch();
-  debtOrders.forEach(o => batch.update(db.collection('orders').doc(String(o.id)), {debtPaid: o.debtPaid, partialPaid: o.partialPaid}));
-  batch.commit(); closeModal('partialPayModal');
+  debtOrders.forEach(o => batch.update(db.collection('orders').doc(String(o.id)), {debtPaid: !!o.debtPaid, partialPaid: Number(o.partialPaid)||0}));
+  batch.commit().catch(()=>{});
+  closeModal('partialPayModal');
+  try { renderDebts(); renderOrdersList(document.getElementById('ordersSearch')?.value || ''); renderDashboard(); updateBadges(); } catch(e) {}
   showToast('✅ '+fmt(paid)+' so\'m '+( lang==='uz'?'qo\'shildi':'зачислено'),'success');
 }
 
@@ -1460,39 +1468,52 @@ function setChartPeriod(period,el){chartPeriod=period;document.querySelectorAll(
 function renderChart(){
   const days=chartPeriod==='week'?7:30;
   const cur={},prev={};
+  const curKeys=[],prevKeys=[],labels=[];
   for(let i=days-1;i>=0;i--){
     const d=new Date();d.setDate(d.getDate()-i);d.setHours(0,0,0,0);
-    const k=d.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});cur[k]=0;
-    const d2=new Date(d);d2.setDate(d2.getDate()-days);
-    const k2=d2.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});prev[k2]=0;
+    const k=d.toLocaleDateString('ru-RU');
+    const lbl=d.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});
+    cur[k]=0;
+    curKeys.push(k);
+    labels.push(lbl);
+
+    const d2=new Date(d);d2.setDate(d2.getDate()-days);d2.setHours(0,0,0,0);
+    const k2=d2.toLocaleDateString('ru-RU');
+    prev[k2]=0;
+    prevKeys.push(k2);
   }
   state.orders.forEach(o=>{
     if(!o || o.status === 'cancelled' || !o.date) return;
     const d=new Date(o.date);if(isNaN(d.getTime())) return;
     d.setHours(0,0,0,0);
     const rev = Number(o.total) || 0;
-    const k=d.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});
+    const k=d.toLocaleDateString('ru-RU');
     if(cur[k]!==undefined)cur[k]+=rev;
-    const d2=new Date(d);d2.setDate(d2.getDate()+days);
-    const k2=d2.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});
-    if(prev[k2]!==undefined)prev[k2]+=rev;
+    if(prev[k]!==undefined)prev[k]+=rev;
   });
-  const curE=Object.entries(cur);const prevE=Object.entries(prev);
-  const maxV=Math.max(...curE.map(e=>e[1]),...prevE.map(e=>e[1]),1);
-  document.getElementById('chartBars').innerHTML=curE.map(([label,val],i)=>{
-    const hc=Math.max(3,Math.round(val/maxV*90));
-    const hp=Math.max(3,Math.round((prevE[i]?.[1]||0)/maxV*90));
-    return`<div class="chart-bar-col">
-      <div style="display:flex;gap:2px;align-items:flex-end">
-        <div class="chart-bar prev" style="height:${hp}px" title="${fmt(prevE[i]?.[1]||0)}"></div>
-        <div class="chart-bar cur" style="height:${hc}px" title="${fmt(val)}"></div>
-      </div>
-      <div class="chart-label">${label}</div>
-    </div>`;
-  }).join('');
-  document.getElementById('chartLegend').innerHTML=`
-    <div><span class="legend-dot" style="background:linear-gradient(var(--accent),var(--accent2))"></span>${lang==='uz'?'Bu davr':'Текущий'}</div>
-    <div><span class="legend-dot" style="background:rgba(124,106,247,.4)"></span>${lang==='uz'?'Oldingi':'Предыдущий'}</div>`;
+  const maxV=Math.max(...Object.values(cur),...Object.values(prev),1);
+  const barsEl=document.getElementById('chartBars');
+  if (barsEl) {
+    barsEl.innerHTML=labels.map((label,i)=>{
+      const val=cur[curKeys[i]]||0;
+      const prevVal=prev[prevKeys[i]]||0;
+      const hc=Math.max(3,Math.round(val/maxV*90));
+      const hp=Math.max(3,Math.round(prevVal/maxV*90));
+      return`<div class="chart-bar-col">
+        <div style="display:flex;gap:2px;align-items:flex-end">
+          <div class="chart-bar prev" style="height:${hp}px" title="${fmt(prevVal)}"></div>
+          <div class="chart-bar cur" style="height:${hc}px" title="${fmt(val)}"></div>
+        </div>
+        <div class="chart-label">${label}</div>
+      </div>`;
+    }).join('');
+  }
+  const legEl=document.getElementById('chartLegend');
+  if (legEl) {
+    legEl.innerHTML=`
+      <div><span class="legend-dot" style="background:linear-gradient(var(--accent),var(--accent2))"></span>${lang==='uz'?'Bu davr':'Текущий'}</div>
+      <div><span class="legend-dot" style="background:rgba(124,106,247,.4)"></span>${lang==='uz'?'Oldingi':'Предыдущий'}</div>`;
+  }
 }
 
 function renderForecast(){
@@ -5998,29 +6019,106 @@ function translitCyrToLat(str) {
 }
 
 function replaceSpokenNumberWords(normText) {
-  const numWords = {
-    'nol': 0, 'ноль': 0,
-    'bir': 1, 'bitta': 1, 'odin': 1, 'odna': 1,
-    'ikki': 2, 'ikkita': 2, 'dva': 2, 'dve': 2,
-    'uch': 3, 'uchta': 3, 'tri': 3,
-    'tort': 4, 'tortta': 4, 'to\'rt': 4, 'chetyre': 4,
-    'besh': 5, 'beshta': 5, 'pyat': 5,
-    'olti': 6, 'oltita': 6, 'shest': 6,
-    'yetti': 7, 'yettita': 7, 'sem': 7,
-    'sakkiz': 8, 'sakkizta': 8, 'vosem': 8,
-    'toqqiz': 9, 'toqqizta': 9, 'to\'qqiz': 9, 'devyat': 9,
-    'on': 10, 'onta': 10, 'o\'n': 10, 'desyat': 10,
-    'yigirma': 20, 'ottiz': 30, 'o\'ttiz': 30, 'qirq': 40, 'ellik': 50
+  let out = translitCyrToLat(String(normText || ''))
+    .replace(/[ʻ’`‘]/g, "'")
+    .replace(/,/g, '.');
+
+  // 1. Fractions / Halves phrases
+  out = out.replace(/\bpoltora\b|\bpoltory\b/gi, '1.5');
+  out = out.replace(/\bpolkilo\b|\bpolovina\b/gi, '0.5');
+  out = out.replace(/\b(\d+(?:\.\d+)?)\s+(?:s\s+polovinoy|s\s+polovino[yi])\b/gi, (_, n) => String(parseFloat(n) + 0.5));
+  out = out.replace(/\b(\d+(?:\.\d+)?)\s+yarim\b/gi, (_, n) => String(parseFloat(n) + 0.5));
+
+  // 2. Dictionaries for tokens
+  const tensMap = {
+    "o'n": 10, "on": 10, "o'nta": 10, "onta": 10, "desyat": 10,
+    "yigirma": 20, "yigirmata": 20, "dvadsat": 20, "dvadtsat": 20,
+    "o'ttiz": 30, "ottiz": 30, "o'ttizta": 30, "ottizta": 30, "tridsat": 30, "tridtsat": 30,
+    "qirq": 40, "qirqta": 40, "sorok": 40,
+    "ellik": 50, "ellikta": 50, "pyatdesyat": 50,
+    "oltmish": 60, "oltmishta": 60, "shestdesyat": 60,
+    "yetmish": 70, "yetmishta": 70, "semdesyat": 70,
+    "sakson": 80, "saksonta": 80, "vosemdesyat": 80,
+    "to'qson": 90, "toqson": 90, "to'qsonta": 90, "toqsonta": 90, "devyanosto": 90,
+    "yuz": 100, "yuzta": 100, "sto": 100
   };
-  let out = String(normText || '').replace(/,/g, '.');
-  out = out.replace(/\bpoltora\b/g, '1.5').replace(/\bpolkilo\b|\bpol\b/g, '0.5');
-  Object.keys(numWords).forEach(w => {
-    const escaped = w.replace(/'/g, "\\'");
-    out = out.replace(new RegExp('\\b' + escaped + '\\s+yarim\\b', 'g'), String(numWords[w] + 0.5));
-    out = out.replace(new RegExp('\\b' + escaped + '\\b', 'g'), String(numWords[w]));
+
+  const teensMap = {
+    "odinnadsat": 11, "odinnadtsat": 11,
+    "dvenadsat": 12, "dvenadtsat": 12,
+    "trinadsat": 13, "trinadtsat": 13,
+    "chetyrnadsat": 14, "chetyrnadtsat": 14,
+    "pyatnadsat": 15, "pyatnadtsat": 15,
+    "shestnadsat": 16, "shestnadtsat": 16,
+    "semnadsat": 17, "semnadtsat": 17,
+    "vosemnadsat": 18, "vosemnadtsat": 18,
+    "devyatnadsat": 19, "devyatnadtsat": 19
+  };
+
+  const onesMap = {
+    "nol": 0, "nol'": 0,
+    "bir": 1, "bitta": 1, "odin": 1, "odna": 1,
+    "ikki": 2, "ikkita": 2, "dva": 2, "dve": 2,
+    "uch": 3, "uchta": 3, "tri": 3,
+    "to'rt": 4, "tort": 4, "to'rtta": 4, "tortta": 4, "chetyre": 4,
+    "besh": 5, "beshta": 5, "pyat": 5,
+    "olti": 6, "oltita": 6, "shest": 6,
+    "yetti": 7, "yettita": 7, "sem": 7,
+    "sakkiz": 8, "sakkizta": 8, "vosem": 8,
+    "to'qqiz": 9, "toqqiz": 9, "to'qqizta": 9, "toqqizta": 9, "devyat": 9
+  };
+
+  const tensKeys = Object.keys(tensMap).sort((a,b) => b.length - a.length);
+  const onesKeys = Object.keys(onesMap).filter(k => onesMap[k] > 0).sort((a,b) => b.length - a.length);
+
+  // Replace Tens + Ones + yarim (e.g. yigirma besh yarim -> 25.5, dvadsat pyat s polovinoy -> 25.5)
+  tensKeys.forEach(t => {
+    const escT = t.replace(/'/g, "\\'");
+    onesKeys.forEach(o => {
+      const escO = o.replace(/'/g, "\\'");
+      const val = tensMap[t] + onesMap[o];
+      const reHalf = new RegExp('\\b' + escT + '\\s+' + escO + '\\s+(?:yarim|s\\s+polovino[yi])\\b', 'gi');
+      out = out.replace(reHalf, String(val + 0.5));
+      const reComp = new RegExp('\\b' + escT + '\\s+' + escO + '\\b', 'gi');
+      out = out.replace(reComp, String(val));
+    });
+    // Tens + yarim (e.g. o'n yarim -> 10.5, yigirma yarim -> 20.5)
+    const reTenHalf = new RegExp('\\b' + escT + '\\s+(?:yarim|s\\s+polovino[yi])\\b', 'gi');
+    out = out.replace(reTenHalf, String(tensMap[t] + 0.5));
   });
-  out = out.replace(/(\d+(?:\.\d+)?)\s+yarim\b/g, (_, n) => String(parseFloat(n) + 0.5));
-  out = out.replace(/\byarim\b/g, '0.5');
+
+  // Replace Teens
+  Object.keys(teensMap).sort((a,b) => b.length - a.length).forEach(k => {
+    const escK = k.replace(/'/g, "\\'");
+    const val = teensMap[k];
+    const reHalf = new RegExp('\\b' + escK + '\\s+(?:yarim|s\\s+polovino[yi])\\b', 'gi');
+    out = out.replace(reHalf, String(val + 0.5));
+    const re = new RegExp('\\b' + escK + '\\b', 'gi');
+    out = out.replace(re, String(val));
+  });
+
+  // Replace standalone Tens
+  tensKeys.forEach(t => {
+    const escT = t.replace(/'/g, "\\'");
+    const re = new RegExp('\\b' + escT + '\\b', 'gi');
+    out = out.replace(re, String(tensMap[t]));
+  });
+
+  // Replace Ones + yarim (e.g. bir yarim -> 1.5, ikki yarim -> 2.5, dva s polovinoy -> 2.5)
+  onesKeys.forEach(o => {
+    const escO = o.replace(/'/g, "\\'");
+    const reHalf = new RegExp('\\b' + escO + '\\s+(?:yarim|s\\s+polovino[yi])\\b', 'gi');
+    out = out.replace(reHalf, String(onesMap[o] + 0.5));
+    const re = new RegExp('\\b' + escO + '\\b', 'gi');
+    out = out.replace(re, String(onesMap[o]));
+  });
+
+  out = out.replace(/(\d+(?:\.\d+)?)\s+(?:yarim|s\s+polovino[yi])\b/gi, (_, n) => String(parseFloat(n) + 0.5));
+  out = out.replace(/\byarim\b/gi, '0.5');
+
+  // Merge any consecutive tens + ones digits (e.g. "10 5" -> "15", "20 5" -> "25", "100 20" -> "120")
+  out = out.replace(/\b(10|20|30|40|50|60|70|80|90)\s+([1-9](?:\.5)?)\b/g, (_, t, u) => String(Number(t) + Number(u)));
+
   return out;
 }
 
@@ -6072,7 +6170,7 @@ function parseVoiceOrderCommand(rawTranscript) {
   // 3. Match products + quantities before/near product keyword
   const tokens = norm.split(/\s+/).filter(Boolean);
   const foundMap = {};
-  const unitTokens = new Set(['kg', 'kilo', 'kilogram', 'kilogramm', 'sht', 'shtuk', 'dona', 'ta', 'litr', 'l']);
+  const unitTokens = new Set(['kg', 'kilo', 'kilogram', 'kilogramm', 'kilogramma', 'kilogrammov', 'sht', 'shtuk', 'shtuka', 'shtuki', 'dona', 'ta', 'litr', 'l']);
   const prodList = (PRODUCTS || []).map(p => {
     const id = String(p.id || '').toLowerCase();
     const stems = new Set(VOICE_PRODUCT_SYNONYMS[id] || []);
@@ -6098,6 +6196,12 @@ function parseVoiceOrderCommand(rawTranscript) {
       if (unitTokens.has(prevTok)) continue;
       if (/^\d+(?:\.\d+)?$/.test(prevTok)) {
         qty = parseFloat(prevTok);
+        if (back + 1 <= 4 && (i - back - 1) >= 0) {
+          const prevTok2 = tokens[i - back - 1];
+          if (/^(?:10|20|30|40|50|60|70|80|90|100)$/.test(prevTok2) && qty < 10) {
+            qty = parseFloat(prevTok2) + qty;
+          }
+        }
         break;
       }
       break;
@@ -6105,12 +6209,19 @@ function parseVoiceOrderCommand(rawTranscript) {
     // Or look ahead 1 token if spoken like "funchoza 5 kg"
     if (qty === null && (i + 1) < tokens.length && /^\d+(?:\.\d+)?$/.test(tokens[i + 1])) {
       qty = parseFloat(tokens[i + 1]);
+      if ((i + 2) < tokens.length && /^\d+(?:\.\d+)?$/.test(tokens[i + 2])) {
+        const next2 = parseFloat(tokens[i + 2]);
+        if (qty >= 10 && next2 < 10) {
+          qty += next2;
+        }
+      }
     }
     if (qty !== null && qty > 0) {
       const isUnit = p.unit === 'шт';
       const cleanQty = isUnit ? Math.max(1, Math.round(qty)) : Math.round(qty * 10) / 10;
-      const customPrice = (matchedClient && matchedClient.customPrices && matchedClient.customPrices[p.id])
-        ? Number(matchedClient.customPrices[p.id])
+      const cp = matchedClient?.customPrices?.[p.id];
+      const customPrice = (cp !== undefined && cp !== null && cp !== '')
+        ? Number(cp)
         : Number(p.price) || 0;
       foundMap[p.id] = {
         id: p.id,
@@ -6367,7 +6478,8 @@ function onDriveParsedClientChange(clientId) {
   currentDriveParsedOrder.client = cl;
   currentDriveParsedOrder.items.forEach(it => {
     const p = (PRODUCTS || []).find(x => String(x.id) === String(it.id));
-    it.price = (cl && cl.customPrices && cl.customPrices[it.id]) ? Number(cl.customPrices[it.id]) : (Number(p?.price) || it.price);
+    const cp = cl?.customPrices?.[it.id];
+    it.price = (cp !== undefined && cp !== null && cp !== '') ? Number(cp) : (Number(p?.price) || it.price);
   });
   currentDriveParsedOrder.total = Math.round(currentDriveParsedOrder.items.reduce((s, i) => s + i.qty * i.price, 0));
   renderDriveParsedPreviewBox();
@@ -6390,7 +6502,8 @@ async function confirmDriveVoiceOrder(sendToForm = false) {
   // Re-sync item prices to selected client customPrices
   const items = currentDriveParsedOrder.items.map(it => {
     const p = (PRODUCTS || []).find(x => String(x.id) === String(it.id));
-    const price = (cl.customPrices && cl.customPrices[it.id]) ? Number(cl.customPrices[it.id]) : (Number(p?.price) || Number(it.price) || 0);
+    const cp = cl?.customPrices?.[it.id];
+    const price = (cp !== undefined && cp !== null && cp !== '') ? Number(cp) : (Number(p?.price) || Number(it.price) || 0);
     return { ...it, price };
   });
   const total = Math.round(items.reduce((s, i) => s + i.qty * i.price, 0));

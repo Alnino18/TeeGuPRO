@@ -51,6 +51,59 @@ const t = T[clientLang];
 let currentClient = null;
 let products = [];
 let cart = {};
+const CART_STORAGE_KEY = 'teegu_client_cart';
+
+function loadCartFromStorage() {
+  try {
+    const raw = localStorage.getItem(CART_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        cart = parsed;
+      }
+    }
+  } catch (e) {}
+}
+
+function saveCartToStorage() {
+  try {
+    if (!cart || Object.keys(cart).length === 0) {
+      localStorage.removeItem(CART_STORAGE_KEY);
+    } else {
+      localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+    }
+  } catch (e) {}
+}
+
+function validateCartStock() {
+  if (!products || !products.length || !cart) return;
+  let changed = false;
+  for (let id in cart) {
+    const p = products.find(x => String(x.id) === String(id));
+    if (!p) {
+      delete cart[id];
+      changed = true;
+      continue;
+    }
+    const hasStock = p.stock !== undefined && p.stock !== null && p.stock !== '' && !isNaN(Number(p.stock));
+    if (hasStock) {
+      const avail = Math.max(0, Number(p.stock));
+      if (avail <= 0) {
+        delete cart[id];
+        changed = true;
+      } else if (Number(cart[id]) > avail) {
+        cart[id] = avail;
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    saveCartToStorage();
+  }
+}
+
+loadCartFromStorage();
+
 let CLIENT_RULES = [];
 try {
   const _cRules = JSON.parse(localStorage.getItem('teegu_business_rules') || 'null');
@@ -105,9 +158,11 @@ async function loadMenu() {
     const pSnap = await db.collection('products').get();
     products = pSnap.docs.map(d => d.data()).filter(Boolean).sort((a,b)=>(a.order??999)-(b.order??999));
     
+    validateCartStock();
     document.getElementById('loading').style.display = 'none';
     document.getElementById('menuScreen').style.display = 'block';
     renderProducts();
+    updateCart();
   } catch(e) {
     alert("Ошибка загрузки меню: " + e.message);
     document.getElementById('loading').innerHTML = "Ошибка: " + e.message;
@@ -117,8 +172,8 @@ async function loadMenu() {
 function fmt(n) { return Number(n).toLocaleString('ru-RU'); }
 
 function getPrice(p) {
-  if (currentClient && currentClient.customPrices && currentClient.customPrices[p.id]) {
-    return currentClient.customPrices[p.id];
+  if (currentClient && currentClient.customPrices && currentClient.customPrices[p.id] !== undefined && currentClient.customPrices[p.id] !== null) {
+    return Number(currentClient.customPrices[p.id]);
   }
   return p.price || 0;
 }
@@ -170,9 +225,15 @@ function changeQty(id, delta) {
   if(isUnit) n = Math.round(n);
   n = Math.max(0, Math.round(n * 10) / 10);
   
+  if (p && p.stock !== undefined && p.stock !== null && p.stock !== '' && !isNaN(Number(p.stock))) {
+    const maxStock = Math.max(0, Number(p.stock));
+    if (n > maxStock) n = maxStock;
+  }
+  
   if (n > 0) cart[id] = n;
   else delete cart[id];
   
+  saveCartToStorage();
   renderProducts();
   updateCart();
 }
@@ -390,10 +451,13 @@ async function submitOrder() {
 
       // Send confirmation to the client via Bot
       if(tgUser && tgUser.id && tgToken) {
+        const clientConfText = clientLang === 'uz'
+          ? "✅ Sizning buyurtmangiz qabul qilindi. Tez orada siz bilan bog'lanamiz!"
+          : "✅ Ваш заказ принят. Мы свяжемся с вами в ближайшее время!";
         fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`,{
           method:'POST',
           headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({chat_id:tgUser.id, text:'✅ Sizning buyurtmangiz qabul qilindi. Tez orada siz bilan bog\'lanamiz!'})
+          body:JSON.stringify({chat_id:tgUser.id, text:clientConfText})
         }).catch(e=>console.log(e));
       }
     } catch(err) {
@@ -401,22 +465,14 @@ async function submitOrder() {
     }
 
     cart = {};
+    saveCartToStorage();
     updateCart();
     renderProducts();
     closeCheckout();
+    switchClientTab('orders');
 
     if(tg && tg.initData && tg.showConfirm) {
-      tg.showConfirm("✅ Buyurtma qabul qilindi!\n\nYana buyurtma berasizmi?", function(more) {
-        if(!more) {
-          tg.close();
-        }
-      });
-    } else {
-      if(confirm("✅ Buyurtma qabul qilindi!\n\nYana buyurtma berasizmi? (Ok = Ha, Cancel = Yo'q)")) {
-        // just stay
-      } else {
-        if(tg && tg.close) tg.close();
-      }
+      tg.showConfirm(clientLang === 'uz' ? "✅ Buyurtma qabul qilindi!" : "✅ Заказ принят!", function() {});
     }
   } catch(e) {
     alert("Ошибка: " + e.message);
@@ -579,8 +635,20 @@ window.repeatOrder = function(itemsJson) {
     const items = JSON.parse(itemsJson);
     cart = {};
     items.forEach(i => {
-      cart[i.id] = i.qty;
+      const p = products.find(x => String(x.id) === String(i.id));
+      const hasStock = p && p.stock !== undefined && p.stock !== null && p.stock !== '' && !isNaN(Number(p.stock));
+      if (hasStock && Number(p.stock) <= 0) {
+        return; // out of stock
+      }
+      let q = Number(i.qty) || 0;
+      if (hasStock && q > Number(p.stock)) {
+        q = Number(p.stock);
+      }
+      if (q > 0) {
+        cart[i.id] = q;
+      }
     });
+    saveCartToStorage();
     switchClientTab('menu');
     renderProducts();
     updateCart();
