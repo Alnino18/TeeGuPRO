@@ -10,8 +10,22 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
+if (typeof db.enablePersistence === 'function') {
+  db.enablePersistence({ synchronizeTabs: true }).catch(err => {
+    if (err.code === 'failed-precondition') {
+      console.warn("Agent persistence failed: multiple tabs open");
+    } else if (err.code === 'unimplemented') {
+      console.warn("Agent persistence not supported by browser");
+    }
+  });
+}
+
 let allAgents = [];
 let myOrders = [];
+try {
+  const cachedOrders = JSON.parse(localStorage.getItem('teegu_cached_agent_orders') || 'null');
+  if (Array.isArray(cachedOrders) && cachedOrders.length) myOrders = cachedOrders;
+} catch (e) {}
 
 const DEFAULT_PRODUCTS = [
   {id:'funchoza', name:'Фунчоза', nameUz:'Funchoza', price:25000, emoji:'🍜', unit:'kg'},
@@ -21,8 +35,16 @@ const DEFAULT_PRODUCTS = [
   {id:'kuksi', name:'Кукси', nameUz:'Kuksi', price:35000, emoji:'🍝', unit:'шт'},
 ];
 let PRODUCTS = DEFAULT_PRODUCTS;
+try {
+  const cachedProds = JSON.parse(localStorage.getItem('teegu_cached_products') || 'null');
+  if (Array.isArray(cachedProds) && cachedProds.length) PRODUCTS = cachedProds;
+} catch (e) {}
 
 let CLIENTS = [];
+try {
+  const cachedClients = JSON.parse(localStorage.getItem('teegu_cached_clients_list') || 'null');
+  if (Array.isArray(cachedClients) && cachedClients.length) CLIENTS = cachedClients;
+} catch (e) {}
 let cart = {};
 
 let currentLat = null;
@@ -114,15 +136,33 @@ function startListeners() {
   
   // Listen for products
   db.collection('products').onSnapshot(snap => {
-    PRODUCTS = snap.docs.map(d => d.data()).filter(Boolean).sort((a,b) => (a.order ?? 999) - (b.order ?? 999));
+    PRODUCTS = snap.docs.map(d => {
+      const data = d.data();
+      if (!data.id) data.id = d.id;
+      return data;
+    }).filter(Boolean).sort((a,b) => (a.order ?? 999) - (b.order ?? 999));
+    try {
+      localStorage.setItem('teegu_cached_products', JSON.stringify(PRODUCTS));
+    } catch (e) {}
     renderProducts();
+  }, err => {
+    console.warn("Agent products listener error (using cached):", err.message);
   });
   
   // Listen for clients
   db.collection('clients').onSnapshot(snap => {
-    CLIENTS = snap.docs.map(d => d.data());
+    CLIENTS = snap.docs.map(d => {
+      const data = d.data();
+      if (!data.id) data.id = d.id;
+      return data;
+    });
+    try {
+      localStorage.setItem('teegu_cached_clients_list', JSON.stringify(CLIENTS));
+    } catch (e) {}
     const list = document.getElementById('clientList');
-    list.innerHTML = CLIENTS.map(c => `<option value="${c.name}${c.phone ? ' — ' + c.phone : ''}"></option>`).join('');
+    if (list) list.innerHTML = CLIENTS.map(c => `<option value="${c.name}${c.phone ? ' — ' + c.phone : ''}"></option>`).join('');
+  }, err => {
+    console.warn("Agent clients listener error (using cached):", err.message);
   });
   
   // Listen for agent's recent orders
@@ -132,9 +172,19 @@ function startListeners() {
       myOrders = snap.docs.map(d => d.data());
       // sort manually to avoid requiring Firestore composite index
       myOrders.sort((a,b) => b.id - a.id);
+      try {
+        localStorage.setItem('teegu_cached_agent_orders', JSON.stringify(myOrders));
+      } catch (e) {}
       renderHistory();
     }, err => {
-      console.error("Orders listener error:", err);
+      console.warn("Orders listener error (using cached):", err.message);
+      try {
+        const cached = JSON.parse(localStorage.getItem('teegu_cached_agent_orders') || 'null');
+        if (Array.isArray(cached) && cached.length) {
+          myOrders = cached;
+          renderHistory();
+        }
+      } catch (e) {}
     });
 
   // Track unpaid credit orders for dynamic business rule enforcement

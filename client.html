@@ -126,6 +126,13 @@
   </div>
 </div>
 
-<script src="client.js?v=20"></script>
+<script src="client.js?v=21"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    });
+  }
+</script>
 </body>
 </html>

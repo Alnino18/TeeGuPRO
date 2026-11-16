@@ -75,6 +75,8 @@ function getDailyCashBreakdown(ordersList, targetDate = new Date()) {
 if (typeof window !== 'undefined') {
   window.isConsignmentPayment = isConsignmentPayment;
   window.getDailyCashBreakdown = getDailyCashBreakdown;
+  window.updateOnlineIndicator = updateOnlineIndicator;
+  window.loadCachedState = loadCachedState;
 }
 
 
@@ -125,7 +127,17 @@ if (!firebase.apps.length) {
     firebase.initializeApp(firebaseConfig);
 }
 const db = firebase.firestore();
-db.enablePersistence().catch(err => console.log("Firebase Offline Error:", err));
+if (db && typeof db.enablePersistence === 'function') {
+  db.enablePersistence({ synchronizeTabs: true }).catch(err => {
+    if (err && err.code === 'failed-precondition') {
+      console.warn("Firestore persistence failed: multiple tabs open");
+    } else if (err && err.code === 'unimplemented') {
+      console.warn("Firestore persistence unimplemented in this browser");
+    } else {
+      console.warn("Firebase Offline Error:", err);
+    }
+  });
+}
 
 const DEFAULT_PRODUCTS=[
   {id:'funchoza', name:'Фунчоза',       nameUz:'Funchoza',        price:25000,cost:0,emoji:'🍜'},
@@ -158,6 +170,38 @@ let state={
   quantities:{},selectedPayment:'наличные',currentOrderId:null,dateFilter:'today',
 };
 
+function loadCachedState() {
+  try {
+    const cp = localStorage.getItem('teegu_cached_products');
+    if (cp) {
+      const parsed = JSON.parse(cp);
+      if (Array.isArray(parsed) && parsed.length) {
+        PRODUCTS = parsed;
+      }
+    }
+  } catch(e) {}
+  try {
+    const cc = localStorage.getItem('teegu_cached_clients');
+    if (cc) {
+      const parsed = JSON.parse(cc);
+      if (Array.isArray(parsed) && parsed.length) {
+        state.clients = parsed;
+      }
+    }
+  } catch(e) {}
+  try {
+    const co = localStorage.getItem('teegu_cached_orders');
+    if (co) {
+      const parsed = JSON.parse(co);
+      if (Array.isArray(parsed) && parsed.length) {
+        state.orders = parsed;
+        isOrdersLoaded = true;
+      }
+    }
+  } catch(e) {}
+}
+loadCachedState();
+
 // Real-time Listeners (started after authentication and script init)
 let realtimeListenersStarted = false;
 function startRealtimeListeners() {
@@ -173,6 +217,7 @@ function startRealtimeListeners() {
     } else {
       PRODUCTS = snap.docs.map(d => d.data()).filter(Boolean).sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
     }
+    try { localStorage.setItem('teegu_cached_products', JSON.stringify(PRODUCTS)); } catch(e) {}
     try { renderProductsGrid(); } catch(e) { console.error(e); }
     try { renderProductsSettings(); } catch(e) { console.error(e); }
     try { renderWarehouse(); } catch(e) { console.error(e); }
@@ -186,6 +231,7 @@ function startRealtimeListeners() {
       if (!data.id) data.id = d.id;
       return data;
     });
+    try { localStorage.setItem('teegu_cached_clients', JSON.stringify(state.clients)); } catch(e) {}
     try { populateClientSelect(); } catch(e) { console.error("populateClientSelect error:", e); }
     try { renderClientsList(); } catch(e) { console.error("renderClientsList error:", e); }
     try { renderDashboard(); } catch(e) { console.error("renderDashboard error:", e); }
@@ -198,6 +244,7 @@ function startRealtimeListeners() {
       if (!data.id) data.id = d.id;
       return data;
     }).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+    try { localStorage.setItem('teegu_cached_orders', JSON.stringify(state.orders)); } catch(e) {}
     try { renderOrdersList(); } catch(e) { console.error("renderOrdersList error:", e); }
     try { renderClientsList(); } catch(e) { console.error("renderClientsList error:", e); }
     try { renderStats(); } catch(e) { console.error("renderStats error:", e); }
@@ -317,6 +364,7 @@ function printOrder(id) {
 
 // INIT
 function startApp(){
+  try { loadCachedState(); } catch(e) {}
   try { startRealtimeListeners(); } catch(e) { console.error("listeners err:", e); }
   try { initAiUiController(); } catch(e) { console.warn("AI UI init warn:", e); }
   try { loadBusinessRules(); updateAiTtsButton(); } catch(e) {}
@@ -2188,7 +2236,7 @@ function renderDashboard(){
     <div style="text-align:center;margin-bottom:20px">
       <div style="font-size:56px;font-weight:900;letter-spacing:-2px;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1">${timeStr}</div>
       <div style="font-size:13px;color:var(--text2);margin-top:4px;text-transform:capitalize">${dateStr}</div>
-      <div style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;font-size:11px;color:var(--text3)"><div id="onlineIndicator" style="width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0"></div>${lang==='uz'?'Onlayn':'Онлайн'}</div>
+      <div id="onlineStatusWrap" style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;font-size:11px;color:var(--text3)"><div id="onlineIndicator" style="width:8px;height:8px;border-radius:50%;background:${(typeof navigator !== 'undefined' && navigator.onLine === false) ? 'var(--danger)' : 'var(--green)'};flex-shrink:0"></div><span id="onlineIndicatorText">${(typeof navigator !== 'undefined' && navigator.onLine === false) ? (lang === 'uz' ? 'Oflayn - mahalliy saqlanmoqda' : 'Оффлайн - сохранение локально') : (lang === 'uz' ? 'Onlayn' : 'Онлайн')}</span></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
       <div style="background:linear-gradient(135deg,rgba(124,106,247,.2),rgba(86,212,160,.1));border:1px solid rgba(124,106,247,.3);border-radius:16px;padding:12px;text-align:center">
@@ -2379,14 +2427,32 @@ function detectMyLocation(){
 // ==================== OFFLINE SYNC ====================
 let offlineQueue=JSON.parse(localStorage.getItem('offlineQueue')||'[]');
 function setupOfflineSync(){
-  window.addEventListener('online',flushOfflineQueue);
-  window.addEventListener('online',updateOnlineIndicator);
-  window.addEventListener('offline',updateOnlineIndicator);
-  if(navigator.onLine&&offlineQueue.length)flushOfflineQueue();
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', flushOfflineQueue);
+    window.addEventListener('online', updateOnlineIndicator);
+    window.addEventListener('offline', updateOnlineIndicator);
+  }
+  if (typeof navigator !== 'undefined' && navigator.onLine && offlineQueue.length) flushOfflineQueue();
+  updateOnlineIndicator();
 }
 function updateOnlineIndicator(){
-  const el=document.getElementById('onlineIndicator');if(!el)return;
-  el.style.background=navigator.onLine?'var(--green)':'var(--danger)';
+  const isOnline = (typeof navigator !== 'undefined') ? (navigator.onLine !== false) : true;
+  const el = document.getElementById('onlineIndicator');
+  if (el) {
+    el.style.background = isOnline ? 'var(--green)' : 'var(--danger)';
+  }
+  const textEl = document.getElementById('onlineIndicatorText');
+  const onlineTxt = lang === 'uz' ? 'Onlayn' : 'Онлайн';
+  const offlineTxt = lang === 'uz' ? 'Oflayn - mahalliy saqlanmoqda' : 'Оффлайн - сохранение локально';
+  if (textEl) {
+    textEl.textContent = isOnline ? onlineTxt : offlineTxt;
+  } else if (el && el.nextSibling) {
+    el.nextSibling.textContent = ' ' + (isOnline ? onlineTxt : offlineTxt);
+  }
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', updateOnlineIndicator);
+  window.addEventListener('offline', updateOnlineIndicator);
 }
 async function flushOfflineQueue(){
   if(!offlineQueue.length)return;
@@ -2410,7 +2476,14 @@ async function flushOfflineQueue(){
   }
 }
 
-function save(){localStorage.setItem('clients',JSON.stringify(state.clients));localStorage.setItem('orders',JSON.stringify(state.orders));}
+function save(){
+  try {
+    localStorage.setItem('clients', JSON.stringify(state.clients));
+    localStorage.setItem('orders', JSON.stringify(state.orders));
+    localStorage.setItem('teegu_cached_clients', JSON.stringify(state.clients));
+    localStorage.setItem('teegu_cached_orders', JSON.stringify(state.orders));
+  } catch(e) {}
+}
 function updateBadges(){
   const orders = state.orders || [];
   const unsent=orders.filter(o=>o && o.status!=='cancelled' && !o.sent).length;

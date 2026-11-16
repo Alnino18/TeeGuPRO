@@ -11,6 +11,16 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
+if (typeof db.enablePersistence === 'function') {
+  db.enablePersistence({ synchronizeTabs: true }).catch(err => {
+    if (err.code === 'failed-precondition') {
+      console.warn("Persistence failed: multiple tabs open");
+    } else if (err.code === 'unimplemented') {
+      console.warn("Persistence not supported by browser");
+    }
+  });
+}
+
 let tg = window.Telegram?.WebApp;
 if(tg && tg.initData) {
   tg.ready(); tg.expand();
@@ -152,21 +162,54 @@ async function init() {
   loadMenu();
 }
 
+const DEFAULT_PRODUCTS = [
+  {id:'funchoza', name:'Фунчоза', nameUz:'Funchoza', price:25000, emoji:'🍜', unit:'кг', step: 0.5},
+  {id:'morkovcha',name:'Морковча', nameUz:'Sabzi', price:25000, emoji:'🥕', unit:'кг', step: 0.5},
+  {id:'sologurc', name:'Сол огурцы', nameUz:'Tuzlangan bodring', price:20000, emoji:'🥒', unit:'кг', step: 0.5},
+  {id:'kapusta', name:'Сладкая капуста', nameUz:'Shirin karam', price:20000, emoji:'🥬', unit:'кг', step: 0.5},
+  {id:'kuksi', name:'Кукси', nameUz:'Kuksi', price:35000, emoji:'🍝', unit:'шт', step: 1},
+];
+
 async function loadMenu() {
   document.getElementById('loading').style.display = 'flex';
+  let loaded = false;
   try {
     const pSnap = await db.collection('products').get();
-    products = pSnap.docs.map(d => d.data()).filter(Boolean).sort((a,b)=>(a.order??999)-(b.order??999));
-    
-    validateCartStock();
-    document.getElementById('loading').style.display = 'none';
-    document.getElementById('menuScreen').style.display = 'block';
-    renderProducts();
-    updateCart();
+    if (pSnap && !pSnap.empty) {
+      products = pSnap.docs.map(d => {
+        const data = d.data();
+        if (!data.id) data.id = d.id;
+        return data;
+      }).filter(Boolean).sort((a,b)=>(a.order??999)-(b.order??999));
+      try {
+        localStorage.setItem('teegu_cached_products', JSON.stringify(products));
+      } catch (e) {}
+      loaded = true;
+    }
   } catch(e) {
-    alert("Ошибка загрузки меню: " + e.message);
-    document.getElementById('loading').innerHTML = "Ошибка: " + e.message;
+    // Firestore offline fallback
   }
+
+  if (!loaded || !products.length) {
+    try {
+      const cached = JSON.parse(localStorage.getItem('teegu_cached_products') || 'null');
+      if (Array.isArray(cached) && cached.length) {
+        products = cached;
+        loaded = true;
+      }
+    } catch (e) {}
+  }
+
+  if (!loaded || !products.length) {
+    products = DEFAULT_PRODUCTS;
+    loaded = true;
+  }
+
+  validateCartStock();
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('menuScreen').style.display = 'block';
+  renderProducts();
+  updateCart();
 }
 
 function fmt(n) { return Number(n).toLocaleString('ru-RU'); }

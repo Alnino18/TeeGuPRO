@@ -1129,5 +1129,16 @@
 </div>
 
 <script src="app.js?v=19"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('../sw.js').then(reg => {
+        console.log('Admin ServiceWorker registered with scope:', reg.scope);
+      }).catch(err => {
+        console.warn('Admin ServiceWorker registration failed:', err);
+      });
+    });
+  }
+</script>
 </body>
 </html>

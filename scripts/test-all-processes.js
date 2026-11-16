@@ -1816,10 +1816,10 @@ try {
   // 14G. Service Worker Cache IgnoreSearch & Filter
   const swCodeStr = fs.readFileSync('sw.js', 'utf8');
   assert(
-    swCodeStr.includes("CACHE = 'salat-v26'") &&
+    (/CACHE\s*=\s*'salat-v2[6-9]'/.test(swCodeStr) || swCodeStr.includes("CACHE = 'salat-v26'") || swCodeStr.includes("CACHE = 'salat-v27'")) &&
     swCodeStr.includes('ignoreSearch: true') &&
     swCodeStr.includes("request.method !== 'GET'"),
-    'sw.js bumped to salat-v26, added { ignoreSearch: true } and filtered non-GET requests'
+    'sw.js bumped to salat-v26/v27, added { ignoreSearch: true } and filtered non-GET requests'
   );
 } catch (e) {
   assert(false, 'Quality fixes and expansions suite 14 failed', e.stack);
@@ -1991,6 +1991,95 @@ try {
   );
 } catch (e) {
   assert(false, 'Cash-Basis consignment accounting suite 15 failed', e.stack);
+}
+
+
+// =========================================================================
+// 16. FULL OFFLINE PWA & ZERO-INTERNET RELIABILITY
+// =========================================================================
+console.log('\n--- 16. Testing Full Offline PWA & Zero-Internet Reliability ---');
+try {
+  // 16A. Service Worker Registration in all 4 HTML apps
+  const appHtmls = ['admin/index.html', 'agent/index.html', 'courier/index.html', 'client.html'];
+  const missingSwHtml = appHtmls.filter(f => !fs.readFileSync(f, 'utf8').includes('serviceWorker.register'));
+  assert(missingSwHtml.length === 0, 'All 4 HTML apps register Service Worker (sw.js)', missingSwHtml.join(', '));
+
+  // 16B. Unified Firebase SDK 10.8.0 compat across all 4 HTML apps (no v8 remaining)
+  const legacyV8Html = appHtmls.filter(f => fs.readFileSync(f, 'utf8').includes('8.10.1'));
+  const missingV10Html = appHtmls.filter(f => !fs.readFileSync(f, 'utf8').includes('10.8.0/firebase-app-compat.js'));
+  assert(
+    legacyV8Html.length === 0 && missingV10Html.length === 0,
+    'Unified Firebase SDK v10.8.0 compat across all apps with 0 deprecated v8 references'
+  );
+
+  // 16C. Multi-tab Firestore Offline Persistence across all 4 JS apps
+  const appJsFiles = ['admin/app.js', 'agent/agent.js', 'courier/courier.js', 'client.js'];
+  const missingPersistence = appJsFiles.filter(f => {
+    const code = fs.readFileSync(f, 'utf8');
+    return !code.includes('enablePersistence') || !code.includes('synchronizeTabs: true');
+  });
+  assert(
+    missingPersistence.length === 0,
+    'Multi-tab offline persistence (synchronizeTabs: true) configured across all 4 JS applications',
+    missingPersistence.join(', '));
+
+  // 16D. Client zero-internet fallback: loadMenu renders cached products
+  runClient(`
+    localStorage.setItem('teegu_cached_products', JSON.stringify([
+      { id: 'funchoza_off', name: 'Oflayn Funchoza', price: 21000, emoji: '🍜', unit: 'kg' }
+    ]));
+    // simulate offline Firestore failure in loadMenu
+    const origGet = db.collection('products').get;
+    db.collection('products').get = () => Promise.reject(new Error('Failed to get document because client is offline'));
+    loadMenu();
+    db.collection('products').get = origGet;
+  `);
+  const clientMenuHtml = clientEnv.dom['productsGrid']?.innerHTML || '';
+  assert(
+    clientMenuHtml.includes('Oflayn Funchoza') || clientMenuHtml.includes('funchoza_off'),
+    'Client loadMenu gracefully fell back to cached products in localStorage during offline network failure'
+  );
+
+  // 16E. Admin dynamic online/offline status indicator and localStorage caching
+  runAdmin(`
+    navigator.onLine = false;
+    if (typeof updateOnlineIndicator === 'function') updateOnlineIndicator();
+  `);
+  const offlineText = adminEnv.dom['onlineIndicatorText']?.textContent || adminEnv.dom['onlineIndicator']?.parentElement?.textContent || '';
+  runAdmin(`
+    navigator.onLine = true;
+    if (typeof updateOnlineIndicator === 'function') updateOnlineIndicator();
+  `);
+  const onlineText = adminEnv.dom['onlineIndicatorText']?.textContent || adminEnv.dom['onlineIndicator']?.parentElement?.textContent || '';
+  assert(
+    (offlineText.includes('Oflayn') || offlineText.includes('Оффлайн')) &&
+    (onlineText.includes('Onlayn') || onlineText.includes('Онлайн')),
+    'Admin dynamically toggles online/offline status badge on network status change events'
+  );
+
+  // 16F. Courier & Agent offline cache preloading from localStorage
+  const courierJsStr = fs.readFileSync('courier/courier.js', 'utf8');
+  const agentJsStr = fs.readFileSync('agent/agent.js', 'utf8');
+  assert(
+    courierJsStr.includes('teegu_cached_courier_orders') &&
+    agentJsStr.includes('teegu_cached_products') &&
+    agentJsStr.includes('teegu_cached_agent_orders'),
+    'Courier and Agent preload active orders, clients, and catalog from localStorage for instant offline access'
+  );
+
+  // 16G. Service Worker sw.js v27: CDN caching, runtime caching and navigation fallback
+  const swCodeStr = fs.readFileSync('sw.js', 'utf8');
+  assert(
+    swCodeStr.includes("CACHE = 'salat-v27'") &&
+    swCodeStr.includes('CDN_ASSETS') &&
+    swCodeStr.includes('firebase-app-compat.js') &&
+    swCodeStr.includes('getNavigationFallback') &&
+    swCodeStr.includes('/admin') &&
+    swCodeStr.includes('/courier'),
+    'sw.js v27 precaches CDN assets, provides Stale-While-Revalidate caching and offline navigation fallback'
+  );
+} catch (e) {
+  assert(false, 'Full offline PWA suite 16 failed', e.stack);
 }
 
 (async () => {

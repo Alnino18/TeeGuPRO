@@ -10,9 +10,32 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
+if (typeof db.enablePersistence === 'function') {
+  db.enablePersistence({ synchronizeTabs: true }).catch(err => {
+    if (err.code === 'failed-precondition') {
+      console.warn("Courier persistence failed: multiple tabs open");
+    } else if (err.code === 'unimplemented') {
+      console.warn("Courier persistence not supported by browser");
+    }
+  });
+}
+
 let allCouriers = [];
 let allClientsMap = {};
+try {
+  const cachedClients = JSON.parse(localStorage.getItem('teegu_cached_clients') || 'null');
+  if (cachedClients && typeof cachedClients === 'object') {
+    allClientsMap = cachedClients;
+  }
+} catch (e) {}
+
 let myOrders = [];
+try {
+  const cachedOrders = JSON.parse(localStorage.getItem('teegu_cached_courier_orders') || 'null');
+  if (Array.isArray(cachedOrders) && cachedOrders.length) {
+    myOrders = cachedOrders;
+  }
+} catch (e) {}
 let deliveredOrders = [];
 let SETTINGS = {};
 let loggedCourierName = localStorage.getItem('courierAuth') || null;
@@ -43,8 +66,14 @@ db.collection('couriers').onSnapshot(snap => {
 db.collection('clients').onSnapshot(snap => {
   snap.docs.forEach(d => {
     allClientsMap[d.id] = d.data();
+    if (d.data() && d.data().id) allClientsMap[String(d.data().id)] = d.data();
   });
+  try {
+    localStorage.setItem('teegu_cached_clients', JSON.stringify(allClientsMap));
+  } catch (e) {}
   if (myOrders.length) renderOrders();
+}, err => {
+  console.warn("Clients snapshot offline fallback:", err.message);
 });
 
 function init() {
@@ -114,10 +143,20 @@ function startOrdersListener() {
       myOrders = allDocs
         .filter(o => !o.delivered && o.status !== 'done' && o.status !== 'cancelled')
         .sort((a,b) => new Date(b.date) - new Date(a.date));
+      try {
+        localStorage.setItem('teegu_cached_courier_orders', JSON.stringify(myOrders));
+      } catch (e) {}
       routeSummary = null;
       renderOrders();
     }, err => {
-      console.error("Courier orders error:", err);
+      console.warn("Courier orders error (using offline cache):", err.message);
+      try {
+        const cached = JSON.parse(localStorage.getItem('teegu_cached_courier_orders') || 'null');
+        if (Array.isArray(cached) && cached.length) {
+          myOrders = cached;
+          renderOrders();
+        }
+      } catch (e) {}
     });
 }
 
